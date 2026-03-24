@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  # 1. Docker 沙箱服务
+  docker-sandbox:
+    build: ./docker-sandbox
+    ports:
+      - "8082:8082"
+    volumes:
+      # 极其重要：挂载 Docker Socket，允许容器内的 Go 程序操作宿主机的 Docker
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 挂载临时工作区
+      - /tmp:/tmp
+    networks:
+      - scholar-network
+
+  # 2. Go 后端调度引擎
+  backend:
+    build: ./backend
+    ports:
+      - "8080:8080"
+    volumes:
+      - /tmp:/tmp
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.deepseek.com/v1}
+      - SANDBOX_URL=http://docker-sandbox:8082
+    depends_on:
+      - docker-sandbox
+    networks:
+      - scholar-network
+
+  # 3. React 前端界面
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:80" # 将容器内的 Nginx 80 端口映射到宿主机 5173
+    depends_on:
+      - backend
+    networks:
+      - scholar-network
+
+networks:
+  scholar-network:
+    driver: bridge
