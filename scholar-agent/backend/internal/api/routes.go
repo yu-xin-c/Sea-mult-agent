@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"scholar-agent-backend/internal/agent"
+	"scholar-agent-backend/internal/intent"
 	"scholar-agent-backend/internal/models"
 	"scholar-agent-backend/internal/planner"
 	"scholar-agent-backend/internal/sandbox"
@@ -66,6 +67,25 @@ func SetupRoutes(r *gin.Engine) {
 	librarianAgent := agent.NewLibrarianAgent()
 	dataAgent := agent.NewDataAgent()
 	chatAgent := agent.NewChatAgent(coderAgent)
+
+	// Initialize Intent Recognition Engine
+	var intentEngine *intent.Engineer
+	intentCfg := intent.EngineConfig{
+		MilvusURL:       os.Getenv("MILVUS_URL"),
+		EmbeddingAPIKey: os.Getenv("EMBEDDING_API_KEY"),
+		EmbeddingModel:  os.Getenv("EMBEDDING_MODEL"),
+		EmbeddingURL:    os.Getenv("EMBEDDING_BASE_URL"),
+		LLMAPIKey:       os.Getenv("OPENAI_API_KEY"),
+		LLMBaseURL:      os.Getenv("OPENAI_BASE_URL"),
+		LLMModel:        os.Getenv("OPENAI_MODEL_NAME"),
+	}
+	eng, err := intent.NewEngineer(context.Background(), intentCfg)
+	if err != nil {
+		log.Printf("[Warning] 意图识别引擎初始化失败，将使用降级策略: %v", err)
+	} else {
+		intentEngine = eng
+		log.Printf("[System] 意图识别引擎初始化成功: %s", intentEngine)
+	}
 
 	apiGroup := r.Group("/api")
 	{
@@ -152,13 +172,31 @@ func SetupRoutes(r *gin.Engine) {
 				return
 			}
 
+			// 使用意图识别引擎识别意图
 			intentType := "General"
-			if contains(payload.Intent, []string{"对比", "评估", "选型", "RAG"}) {
-				intentType = "Framework_Evaluation"
-			} else if contains(payload.Intent, []string{"复现"}) {
-				intentType = "Paper_Reproduction"
-			} else if contains(payload.Intent, []string{"计算", "代码", "运行", "执行", "画图", "分析"}) {
-				intentType = "Code_Execution"
+			var intentResult *intent.IntentResult
+
+			if intentEngine != nil {
+				result, err := intentEngine.RecognizeSimple(c.Request.Context(), payload.Intent)
+				if err != nil {
+					log.Printf("[Intent] 意图识别失败，降级到规则匹配: %v", err)
+				} else {
+					intentResult = result
+					intentType = result.IntentType
+					log.Printf("[Intent] 识别结果: toolName=%s, type=%s, source=%s, hit=%v",
+						result.ToolName, result.IntentType, result.MatchSource, result.HitIntent)
+				}
+			}
+
+			// 降级策略：意图引擎未初始化或失败时使用简单匹配
+			if intentResult == nil {
+				if contains(payload.Intent, []string{"对比", "评估", "选型", "RAG"}) {
+					intentType = "Framework_Evaluation"
+				} else if contains(payload.Intent, []string{"复现"}) {
+					intentType = "Paper_Reproduction"
+				} else if contains(payload.Intent, []string{"计算", "代码", "运行", "执行", "画图", "分析"}) {
+					intentType = "Code_Execution"
+				}
 			}
 
 			plan, err := p.GeneratePlan(payload.Intent, intentType)
@@ -168,10 +206,23 @@ func SetupRoutes(r *gin.Engine) {
 				return
 			}
 
-			c.JSON(http.StatusOK, gin.H{
+			responseData := gin.H{
 				"message": "Plan generated successfully",
 				"plan":    plan,
-			})
+			}
+
+			// 附加意图识别详情
+			if intentResult != nil {
+				responseData["intent_detail"] = gin.H{
+					"tool_name":    intentResult.ToolName,
+					"intent_type":  intentResult.IntentType,
+					"match_source": intentResult.MatchSource,
+					"hit_intent":   intentResult.HitIntent,
+					"keyword":      intentResult.Keyword,
+				}
+			}
+
+			c.JSON(http.StatusOK, responseData)
 		})
 
 		apiGroup.POST("/execute", func(c *gin.Context) {
