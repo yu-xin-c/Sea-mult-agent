@@ -1,8 +1,11 @@
 package planner
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"scholar-agent-backend/internal/models"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -10,11 +13,62 @@ import (
 
 // Planner generates DAGs based on user intent
 type Planner struct {
-	// In a real system, this would interact with an LLM to dynamically generate the DAG
+	agent *plannerAgent
 }
 
 func NewPlanner() *Planner {
-	return &Planner{}
+	return &Planner{
+		agent: newPlannerAgent(),
+	}
+}
+
+// BuildPlan creates the new graph-based plan structure described in the refactor docs.
+func (p *Planner) BuildPlan(ctx context.Context, intent models.IntentContext) (*models.PlanGraph, error) {
+	_ = ctx
+
+	plan := &models.PlanGraph{
+		ID:         uuid.New().String(),
+		UserIntent: intent.RawIntent,
+		IntentType: intent.IntentType,
+		Status:     models.StatusPending,
+		Nodes:      []*models.TaskNode{},
+		Edges:      []*models.TaskEdge{},
+		Artifacts:  map[string]models.Artifact{},
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	}
+
+	var nodes []*models.TaskNode
+	var err error
+	if p.agent != nil {
+		nodes, err = p.agent.BuildNodes(ctx, intent)
+		if err != nil {
+			logPlannerFallback(intent, err)
+		} else if validationErr := validateAgentPlannedNodes(intent, nodes); validationErr != nil {
+			logPlannerFallback(intent, validationErr)
+			nodes = nil
+		}
+	}
+	if len(nodes) == 0 {
+		switch intent.IntentType {
+		case "Framework_Evaluation":
+			nodes = buildFrameworkEvaluationNodesV2(intent)
+		case "Paper_Reproduction":
+			nodes = buildPaperReproductionNodesV2(intent)
+		case "Code_Execution":
+			nodes = buildCodeExecutionNodesV2(intent)
+		default:
+			nodes = buildGeneralNodesV2(intent)
+		}
+	}
+
+	edges := buildEdgesFromNodes(nodes)
+	fillInitialStatuses(nodes)
+	plan.Nodes = nodes
+	plan.Edges = edges
+	fillGraphMeta(plan)
+
+	return plan, validatePlanGraph(plan)
 }
 
 // GeneratePlan creates a mock DAG for a given intent (for demonstration)
@@ -87,4 +141,683 @@ func createMockTask(name, agent string, deps []string, context string) *models.T
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}
+}
+
+func newNode(name, taskType, agent string, deps, requiredArtifacts, outputArtifacts []string, parallelizable bool, context string) *models.TaskNode {
+	if deps == nil {
+		deps = []string{}
+	}
+	if requiredArtifacts == nil {
+		requiredArtifacts = []string{}
+	}
+	if outputArtifacts == nil {
+		outputArtifacts = []string{}
+	}
+
+	now := time.Now()
+	return &models.TaskNode{
+		ID:                uuid.New().String(),
+		Name:              name,
+		Type:              taskType,
+		Description:       fmt.Sprintf("任务目标: %s\n具体要求: %s", name, context),
+		AssignedTo:        agent,
+		Status:            models.StatusPending,
+		Dependencies:      deps,
+		RequiredArtifacts: requiredArtifacts,
+		OutputArtifacts:   outputArtifacts,
+		Parallelizable:    parallelizable,
+		Priority:          0,
+		RetryLimit:        0,
+		RunCount:          0,
+		Inputs:            map[string]any{},
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+}
+
+func buildFrameworkEvaluationNodes(context string) []*models.TaskNode {
+	normalized := strings.ToLower(context)
+	frameworks := frameworkLabels(normalized)
+	left := frameworkDisplayName(frameworks, 0, "Framework A")
+	right := frameworkDisplayName(frameworks, 1, "Framework B")
+	needsBenchmark := hasAny(normalized, "benchmark", "性能", "评测", "latency", "吞吐", "run", "运行", "实验")
+
+	t1 := newNode("Research Candidate Frameworks", "framework_research", "librarian_agent", nil, nil, []string{"framework_research_report"}, true, context)
+	if !needsBenchmark {
+		t2 := newNode("Analyze "+left+" Fit", "framework_fit_left", "librarian_agent", []string{t1.ID}, []string{"framework_research_report"}, []string{"left_fit_report"}, true, context)
+		t3 := newNode("Analyze "+right+" Fit", "framework_fit_right", "librarian_agent", []string{t1.ID}, []string{"framework_research_report"}, []string{"right_fit_report"}, true, context)
+		t4 := newNode("Generate Selection Recommendation", "framework_recommendation", "data_agent", []string{t2.ID, t3.ID}, []string{"left_fit_report", "right_fit_report"}, []string{"evaluation_report"}, false, context)
+		return []*models.TaskNode{t1, t2, t3, t4}
+	}
+
+	t2 := newNode("Prepare "+left+" Environment", "framework_prepare_left", "coder_agent", []string{t1.ID}, []string{"framework_research_report"}, []string{"left_env"}, true, context)
+	t3 := newNode("Prepare "+right+" Environment", "framework_prepare_right", "coder_agent", []string{t1.ID}, []string{"framework_research_report"}, []string{"right_env"}, true, context)
+	t4 := newNode("Run "+left+" Benchmark", "framework_run_left", "sandbox_agent", []string{t2.ID}, []string{"left_env"}, []string{"left_metrics"}, true, context)
+	t5 := newNode("Run "+right+" Benchmark", "framework_run_right", "sandbox_agent", []string{t3.ID}, []string{"right_env"}, []string{"right_metrics"}, true, context)
+	t6 := newNode("Generate Benchmark Report", "framework_report", "data_agent", []string{t4.ID, t5.ID}, []string{"left_metrics", "right_metrics"}, []string{"evaluation_report"}, false, context)
+	return []*models.TaskNode{t1, t2, t3, t4, t5, t6}
+}
+
+func buildPaperReproductionNodes(context string) []*models.TaskNode {
+	normalized := strings.ToLower(context)
+	needsPlot := hasAny(normalized, "plot", "画图", "图表", "曲线", "可视化")
+	needsFix := hasAny(normalized, "debug", "fix", "修复", "排查", "不一致")
+
+	t1 := newNode("Parse Paper & Extract Method", "paper_parse", "librarian_agent", nil, nil, []string{"parsed_paper"}, true, context)
+	t2 := newNode("Locate Reference Repository", "repo_discovery", "coder_agent", []string{t1.ID}, []string{"parsed_paper"}, []string{"repo_url"}, true, context)
+	t3 := newNode("Prepare Workspace", "repo_prepare", "coder_agent", []string{t2.ID}, []string{"repo_url"}, []string{"workspace_path"}, false, context)
+	t4 := newNode("Setup Runtime Environment", "env_setup", "sandbox_agent", []string{t3.ID}, []string{"workspace_path"}, []string{"runtime_env"}, false, context)
+	t5 := newNode("Execute Baseline", "baseline_run", "sandbox_agent", []string{t4.ID}, []string{"runtime_env"}, []string{"run_metrics"}, false, context)
+	t6 := newNode("Compare With Paper Claims", "paper_compare", "data_agent", []string{t5.ID}, []string{"run_metrics", "parsed_paper"}, []string{"comparison_report"}, false, context)
+
+	nodes := []*models.TaskNode{t1, t2, t3, t4, t5, t6}
+	lastID := t6.ID
+	lastArtifact := "comparison_report"
+
+	if needsPlot {
+		t7 := newNode("Visualize Reproduction Results", "result_visualization", "data_agent", []string{lastID}, []string{lastArtifact}, []string{"result_plot"}, true, context)
+		nodes = append(nodes, t7)
+		lastID = t7.ID
+		lastArtifact = "result_plot"
+	}
+	if needsFix {
+		t8 := newNode("Fix Gaps And Rerun", "fix_and_rerun", "coder_agent", []string{lastID}, []string{lastArtifact}, []string{"rerun_report"}, false, context)
+		nodes = append(nodes, t8)
+	}
+	return nodes
+}
+
+func buildCodeExecutionNodes(context string) []*models.TaskNode {
+	normalized := strings.ToLower(context)
+	needsPlot := hasAny(normalized, "plot", "matplotlib", "画图", "图表", "曲线")
+	needsAnalysis := hasAny(normalized, "analyze", "analysis", "分析", "解释", "report", "报告")
+
+	t1 := newNode("Generate Code", "generate_code", "coder_agent", nil, nil, []string{"generated_code"}, true, context)
+	t2 := newNode("Prepare Runtime", "prepare_runtime", "sandbox_agent", []string{t1.ID}, []string{"generated_code"}, []string{"runtime_env"}, false, context)
+	t3 := newNode("Execute Code", "execute_code", "sandbox_agent", []string{t2.ID}, []string{"generated_code", "runtime_env"}, []string{"execution_result"}, false, context)
+
+	nodes := []*models.TaskNode{t1, t2, t3}
+	lastID := t3.ID
+	lastArtifact := "execution_result"
+
+	if needsPlot {
+		t4 := newNode("Render Output Plot", "render_plot", "data_agent", []string{lastID}, []string{lastArtifact}, []string{"plot_image"}, true, context)
+		nodes = append(nodes, t4)
+		lastID = t4.ID
+		lastArtifact = "plot_image"
+	}
+	if needsAnalysis || !needsPlot {
+		t5 := newNode("Verify And Summarize Result", "verify_result", "data_agent", []string{lastID}, []string{lastArtifact}, []string{"verification_report"}, true, context)
+		nodes = append(nodes, t5)
+	}
+	return nodes
+}
+
+func buildGeneralNodes(context string) []*models.TaskNode {
+	normalized := strings.ToLower(context)
+	if hasAny(normalized, "论文", "paper", "总结", "summary", "综述", "report", "报告") {
+		t1 := newNode("Collect Background Context", "general_research", "librarian_agent", nil, nil, []string{"background_context"}, true, context)
+		t2 := newNode("Synthesize Response", "general_synthesis", "data_agent", []string{t1.ID}, []string{"background_context"}, []string{"general_response"}, false, context)
+		return []*models.TaskNode{t1, t2}
+	}
+
+	t1 := newNode("Process Request", "general_process", "general_agent", nil, nil, []string{"general_response"}, true, context)
+	return []*models.TaskNode{t1}
+}
+
+func buildEdgesFromNodes(nodes []*models.TaskNode) []*models.TaskEdge {
+	edges := []*models.TaskEdge{}
+	for _, node := range nodes {
+		for _, dep := range node.Dependencies {
+			edges = append(edges, &models.TaskEdge{
+				ID:   uuid.New().String(),
+				From: dep,
+				To:   node.ID,
+				Type: "control",
+			})
+		}
+	}
+
+	producers := map[string]string{}
+	for _, node := range nodes {
+		for _, key := range node.OutputArtifacts {
+			producers[key] = node.ID
+		}
+	}
+
+	for _, node := range nodes {
+		for _, key := range node.RequiredArtifacts {
+			if producerID, ok := producers[key]; ok && producerID != node.ID {
+				edges = append(edges, &models.TaskEdge{
+					ID:   uuid.New().String(),
+					From: producerID,
+					To:   node.ID,
+					Type: "data",
+				})
+			}
+		}
+	}
+
+	return edges
+}
+
+func fillInitialStatuses(nodes []*models.TaskNode) {
+	for _, node := range nodes {
+		if len(node.Dependencies) == 0 && len(node.RequiredArtifacts) == 0 {
+			node.Status = models.StatusReady
+		} else {
+			node.Status = models.StatusPending
+		}
+	}
+}
+
+func fillGraphMeta(plan *models.PlanGraph) {
+	meta := models.GraphMeta{
+		TotalNodes: len(plan.Nodes),
+	}
+
+	for _, node := range plan.Nodes {
+		switch node.Status {
+		case models.StatusCompleted:
+			meta.CompletedNodes++
+		case models.StatusFailed:
+			meta.FailedNodes++
+		case models.StatusBlocked:
+			meta.BlockedNodes++
+		case models.StatusInProgress:
+			meta.InProgressNodes++
+		case models.StatusReady:
+			meta.ReadyNodes++
+		}
+	}
+
+	plan.Meta = meta
+}
+
+func validatePlanGraph(plan *models.PlanGraph) error {
+	if plan == nil {
+		return fmt.Errorf("plan graph is nil")
+	}
+
+	nodeMap := make(map[string]*models.TaskNode, len(plan.Nodes))
+	inDegree := make(map[string]int, len(plan.Nodes))
+	for _, node := range plan.Nodes {
+		if node == nil {
+			return fmt.Errorf("plan graph contains nil node")
+		}
+		if _, exists := nodeMap[node.ID]; exists {
+			return fmt.Errorf("duplicate node id: %s", node.ID)
+		}
+		nodeMap[node.ID] = node
+		inDegree[node.ID] = 0
+	}
+
+	artifactProducers := map[string]string{}
+	for _, node := range plan.Nodes {
+		for _, key := range node.OutputArtifacts {
+			artifactProducers[key] = node.ID
+		}
+	}
+
+	adj := map[string][]string{}
+	for _, edge := range plan.Edges {
+		if edge == nil {
+			return fmt.Errorf("plan graph contains nil edge")
+		}
+		if _, ok := nodeMap[edge.From]; !ok {
+			return fmt.Errorf("edge source not found: %s", edge.From)
+		}
+		if _, ok := nodeMap[edge.To]; !ok {
+			return fmt.Errorf("edge target not found: %s", edge.To)
+		}
+		if edge.Type == "control" {
+			inDegree[edge.To]++
+			adj[edge.From] = append(adj[edge.From], edge.To)
+		}
+	}
+
+	for _, node := range plan.Nodes {
+		for _, dep := range node.Dependencies {
+			if _, ok := nodeMap[dep]; !ok {
+				return fmt.Errorf("dependency not found for node %s: %s", node.ID, dep)
+			}
+		}
+		for _, key := range node.RequiredArtifacts {
+			if _, ok := artifactProducers[key]; !ok {
+				return fmt.Errorf("required artifact has no producer for node %s: %s", node.ID, key)
+			}
+		}
+	}
+
+	queue := make([]string, 0, len(inDegree))
+	for id, degree := range inDegree {
+		if degree == 0 {
+			queue = append(queue, id)
+		}
+	}
+
+	visited := 0
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		visited++
+
+		for _, next := range adj[id] {
+			inDegree[next]--
+			if inDegree[next] == 0 {
+				queue = append(queue, next)
+			}
+		}
+	}
+
+	if visited != len(plan.Nodes) {
+		return fmt.Errorf("cycle detected in control edges")
+	}
+
+	return nil
+}
+
+func buildFrameworkEvaluationNodesV2(intent models.IntentContext) []*models.TaskNode {
+	context := intent.RawIntent
+	normalized := strings.ToLower(context)
+	frameworks := frameworkNamesFromIntent(intent, normalized)
+	needsBenchmark := boolEntity(intent.Entities, "needs_benchmark") || hasAny(normalized,
+		"benchmark",
+		"\u6027\u80fd",
+		"\u8bc4\u6d4b",
+		"latency",
+		"\u541e\u5410",
+		"run",
+		"\u8fd0\u884c",
+		"\u5b9e\u9a8c",
+	)
+
+	t1 := newNode("Research Candidate Frameworks", "framework_research", "librarian_agent", nil, nil, []string{"framework_research_report"}, true, context)
+	if !needsBenchmark {
+		nodes := []*models.TaskNode{t1}
+		dependencies := make([]string, 0, len(frameworks))
+		requiredArtifacts := make([]string, 0, len(frameworks))
+		for idx, framework := range frameworks {
+			artifact := fmt.Sprintf("framework_fit_report_%d", idx+1)
+			node := newNode("Analyze "+framework+" Fit", fmt.Sprintf("framework_fit_%d", idx+1), "librarian_agent", []string{t1.ID}, []string{"framework_research_report"}, []string{artifact}, true, context)
+			nodes = append(nodes, node)
+			dependencies = append(dependencies, node.ID)
+			requiredArtifacts = append(requiredArtifacts, artifact)
+		}
+		report := newNode("Generate Selection Recommendation", "framework_recommendation", "data_agent", dependencies, requiredArtifacts, []string{"evaluation_report"}, false, context)
+		nodes = append(nodes, report)
+		return nodes
+	}
+
+	nodes := []*models.TaskNode{t1}
+	runDependencies := make([]string, 0, len(frameworks))
+	runArtifacts := make([]string, 0, len(frameworks))
+	for idx, framework := range frameworks {
+		prefix := frameworkArtifactPrefix(framework, idx)
+		codeArtifact := fmt.Sprintf("%s_generated_code", prefix)
+		dependencyArtifact := fmt.Sprintf("%s_dependency_spec", prefix)
+		runtimeArtifact := fmt.Sprintf("%s_runtime_session", prefix)
+		preparedArtifact := fmt.Sprintf("%s_prepared_runtime", prefix)
+		metricsArtifact := fmt.Sprintf("framework_metrics_%d", idx+1)
+		generate := newNode("Generate "+framework+" Benchmark Code", "generate_code", "coder_agent", []string{t1.ID}, []string{"framework_research_report"}, []string{codeArtifact}, true, context)
+		resolve := newNode("Resolve "+framework+" Dependencies", "resolve_dependencies", "coder_agent", []string{generate.ID}, []string{codeArtifact}, []string{dependencyArtifact}, true, context)
+		prepare := newNode("Prepare "+framework+" Runtime", "prepare_runtime", "sandbox_agent", []string{resolve.ID}, []string{dependencyArtifact}, []string{runtimeArtifact}, true, context)
+		install := newNode("Install "+framework+" Dependencies", "install_dependencies", "sandbox_agent", []string{prepare.ID}, []string{runtimeArtifact, dependencyArtifact}, []string{preparedArtifact, prefix + "_dependency_install_report"}, true, context)
+		run := newNode("Run "+framework+" Benchmark", "execute_code", "sandbox_agent", []string{install.ID}, []string{codeArtifact, preparedArtifact}, []string{metricsArtifact}, true, context)
+		nodes = append(nodes, generate, resolve, prepare, install, run)
+		runDependencies = append(runDependencies, run.ID)
+		runArtifacts = append(runArtifacts, metricsArtifact)
+	}
+	report := newNode("Generate Benchmark Report", "framework_report", "data_agent", runDependencies, runArtifacts, []string{"evaluation_report"}, false, context)
+	nodes = append(nodes, report)
+	return nodes
+}
+
+func buildPaperReproductionNodesV2(intent models.IntentContext) []*models.TaskNode {
+	context := intent.RawIntent
+	normalized := strings.ToLower(context)
+	needsPlot := boolEntity(intent.Entities, "needs_plot") || hasAny(normalized,
+		"plot",
+		"\u753b\u56fe",
+		"\u56fe\u8868",
+		"\u66f2\u7ebf",
+		"\u53ef\u89c6\u5316",
+	)
+	needsFix := boolEntity(intent.Entities, "needs_fix") || hasAny(normalized,
+		"debug",
+		"fix",
+		"\u4fee\u590d",
+		"\u6392\u67e5",
+		"\u4e0d\u4e00\u81f4",
+		"\u91cd\u8dd1",
+	)
+	paperTitle := stringEntity(intent.Entities, "paper_title", "Paper")
+
+	t1 := newNode("Parse "+paperTitle+" & Extract Method", "paper_parse", "librarian_agent", nil, nil, []string{"parsed_paper"}, true, context)
+	t2 := newNode("Locate Reference Repository", "repo_discovery", "coder_agent", []string{t1.ID}, []string{"parsed_paper"}, []string{"repo_url"}, true, context)
+	t3 := newNode("Prepare Workspace", "repo_prepare", "coder_agent", []string{t2.ID}, []string{"repo_url"}, []string{"generated_code"}, false, context)
+	t4 := newNode("Resolve "+paperTitle+" Dependencies", "resolve_dependencies", "coder_agent", []string{t3.ID}, []string{"generated_code"}, []string{"dependency_spec"}, false, context)
+	t5 := newNode("Setup Runtime Environment", "prepare_runtime", "sandbox_agent", []string{t4.ID}, []string{"dependency_spec"}, []string{"runtime_session"}, false, context)
+	t6 := newNode("Install "+paperTitle+" Dependencies", "install_dependencies", "sandbox_agent", []string{t5.ID}, []string{"runtime_session", "dependency_spec"}, []string{"prepared_runtime", "dependency_install_report"}, false, context)
+	t7 := newNode("Execute Baseline", "execute_code", "sandbox_agent", []string{t6.ID}, []string{"generated_code", "prepared_runtime"}, []string{"run_metrics"}, false, context)
+	t8 := newNode("Compare With Paper Claims", "paper_compare", "data_agent", []string{t7.ID}, []string{"run_metrics", "parsed_paper"}, []string{"comparison_report"}, false, context)
+
+	nodes := []*models.TaskNode{t1, t2, t3, t4, t5, t6, t7, t8}
+	lastID := t8.ID
+	lastArtifact := "comparison_report"
+
+	if needsPlot {
+		t7 := newNode("Visualize Reproduction Results", "result_visualization", "data_agent", []string{lastID}, []string{lastArtifact}, []string{"result_plot"}, true, context)
+		nodes = append(nodes, t7)
+		lastID = t7.ID
+		lastArtifact = "result_plot"
+	}
+	if needsFix {
+		t8 := newNode("Fix Gaps And Rerun", "fix_and_rerun", "coder_agent", []string{lastID}, []string{lastArtifact}, []string{"rerun_report"}, false, context)
+		nodes = append(nodes, t8)
+	}
+	return nodes
+}
+
+func buildCodeExecutionNodesV2(intent models.IntentContext) []*models.TaskNode {
+	context := intent.RawIntent
+	normalized := strings.ToLower(context)
+	needsPlot := boolEntity(intent.Entities, "needs_plot") || hasAny(normalized,
+		"plot",
+		"matplotlib",
+		"\u753b\u56fe",
+		"\u56fe\u8868",
+		"\u66f2\u7ebf",
+	)
+	needsAnalysis := boolEntity(intent.Entities, "needs_report") || hasAny(normalized,
+		"analyze",
+		"analysis",
+		"\u5206\u6790",
+		"\u89e3\u91ca",
+		"report",
+		"\u62a5\u544a",
+		"\u590d\u6742\u5ea6",
+	)
+
+	t1 := newNode("Generate Code", "generate_code", "coder_agent", nil, nil, []string{"generated_code"}, true, context)
+	t2 := newNode("Resolve Dependencies", "resolve_dependencies", "coder_agent", []string{t1.ID}, []string{"generated_code"}, []string{"dependency_spec"}, true, context)
+	t3 := newNode("Prepare Runtime", "prepare_runtime", "sandbox_agent", []string{t2.ID}, []string{"dependency_spec"}, []string{"runtime_session"}, false, context)
+	t4 := newNode("Install Dependencies", "install_dependencies", "sandbox_agent", []string{t3.ID}, []string{"runtime_session", "dependency_spec"}, []string{"prepared_runtime", "dependency_install_report"}, false, context)
+	t5 := newNode("Execute Code", "execute_code", "sandbox_agent", []string{t4.ID}, []string{"generated_code", "prepared_runtime"}, []string{"execution_result"}, false, context)
+
+	nodes := []*models.TaskNode{t1, t2, t3, t4, t5}
+	lastID := t5.ID
+	lastArtifact := "execution_result"
+
+	if needsPlot {
+		t6 := newNode("Render Output Plot", "render_plot", "data_agent", []string{lastID}, []string{lastArtifact}, []string{"plot_image"}, true, context)
+		nodes = append(nodes, t6)
+		lastID = t6.ID
+		lastArtifact = "plot_image"
+	}
+	if needsAnalysis || !needsPlot {
+		t7 := newNode("Verify And Summarize Result", "verify_result", "data_agent", []string{lastID}, []string{lastArtifact}, []string{"verification_report"}, true, context)
+		nodes = append(nodes, t7)
+	}
+	return nodes
+}
+
+func buildGeneralNodesV2(intent models.IntentContext) []*models.TaskNode {
+	context := intent.RawIntent
+	normalized := strings.ToLower(context)
+	if stringEntity(intent.Entities, "paper_task", "") == "summary" {
+		title := stringEntity(intent.Entities, "paper_title", "Paper")
+		t1 := newNode("Read "+title+" Context", "paper_context", "librarian_agent", nil, nil, []string{"paper_context"}, true, context)
+		t2 := newNode("Summarize Contributions", "paper_contributions", "data_agent", []string{t1.ID}, []string{"paper_context"}, []string{"paper_contributions"}, true, context)
+		t3 := newNode("List Limitations And Risks", "paper_limitations", "data_agent", []string{t1.ID}, []string{"paper_context"}, []string{"paper_limitations"}, true, context)
+		t4 := newNode("Compose Paper Summary", "paper_summary", "data_agent", []string{t2.ID, t3.ID}, []string{"paper_contributions", "paper_limitations"}, []string{"general_response"}, false, context)
+		return []*models.TaskNode{t1, t2, t3, t4}
+	}
+	if hasAny(normalized,
+		"\u8bba\u6587",
+		"paper",
+		"\u603b\u7ed3",
+		"summary",
+		"\u7efc\u8ff0",
+		"report",
+		"\u62a5\u544a",
+		"\u8d21\u732e",
+		"\u5c40\u9650",
+		"rag",
+		"query rewrite",
+	) {
+		t1 := newNode("Collect Background Context", "general_research", "librarian_agent", nil, nil, []string{"background_context"}, true, context)
+		t2 := newNode("Synthesize Response", "general_synthesis", "data_agent", []string{t1.ID}, []string{"background_context"}, []string{"general_response"}, false, context)
+		return []*models.TaskNode{t1, t2}
+	}
+
+	t1 := newNode("Process Request", "general_process", "general_agent", nil, nil, []string{"general_response"}, true, context)
+	return []*models.TaskNode{t1}
+}
+
+func hasAny(s string, keywords ...string) bool {
+	for _, keyword := range keywords {
+		if strings.Contains(s, strings.ToLower(keyword)) {
+			return true
+		}
+	}
+	return false
+}
+
+func frameworkLabels(normalized string) []string {
+	candidates := []string{"langchain", "llamaindex", "haystack", "autogen", "crewai", "langgraph"}
+	labels := make([]string, 0, 2)
+	for _, candidate := range candidates {
+		if strings.Contains(normalized, candidate) {
+			labels = append(labels, strings.ToUpper(candidate[:1])+candidate[1:])
+		}
+	}
+	return labels
+}
+
+func frameworkNamesFromIntent(intent models.IntentContext, normalized string) []string {
+	if raw, ok := intent.Entities["frameworks"].([]string); ok && len(raw) > 0 {
+		names := make([]string, 0, len(raw))
+		for _, item := range raw {
+			names = append(names, prettifyFrameworkName(item))
+		}
+		return names
+	}
+	return fallbackFrameworkNames(frameworkLabels(normalized))
+}
+
+func fallbackFrameworkNames(frameworks []string) []string {
+	if len(frameworks) == 0 {
+		return []string{"Framework A", "Framework B"}
+	}
+	return frameworks
+}
+
+func prettifyFrameworkName(name string) string {
+	switch strings.ToLower(name) {
+	case "langchain":
+		return "LangChain"
+	case "llamaindex":
+		return "LlamaIndex"
+	case "langgraph":
+		return "LangGraph"
+	default:
+		return name
+	}
+}
+
+func boolEntity(entities map[string]any, key string) bool {
+	value, ok := entities[key].(bool)
+	return ok && value
+}
+
+func stringEntity(entities map[string]any, key string, fallback string) string {
+	value, ok := entities[key].(string)
+	if !ok || value == "" {
+		return fallback
+	}
+	return value
+}
+
+func frameworkDisplayName(frameworks []string, index int, fallback string) string {
+	if index < len(frameworks) {
+		return frameworks[index]
+	}
+	return fallback
+}
+
+func frameworkArtifactPrefix(framework string, index int) string {
+	normalized := strings.ToLower(strings.TrimSpace(framework))
+	replacer := strings.NewReplacer(" ", "_", "-", "_", "/", "_")
+	normalized = replacer.Replace(normalized)
+	if normalized == "" {
+		return fmt.Sprintf("framework_%d", index+1)
+	}
+	return normalized
+}
+
+func validateAgentPlannedNodes(intent models.IntentContext, nodes []*models.TaskNode) error {
+	if len(nodes) == 0 {
+		return fmt.Errorf("planner agent returned no executable nodes")
+	}
+	if err := validateCriticalNodeContracts(intent, nodes); err != nil {
+		return err
+	}
+	if intent.IntentType != "Framework_Evaluation" {
+		return nil
+	}
+
+	normalized := strings.ToLower(intent.RawIntent)
+	needsBenchmark := boolEntity(intent.Entities, "needs_benchmark") || hasAny(normalized,
+		"benchmark",
+		"\u6027\u80fd",
+		"\u8bc4\u6d4b",
+		"latency",
+		"\u541e\u5410",
+		"run",
+		"\u8fd0\u884c",
+		"\u5b9e\u9a8c",
+	)
+	if !needsBenchmark {
+		return nil
+	}
+
+	expectedFrameworks := frameworkNamesFromIntent(intent, normalized)
+	executePrefixes := map[string]struct{}{}
+	prepareCount := 0
+
+	for _, node := range nodes {
+		if node == nil || node.AssignedTo != "sandbox_agent" {
+			continue
+		}
+		switch node.Type {
+		case "prepare_runtime":
+			prepareCount++
+		case "execute_code":
+			codePrefix := ""
+			runtimePrefix := ""
+			for _, artifact := range node.RequiredArtifacts {
+				switch {
+				case strings.HasSuffix(artifact, "_generated_code"):
+					codePrefix = strings.TrimSuffix(artifact, "_generated_code")
+				case strings.HasSuffix(artifact, "_prepared_runtime"):
+					runtimePrefix = strings.TrimSuffix(artifact, "_prepared_runtime")
+				}
+			}
+			if codePrefix == "" || runtimePrefix == "" || codePrefix != runtimePrefix {
+				return fmt.Errorf("framework execute node %q is missing isolated code/runtime artifacts", node.Name)
+			}
+			executePrefixes[codePrefix] = struct{}{}
+		}
+	}
+
+	if len(executePrefixes) < len(expectedFrameworks) {
+		return fmt.Errorf("framework benchmark plan does not contain one isolated execute branch per framework")
+	}
+	if prepareCount < len(expectedFrameworks) {
+		return fmt.Errorf("framework benchmark plan does not contain one runtime branch per framework")
+	}
+	return nil
+}
+
+func validateCriticalNodeContracts(intent models.IntentContext, nodes []*models.TaskNode) error {
+	if intent.IntentType != "Code_Execution" && intent.IntentType != "Framework_Evaluation" && intent.IntentType != "Paper_Reproduction" {
+		return nil
+	}
+
+	hasGeneratedCode := false
+	hasResolveDependencies := false
+	hasPrepareRuntime := false
+	hasInstallDependencies := false
+	hasExecuteCode := false
+
+	for _, node := range nodes {
+		if node == nil {
+			continue
+		}
+
+		switch node.Type {
+		case "generate_code":
+			hasGeneratedCode = true
+			if node.AssignedTo != "coder_agent" {
+				return fmt.Errorf("generate_code node %q must be assigned to coder_agent", node.Name)
+			}
+		case "resolve_dependencies":
+			hasResolveDependencies = true
+			if node.AssignedTo != "coder_agent" {
+				return fmt.Errorf("resolve_dependencies node %q must be assigned to coder_agent", node.Name)
+			}
+			if !containsArtifact(node.OutputArtifacts, "dependency_spec") {
+				return fmt.Errorf("resolve_dependencies node %q must output dependency_spec", node.Name)
+			}
+		case "prepare_runtime":
+			hasPrepareRuntime = true
+			if node.AssignedTo != "sandbox_agent" {
+				return fmt.Errorf("prepare_runtime node %q must be assigned to sandbox_agent", node.Name)
+			}
+			if !containsArtifact(node.OutputArtifacts, "runtime_session") && !containsArtifact(node.OutputArtifacts, "runtime_env") {
+				return fmt.Errorf("prepare_runtime node %q must output runtime_session or runtime_env", node.Name)
+			}
+		case "install_dependencies":
+			hasInstallDependencies = true
+			if node.AssignedTo != "sandbox_agent" {
+				return fmt.Errorf("install_dependencies node %q must be assigned to sandbox_agent", node.Name)
+			}
+			if !containsArtifact(node.RequiredArtifacts, "dependency_spec") {
+				return fmt.Errorf("install_dependencies node %q must require dependency_spec", node.Name)
+			}
+			if !containsArtifact(node.OutputArtifacts, "prepared_runtime") {
+				return fmt.Errorf("install_dependencies node %q must output prepared_runtime", node.Name)
+			}
+		case "execute_code", "baseline_run":
+			hasExecuteCode = true
+			if node.AssignedTo != "sandbox_agent" {
+				return fmt.Errorf("execute_code node %q must be assigned to sandbox_agent", node.Name)
+			}
+			if !containsArtifact(node.RequiredArtifacts, "generated_code") && !containsArtifact(node.RequiredArtifacts, "code_file_path") {
+				return fmt.Errorf("execute_code node %q must require generated code input", node.Name)
+			}
+		}
+	}
+
+	if intent.IntentType == "Code_Execution" {
+		if !hasGeneratedCode || !hasResolveDependencies || !hasPrepareRuntime || !hasInstallDependencies || !hasExecuteCode {
+			return fmt.Errorf("code execution plan is missing one or more required canonical nodes")
+		}
+	}
+
+	return nil
+}
+
+func containsArtifact(values []string, artifact string) bool {
+	for _, value := range values {
+		if value == artifact || strings.HasSuffix(value, "_"+artifact) {
+			return true
+		}
+	}
+	return false
+}
+
+func logPlannerFallback(intent models.IntentContext, err error) {
+	log.Printf("[PlannerAgent] fallback to template planner intent_type=%s raw_intent=%q err=%v", intent.IntentType, intent.RawIntent, err)
 }
