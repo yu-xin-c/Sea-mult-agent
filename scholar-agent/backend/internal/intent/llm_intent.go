@@ -16,6 +16,12 @@ type LLMIntentInferrer struct {
 	chatModel *openai.ChatModel
 }
 
+const (
+	llmFirstAttemptTimeout  = 4 * time.Second
+	llmSecondAttemptTimeout = 8 * time.Second
+	llmSingleCallHardLimit  = 12 * time.Second
+)
+
 // LLMIntentConfig LLM 意图推理器配置
 type LLMIntentConfig struct {
 	APIKey  string
@@ -53,7 +59,7 @@ func buildIntentPrompt(question string, lastHistory string) string {
 	for action, info := range ResearchIntentActions {
 		actionList.WriteString(fmt.Sprintf("- %s: %s\n", action, info.Desc))
 	}
-
+	//TODO  这个 prompt 目前还需要 加上很多 约束 和 数据的 收集  这边 目前还没有 完善
 	prompt := fmt.Sprintf(`你是一个科研论文智能助手的意图识别模块。请根据用户输入判断其意图类别。
 
 当前时间: %s
@@ -92,50 +98,70 @@ toolName$keyword$keyword2
 // Infer 调用 LLM 进行意图推理
 // 支持 2 秒超时 + 1 次重试
 func (li *LLMIntentInferrer) Infer(ctx context.Context, chatCtx *ChatContext) (*IntentInfo, error) {
+	start := time.Now()
 	lastHistory := chatCtx.LastHistoryData
 	if lastHistory == "" {
 		lastHistory = "无记录"
 	}
 
 	prompt := buildIntentPrompt(chatCtx.Question, lastHistory)
+	log.Printf("[LLMIntent] 开始推理: question=%q", chatCtx.Question)
 
-	// 首次调用: 2秒超时
-	result, err := li.callWithTimeout(ctx, prompt, 2*time.Second)
+	result, err := li.callWithTimeout(ctx, prompt, llmFirstAttemptTimeout)
 	if err != nil {
 		log.Printf("[LLMIntent] 首次调用失败: %v, 触发重试", err)
-		// 重试: 3秒超时（更宽松）
-		result, err = li.callWithTimeout(ctx, prompt, 3*time.Second)
+		result, err = li.callWithTimeout(ctx, prompt, llmSecondAttemptTimeout)
 		if err != nil {
-			log.Printf("[LLMIntent] 重试失败: %v, 降级为 none", err)
+			log.Printf("[LLMIntent] 重试失败: %v, 降级为 none, elapsed=%v", err, time.Since(start))
 			return &IntentInfo{ToolName: "none"}, nil
 		}
 	}
 
-	// 解析 LLM 输出
+	log.Printf("[LLMIntent] 原始输出: %q", result)
 	intentInfo := li.parseResult(result)
-	log.Printf("[LLMIntent] 推理结果: toolName=%s, keyword=%s, keyword2=%s",
-		intentInfo.ToolName, intentInfo.Keyword, intentInfo.Keyword2)
+	log.Printf("[LLMIntent] 推理结果: toolName=%s, keyword=%s, keyword2=%s, elapsed=%v",
+		intentInfo.ToolName, intentInfo.Keyword, intentInfo.Keyword2, time.Since(start))
 
 	return intentInfo, nil
 }
 
 // callWithTimeout 带超时的 LLM 调用
 func (li *LLMIntentInferrer) callWithTimeout(ctx context.Context, prompt string, timeout time.Duration) (string, error) {
-	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	callCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	messages := []*schema.Message{
 		{Role: schema.User, Content: prompt},
 	}
-
-	msg, err := li.chatModel.Generate(timeoutCtx, messages)
-	if err != nil {
-		return "", fmt.Errorf("LLM 调用失败: %w", err)
+	type callResult struct {
+		content string
+		err     error
 	}
+	done := make(chan callResult, 1)
 
-	content := strings.TrimSpace(msg.Content)
-	content = strings.ReplaceAll(content, "\n", "")
-	return content, nil
+	go func() {
+		msg, err := li.chatModel.Generate(callCtx, messages)
+		if err != nil {
+			done <- callResult{err: fmt.Errorf("LLM 调用失败: %w", err)}
+			return
+		}
+		content := strings.TrimSpace(msg.Content)
+		content = strings.ReplaceAll(content, "\n", "")
+		done <- callResult{content: content}
+	}()
+
+	hardTimer := time.NewTimer(llmSingleCallHardLimit)
+	defer hardTimer.Stop()
+	select {
+	case <-ctx.Done():
+		return "", fmt.Errorf("LLM 调用被上层取消: %w", ctx.Err())
+	case <-callCtx.Done():
+		return "", fmt.Errorf("LLM 调用超时(%v): %w", timeout, callCtx.Err())
+	case <-hardTimer.C:
+		return "", fmt.Errorf("LLM 调用硬超时(%v)", llmSingleCallHardLimit)
+	case result := <-done:
+		return result.content, result.err
+	}
 }
 
 // parseResult 解析 LLM 输出格式: "toolName$keyword$keyword2"
@@ -146,6 +172,11 @@ func (li *LLMIntentInferrer) parseResult(content string) *IntentInfo {
 		Keyword2: "none",
 	}
 
+	content = strings.TrimSpace(content)
+	content = strings.Trim(content, "`")
+	if len(content) >= 4 && strings.EqualFold(content[:4], "json") {
+		content = content[4:]
+	}
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return info
@@ -160,6 +191,12 @@ func (li *LLMIntentInferrer) parseResult(content string) *IntentInfo {
 	}
 	if len(parts) >= 3 {
 		info.Keyword2 = strings.TrimSpace(parts[2])
+	}
+	if info.Keyword == "" {
+		info.Keyword = "none"
+	}
+	if info.Keyword2 == "" {
+		info.Keyword2 = "none"
 	}
 
 	// 校验 toolName 合法性

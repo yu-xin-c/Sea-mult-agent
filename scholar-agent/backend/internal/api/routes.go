@@ -87,6 +87,15 @@ func SetupRoutes(r *gin.Engine) {
 		log.Printf("[System] 意图识别引擎初始化成功: %s", intentEngine)
 	}
 
+	queryRewriter, err := intent.NewLLMQueryRewriter(intent.QueryRewriteConfig{
+		APIKey:  os.Getenv("OPENAI_API_KEY"),
+		BaseURL: os.Getenv("OPENAI_BASE_URL"),
+		Model:   os.Getenv("OPENAI_MODEL_NAME"),
+	})
+	if err != nil {
+		log.Printf("[Warning] Query 重写器初始化失败，将使用规则重写: %v", err)
+	}
+
 	apiGroup := r.Group("/api")
 	{
 		// Preflight handlers for the group
@@ -170,6 +179,11 @@ func SetupRoutes(r *gin.Engine) {
 			if err := c.ShouldBindJSON(&payload); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
+			}
+			originalIntent := payload.Intent
+			payload.Intent = rewriteUserIntentQuery(c.Request.Context(), queryRewriter, payload.Intent)
+			if payload.Intent != originalIntent {
+				log.Printf("[Router] Query 重写: from=%q to=%q", originalIntent, payload.Intent)
 			}
 
 			// 使用意图识别引擎识别意图
@@ -373,4 +387,20 @@ func contains(s string, keywords []string) bool {
 		}
 	}
 	return false
+}
+
+func rewriteUserIntentQuery(ctx context.Context, rewriter intent.QueryRewriter, query string) string {
+	query = intent.RewriteUserQuery(query)
+	if rewriter == nil {
+		return query
+	}
+	rewritten, err := rewriter.Rewrite(ctx, query)
+	if err != nil {
+		log.Printf("[Router] LLM Query 重写失败，保留规则重写结果: %v", err)
+		return query
+	}
+	if rewritten == "" {
+		return query
+	}
+	return rewritten
 }

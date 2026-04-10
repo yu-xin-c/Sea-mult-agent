@@ -31,19 +31,14 @@ type IntentInfo struct {
 
 // IntentVectorInfo 向量匹配结果
 type IntentVectorInfo struct {
-	TenantId   int         // 租户ID
-	Content    string      // 匹配内容
-	ActionType CommandType // 动作类型枚举
-	ActionMsg  string      // 动作消息
-	Type       int         // 1=ENTRY进入, 2=EXIT退出
-	Score      float32     // 相似度分数（越小越相似）
+	TenantId   int     // 租户ID
+	Content    string  // 匹配内容
+	ActionType string  // 动作类型
+	ActionMsg  string  // 动作消息
+	Type       int     // 向量文档类型
+	Score      float32 // 相似度分数（越小越相似）
 }
 
-// IntentVectorType 向量匹配文档的进入/退出类型
-const (
-	VectorTypeEntry = 1 // 进入模式
-	VectorTypeExit  = 2 // 退出模式
-)
 
 // IntentResult 最终意图识别结果
 type IntentResult struct {

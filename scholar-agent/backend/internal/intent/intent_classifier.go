@@ -17,8 +17,6 @@ type Engineer struct {
 	vectorMatcher *VectorMatcher
 	// LLM 意图推理器（优先级3）
 	llmInferrer *LLMIntentInferrer
-	// 模式状态管理器
-	stateManager *StateManager
 	// 内存缓存
 	cache *MemoryCache
 	// Milvus 客户端
@@ -33,13 +31,9 @@ func NewEngineer(ctx context.Context, cfg EngineConfig) (*Engineer, error) {
 	// 初始化规则匹配器
 	ruleMatcher := NewRuleMatcher()
 
-	// 初始化模式状态管理器
-	stateManager := NewStateManager(cache)
-
 	eng := &Engineer{
-		ruleMatcher:  ruleMatcher,
-		stateManager: stateManager,
-		cache:        cache,
+		ruleMatcher: ruleMatcher,
+		cache:       cache,
 	}
 
 	// 初始化 Milvus 客户端（可选，连接失败不影响规则匹配和 LLM 推理）
@@ -65,6 +59,11 @@ func NewEngineer(ctx context.Context, cfg EngineConfig) (*Engineer, error) {
 				log.Printf("[Engineer] 向量匹配器初始化失败: %v", err)
 			} else {
 				eng.vectorMatcher = vm
+
+				// 插入预训练种子数据（仅在集合为空时执行）
+				if err := vm.SeedData(ctx); err != nil {
+					log.Printf("[Engineer] 种子数据插入失败（不影响向量匹配功能）: %v", err)
+				}
 			}
 		}
 	}
@@ -113,18 +112,9 @@ func (eng *Engineer) Recognize(ctx context.Context, chatCtx *ChatContext) (*Inte
 
 	// 填充上一轮对话记录
 	if chatCtx.LastHistoryData == "" {
-		chatCtx.LastHistoryData = eng.stateManager.GetLastHistory(chatCtx.UserId, chatCtx.DeviceId)
+		chatCtx.LastHistoryData = eng.getLastHistory(chatCtx.UserId, chatCtx.DeviceId)
 	}
-
-	// Step0: 检查是否已在特定模式中
-	currentMode, inMode := eng.stateManager.GetCurrentMode(chatCtx.UserId, chatCtx.DeviceId)
-	if inMode {
-		result, handled := eng.handleModeInternal(ctx, chatCtx, currentMode)
-		if handled {
-			log.Printf("[Engineer] 模式内处理完成: mode=%s, elapsed=%v", currentMode, time.Since(startTime))
-			return result, nil
-		}
-	}
+	log.Printf("[Engineer] 开始意图识别: question=%q, hasVector=%v, hasLLM=%v", question, eng.vectorMatcher != nil, eng.llmInferrer != nil)
 
 	// Step1: 规则匹配（最快，同步执行）
 	if kw, hit := eng.ruleMatcher.Match(question); hit {
@@ -136,20 +126,12 @@ func (eng *Engineer) Recognize(ctx context.Context, chatCtx *ChatContext) (*Inte
 			IntentType:  MapToIntentType(kw.Type),
 		}
 
-		// 检查是否需要进入模式
-		eng.tryEnterMode(chatCtx, kw.Type)
-
 		log.Printf("[Engineer] 规则匹配命中: toolName=%s, elapsed=%v", kw.Type, time.Since(startTime))
 		return result, nil
 	}
 
 	// Step2: 并行提交向量匹配和LLM推理（竞争式等待）
 	result := eng.parallelRecognize(ctx, chatCtx)
-
-	// 检查是否需要进入模式
-	if result.HitIntent && result.ToolName != "none" && result.ToolName != "chat" {
-		eng.tryEnterMode(chatCtx, result.ToolName)
-	}
 
 	log.Printf("[Engineer] 意图识别完成: toolName=%s, source=%s, elapsed=%v",
 		result.ToolName, result.MatchSource, time.Since(startTime))
@@ -165,24 +147,34 @@ func (eng *Engineer) parallelRecognize(ctx context.Context, chatCtx *ChatContext
 	vectorCh := make(chan vectorResult, 1)
 	llmCh := make(chan llmResult, 1)
 
-	// 启动向量匹配任务
 	if eng.vectorMatcher != nil {
+		log.Printf("[Engineer] 并行任务启动: VectorMatcher")
 		go func() {
+			start := time.Now()
 			infos, err := eng.vectorMatcher.Search(ctx, chatCtx.Question, "")
+			log.Printf("[Engineer] VectorMatcher 返回: err=%v, hits=%d, elapsed=%v", err, len(infos), time.Since(start))
 			vectorCh <- vectorResult{infos: infos, err: err}
 		}()
 	} else {
-		vectorCh <- vectorResult{} // 向量匹配不可用，直接返回空
+		log.Printf("[Engineer] VectorMatcher 不可用，跳过")
+		vectorCh <- vectorResult{}
 	}
 
-	// 启动 LLM 推理任务
 	if eng.llmInferrer != nil {
+		log.Printf("[Engineer] 并行任务启动: LLMIntent")
 		go func() {
+			start := time.Now()
 			info, err := eng.llmInferrer.Infer(ctx, chatCtx)
+			toolName := "none"
+			if info != nil {
+				toolName = info.ToolName
+			}
+			log.Printf("[Engineer] LLMIntent 返回: err=%v, toolName=%s, elapsed=%v", err, toolName, time.Since(start))
 			llmCh <- llmResult{info: info, err: err}
 		}()
 	} else {
-		llmCh <- llmResult{info: &IntentInfo{ToolName: "none"}} // LLM 不可用
+		log.Printf("[Engineer] LLMIntent 不可用，跳过")
+		llmCh <- llmResult{info: &IntentInfo{ToolName: "none"}}
 	}
 
 	// 竞争式等待
@@ -196,10 +188,13 @@ func (eng *Engineer) parallelRecognize(ctx context.Context, chatCtx *ChatContext
 		case vr := <-vectorCh:
 			vecDone = true
 			vecResult = vr
-			// 向量匹配命中且有结果
+			if vr.err != nil {
+				log.Printf("[Engineer] VectorMatcher 失败: %v", vr.err)
+			}
 			if vr.err == nil && len(vr.infos) > 0 {
 				cancel() // 取消其他任务
 				actionMsg := vr.infos[0].ActionMsg
+				log.Printf("[Engineer] 采用 Vector 结果: toolName=%s, score=%.4f", actionMsg, vr.infos[0].Score)
 				return &IntentResult{
 					HitIntent:   true,
 					ToolName:    actionMsg,
@@ -213,9 +208,12 @@ func (eng *Engineer) parallelRecognize(ctx context.Context, chatCtx *ChatContext
 		case lr := <-llmCh:
 			llmDone = true
 			llmRes = lr
-			// LLM 推理命中且不为 none/chat
+			if lr.err != nil {
+				log.Printf("[Engineer] LLMIntent 失败: %v", lr.err)
+			}
 			if lr.err == nil && lr.info != nil && lr.info.ToolName != "none" && lr.info.ToolName != "chat" {
 				cancel() // 取消其他任务
+				log.Printf("[Engineer] 采用 LLM 结果: toolName=%s, keyword=%s, keyword2=%s", lr.info.ToolName, lr.info.Keyword, lr.info.Keyword2)
 				return &IntentResult{
 					HitIntent:   true,
 					ToolName:    lr.info.ToolName,
@@ -227,13 +225,13 @@ func (eng *Engineer) parallelRecognize(ctx context.Context, chatCtx *ChatContext
 			}
 
 		case <-ctx.Done():
-			// 上下文取消
+			log.Printf("[Engineer] 并行识别被取消: %v", ctx.Err())
 			return &IntentResult{HitIntent: false, ToolName: "none", MatchSource: MatchSourceNone, IntentType: "General"}
 		}
 	}
 
-	// 都未命中有效意图，检查 LLM 是否返回了 chat
 	if llmRes.info != nil && llmRes.info.ToolName == "chat" {
+		log.Printf("[Engineer] 未命中工具意图，回退 chat")
 		return &IntentResult{
 			HitIntent:   false,
 			ToolName:    "chat",
@@ -243,8 +241,8 @@ func (eng *Engineer) parallelRecognize(ctx context.Context, chatCtx *ChatContext
 		}
 	}
 
-	// 检查向量结果中是否有低优先级命中
 	if vecResult.err == nil && len(vecResult.infos) > 0 {
+		log.Printf("[Engineer] 采用 Vector 兜底结果: toolName=%s, score=%.4f", vecResult.infos[0].ActionMsg, vecResult.infos[0].Score)
 		return &IntentResult{
 			HitIntent:   true,
 			ToolName:    vecResult.infos[0].ActionMsg,
@@ -255,7 +253,7 @@ func (eng *Engineer) parallelRecognize(ctx context.Context, chatCtx *ChatContext
 		}
 	}
 
-	// 完全未命中
+	log.Printf("[Engineer] 全部识别链路未命中，返回 none")
 	return &IntentResult{
 		HitIntent:   false,
 		ToolName:    "none",
@@ -264,72 +262,20 @@ func (eng *Engineer) parallelRecognize(ctx context.Context, chatCtx *ChatContext
 	}
 }
 
-// handleModeInternal 模式内处理：检查退出 or 继续在当前模式中
-func (eng *Engineer) handleModeInternal(ctx context.Context, chatCtx *ChatContext, currentMode CommandType) (*IntentResult, bool) {
-	// 尝试向量匹配查看是否有 EXIT 指令
-	var vectorInfos []IntentVectorInfo
-	if eng.vectorMatcher != nil {
-		infos, err := eng.vectorMatcher.Search(ctx, chatCtx.Question, string(currentMode))
-		if err == nil {
-			vectorInfos = infos
-		}
+// getLastHistory 获取上一轮对话记录
+func (eng *Engineer) getLastHistory(userId int64, deviceId string) string {
+	key := LastHistoryKey(userId, deviceId)
+	val, ok := eng.cache.GetString(key)
+	if !ok {
+		return ""
 	}
-
-	continueInMode, shouldExit := eng.stateManager.HandleModeCheck(currentMode, vectorInfos)
-
-	if shouldExit {
-		eng.stateManager.ClearMode(chatCtx.UserId, chatCtx.DeviceId)
-		return &IntentResult{
-			HitIntent:   true,
-			ToolName:    "none",
-			MatchSource: MatchSourceVector,
-			IntentType:  "General",
-		}, true
-	}
-
-	if continueInMode {
-		// 刷新模式过期时间
-		eng.stateManager.RefreshMode(chatCtx.UserId, chatCtx.DeviceId, currentMode, CacheKeyIntentTypeTTL)
-
-		// 根据当前模式确定意图
-		toolName := modeToDefaultTool(currentMode)
-		return &IntentResult{
-			HitIntent:   true,
-			ToolName:    toolName,
-			MatchSource: MatchSourceNone,
-			IntentType:  MapToIntentType(toolName),
-		}, true
-	}
-
-	return nil, false
+	return val
 }
 
-// tryEnterMode 尝试根据意图动作进入对应模式
-func (eng *Engineer) tryEnterMode(chatCtx *ChatContext, toolName string) {
-	if mode, ok := ModeEntryActions[toolName]; ok {
-		eng.stateManager.SetMode(chatCtx.UserId, chatCtx.DeviceId, mode, CacheKeyIntentTypeTTL)
-		log.Printf("[Engineer] 进入模式: %s (%s)", mode, GetModeDescription(mode))
-	}
-}
-
-// modeToDefaultTool 将模式映射到默认工具名
-func modeToDefaultTool(mode CommandType) string {
-	switch mode {
-	case CommandPaperReading:
-		return "summarizePaper"
-	case CommandWritingAssist:
-		return "polishText"
-	case CommandDataAnalysis:
-		return "dataAnalysis"
-	case CommandLiteratureReview:
-		return "writeLiteratureReview"
-	case CommandExperimentDesign:
-		return "experimentDesign"
-	case CommandFormulaDerive:
-		return "formulaDerive"
-	default:
-		return "chat"
-	}
+// SetLastHistory 保存上一轮对话记录
+func (eng *Engineer) SetLastHistory(userId int64, deviceId string, history string) {
+	key := LastHistoryKey(userId, deviceId)
+	eng.cache.Set(key, history, CacheKeyLastHistoryTTL)
 }
 
 // RecognizeSimple 简化版意图识别 - 仅使用问题文本，自动构建 ChatContext
@@ -350,11 +296,6 @@ func (eng *Engineer) Close() {
 		(*eng.milvusClient).Close(context.Background())
 	}
 	log.Printf("[Engineer] 意图识别引擎已关闭")
-}
-
-// GetStateManager 获取状态管理器（供外部使用）
-func (eng *Engineer) GetStateManager() *StateManager {
-	return eng.stateManager
 }
 
 // GetRuleMatcher 获取规则匹配器（供外部使用）

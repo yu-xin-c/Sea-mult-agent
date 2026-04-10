@@ -4,14 +4,20 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
+	"time"
 
 	"github.com/milvus-io/milvus/client/v2/entity"
+	"github.com/milvus-io/milvus/client/v2/index"
 	"github.com/milvus-io/milvus/client/v2/milvusclient"
 )
 
-// NewMilvusClient 初始化 Milvus 向量数据库客户端
+// NewMilvusClient 初始化 Milvus 向量数据库客户端（5秒超时，连不上直接报错不阻塞）
 func NewMilvusClient(ctx context.Context, url string) (*milvusclient.Client, error) {
-	client, err := milvusclient.New(ctx, &milvusclient.ClientConfig{
+	connCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	client, err := milvusclient.New(connCtx, &milvusclient.ClientConfig{
 		Address: url,
 	})
 	if err != nil {
@@ -28,7 +34,22 @@ func EnsureCollection(ctx context.Context, client *milvusclient.Client) error {
 		return fmt.Errorf("检查集合失败: %w", err)
 	}
 	if has {
-		log.Printf("[MilvusClient] 集合 %s 已存在", CollectionName)
+		if err = ensureVectorIndex(ctx, client); err != nil {
+			return fmt.Errorf("确保向量索引失败: %w", err)
+		}
+		log.Printf("[MilvusClient] 集合 %s 已存在，尝试加载到内存", CollectionName)
+		loadTask, err := (*client).LoadCollection(ctx, milvusclient.NewLoadCollectionOption(CollectionName))
+		if err != nil {
+			log.Printf("[MilvusClient] 加载集合失败（可能已加载）: %v", err)
+		} else {
+			// 等待加载完成
+			err = loadTask.Await(ctx)
+			if err != nil {
+				log.Printf("[MilvusClient] 等待集合加载完成失败: %v", err)
+			} else {
+				log.Printf("[MilvusClient] 集合 %s 已加载到内存", CollectionName)
+			}
+		}
 		return nil
 	}
 
@@ -48,9 +69,60 @@ func EnsureCollection(ctx context.Context, client *milvusclient.Client) error {
 	if err != nil {
 		return fmt.Errorf("创建集合失败: %w", err)
 	}
+	if err = ensureVectorIndex(ctx, client); err != nil {
+		return fmt.Errorf("创建向量索引失败: %w", err)
+	}
 
-	log.Printf("[MilvusClient] 集合 %s 创建成功", CollectionName)
+	log.Printf("[MilvusClient] 集合 %s 创建成功，尝试加载到内存", CollectionName)
+
+	// 新建集合后也需要 Load
+	loadTask, err := (*client).LoadCollection(ctx, milvusclient.NewLoadCollectionOption(CollectionName))
+	if err != nil {
+		log.Printf("[MilvusClient] 加载新集合失败: %v", err)
+	} else {
+		if err = loadTask.Await(ctx); err != nil {
+			log.Printf("[MilvusClient] 等待新集合加载完成失败: %v", err)
+		} else {
+			log.Printf("[MilvusClient] 集合 %s 已加载到内存", CollectionName)
+		}
+	}
+
 	return nil
+}
+
+func ensureVectorIndex(ctx context.Context, client *milvusclient.Client) error {
+	indexes, err := (*client).ListIndexes(ctx, milvusclient.NewListIndexOption(CollectionName))
+	if err != nil {
+		if !isIndexNotFoundError(err) {
+			return err
+		}
+		indexes = nil
+	}
+	if len(indexes) > 0 {
+		log.Printf("[MilvusClient] 集合 %s 已存在索引: %v", CollectionName, indexes)
+		return nil
+	}
+
+	createIndexTask, err := (*client).CreateIndex(ctx, milvusclient.NewCreateIndexOption(
+		CollectionName,
+		"vector",
+		index.NewFlatIndex(entity.COSINE),
+	))
+	if err != nil {
+		return err
+	}
+	if err = createIndexTask.Await(ctx); err != nil {
+		return err
+	}
+	log.Printf("[MilvusClient] 集合 %s 向量索引创建完成", CollectionName)
+	return nil
+}
+
+func isIndexNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "index not found")
 }
 
 // seedDataEntry 种子数据条目

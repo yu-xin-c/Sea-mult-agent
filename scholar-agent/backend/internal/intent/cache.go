@@ -91,21 +91,11 @@ func (c *MemoryCache) cleanupLoop() {
 
 // 缓存 Key 模板常量
 const (
-	// CacheKeyIntentType 用户当前意图模式状态 - 格式: intent_type_user_{userId}_device_{deviceId}
-	CacheKeyIntentType = "intent_type_user_%d_device_%s"
-	// CacheKeyIntentTypeTTL 意图模式过期时间
-	CacheKeyIntentTypeTTL = 5 * time.Minute
-
 	// CacheKeyLastHistory 上一轮对话记录 - 格式: last_history_{userId}_{deviceId}
 	CacheKeyLastHistory = "last_history_%d_%s"
 	// CacheKeyLastHistoryTTL 上一轮对话记录过期时间
 	CacheKeyLastHistoryTTL = 5 * time.Minute
 )
-
-// IntentTypeKey 生成意图模式缓存 Key
-func IntentTypeKey(userId int64, deviceId string) string {
-	return fmt.Sprintf(CacheKeyIntentType, userId, deviceId)
-}
 
 // LastHistoryKey 生成上一轮对话缓存 Key
 func LastHistoryKey(userId int64, deviceId string) string {

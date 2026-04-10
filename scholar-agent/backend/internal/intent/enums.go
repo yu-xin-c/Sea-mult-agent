@@ -10,39 +10,6 @@ const (
 	MatchSourceNone   MatchSource = "none"   // 未命中
 )
 
-// CommandType 科研场景模式类型
-type CommandType string
-
-const (
-	CommandNone             CommandType = ""                  // 无模式
-	CommandPaperReading     CommandType = "paper_reading"     // 论文阅读模式
-	CommandWritingAssist    CommandType = "writing_assist"    // 写作辅助模式
-	CommandDataAnalysis     CommandType = "data_analysis"     // 数据分析模式
-	CommandLiteratureReview CommandType = "literature_review" // 文献综述模式
-	CommandExperimentDesign CommandType = "experiment_design" // 实验设计模式
-	CommandFormulaDerive    CommandType = "formula_derive"    // 公式推导模式
-)
-
-// CommandTypeFromString 从字符串转换为 CommandType
-func CommandTypeFromString(s string) CommandType {
-	switch s {
-	case "paper_reading":
-		return CommandPaperReading
-	case "writing_assist":
-		return CommandWritingAssist
-	case "data_analysis":
-		return CommandDataAnalysis
-	case "literature_review":
-		return CommandLiteratureReview
-	case "experiment_design":
-		return CommandExperimentDesign
-	case "formula_derive":
-		return CommandFormulaDerive
-	default:
-		return CommandNone
-	}
-}
-
 // IntentAction 意图动作定义
 type IntentAction struct {
 	Action string // 动作标识
@@ -142,20 +109,4 @@ func MapToIntentType(action string) string {
 		return t
 	}
 	return "General"
-}
-
-// ModeEntryActions 进入特定模式的意图动作映射
-var ModeEntryActions = map[string]CommandType{
-	"searchPaper":          CommandPaperReading,
-	"summarizePaper":       CommandPaperReading,
-	"writeLiteratureReview": CommandLiteratureReview,
-	"writeAbstract":        CommandWritingAssist,
-	"writeIntroduction":    CommandWritingAssist,
-	"writeMethodology":     CommandWritingAssist,
-	"writeConclusion":      CommandWritingAssist,
-	"polishText":           CommandWritingAssist,
-	"dataAnalysis":         CommandDataAnalysis,
-	"plotChart":            CommandDataAnalysis,
-	"experimentDesign":     CommandExperimentDesign,
-	"formulaDerive":        CommandFormulaDerive,
 }
