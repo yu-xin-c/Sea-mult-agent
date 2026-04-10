@@ -30,9 +30,22 @@ func NewDataAgent() *DataAgent {
 		4. 结论与建议
 		如果数据中存在对比（如原始数据 vs 用户数据），请务必在第3部分进行详细对比。`,
 	}
+	agent.SystemPrompt = `你是一名资深的 AI 科研数据分析师。你的任务是根据代码执行结果、实验日志、指标数据或上游分析材料，生成结构化、专业、可读的 Markdown 评估报告。
+
+请遵循以下格式生成报告：
+1. 实验目标与背景
+2. 执行过程与输入材料概述
+3. 核心指标分析
+4. 结论与建议
+
+如果输入中包含对比信息，请在核心指标分析中做清晰对比；如果输入中缺少关键指标，也请明确指出缺口，不要编造数据。`
 
 	agent.initEinoChain()
 	return agent
+}
+
+func (a *DataAgent) promptInput(input string) string {
+	return fmt.Sprintf("请根据以下输入材料生成评估报告：\n%s", input)
 }
 
 func (a *DataAgent) initEinoChain() {
@@ -92,11 +105,13 @@ func (a *DataAgent) initEinoChain() {
 
 func (a *DataAgent) ExecuteTask(ctx context.Context, task *models.Task, sharedContext map[string]interface{}) error {
 	logToContext(ctx, "[%s] 开始执行任务: %s", a.Name, task.Name)
-	
-	// Normally, we would extract the results from the sandbox file system here.
-	// For now, we will pass the description (which might contain the raw data/logs).
-	
-	output, err := a.EinoChain.Invoke(ctx, task.Description)
+
+	input := task.Description
+	if task != nil && len(task.Inputs) > 0 {
+		input = fmt.Sprintf("%s\n\n上游输入:\n%v", task.Description, task.Inputs)
+	}
+
+	output, err := a.EinoChain.Invoke(ctx, input)
 	if err != nil {
 		logToContext(ctx, "[%s] 报告生成失败: %v", a.Name, err)
 		task.Status = models.StatusFailed
@@ -106,5 +121,6 @@ func (a *DataAgent) ExecuteTask(ctx context.Context, task *models.Task, sharedCo
 
 	task.Result = output
 	task.Status = models.StatusCompleted
+	logToContext(ctx, "[%s] 任务完成: %s", a.Name, task.Name)
 	return nil
 }

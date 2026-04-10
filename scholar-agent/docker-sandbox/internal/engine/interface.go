@@ -12,6 +12,13 @@ type ExecutionResponse struct {
 	Images   []string `json:"images,omitempty"`
 }
 
+type ExecutionStreamEvent struct {
+	Type     string             `json:"type"`
+	Stream   string             `json:"stream,omitempty"`
+	Message  string             `json:"message,omitempty"`
+	Response *ExecutionResponse `json:"response,omitempty"`
+}
+
 // SandboxEngine 定义沙箱引擎的标准接口
 type SandboxEngine interface {
 	// Create 创建沙箱
