@@ -1,0 +1,56 @@
+# Workspace metadata
+.codex/
+
+# Environment files
+backend.env
+backend.env.ps1
+.env
+
+# Logs and runtime output
+logs/
+*.log
+
+# Local caches
+.gocache/
+.gocache_verify*/
+
+# Build output
+bin/
+dist/
+coverage/
+backend/api.exe
+backend/*.exe
+backend/*.test
+docker-sandbox/*.exe
+docker-sandbox/*.test
+
+# Frontend dependencies
+frontend/node_modules/
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Temporary backups generated during local edits
+*.tmp
+*.bak
+*.orig
+*.rej
+*.swp
+*.swo
+*.seed
+*.pid
+*.pid.lock
+*.stackdump
+*.trace
+*.out
+*.err
+*.coverprofile
+*.test
+*.prof
+*.go.[0-9]*
+
+# Project-specific local scratch files
+backend/.tmp_plan_check.go

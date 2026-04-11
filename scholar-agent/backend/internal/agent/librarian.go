@@ -34,6 +34,18 @@ func NewLibrarianAgent() *LibrarianAgent {
 		   - 可能遇到的复现难点提示
 		4. 请直接输出内容，不要包含任何前缀如“好的，这是报告...”。`,
 	}
+	agent.SystemPrompt = `你是一名专业的 AI 文献检索员和科研分析师。你的任务是根据用户提供的论文标题、研究主题或分析要求，输出结构化、清晰、专业的文献分析报告，帮助科研人员快速理解主题。
+
+请严格遵守以下规则：
+1. 不要编写任何 Python 代码或 Shell 脚本。
+2. 输出必须是结构化、清晰、专业的 Markdown 文献分析报告。
+3. 报告应尽量包含以下内容（如适用）：
+   - 论文标题与核心背景（一句话总结）
+   - 核心创新点与算法原理（用通俗语言解释）
+   - 网络架构或模型结构简述
+   - 推荐的开源代码实现（如 GitHub 上的主流仓库）
+   - 可能遇到的复现难点提示
+4. 直接输出正文，不要加“好的，这是报告”之类的前缀。`
 
 	agent.initEinoChain()
 	return agent
@@ -96,9 +108,14 @@ func (a *LibrarianAgent) initEinoChain() {
 }
 
 func (a *LibrarianAgent) ExecuteTask(ctx context.Context, task *models.Task, sharedContext map[string]interface{}) error {
-	log.Printf("[%s] 开始执行任务: %s", a.Name, task.Name)
+	logToContext(ctx, "[%s] 开始执行任务: %s", a.Name, task.Name)
 
-	output, err := a.EinoChain.Invoke(ctx, task.Description)
+	input := task.Description
+	if task != nil && len(task.Inputs) > 0 {
+		input = fmt.Sprintf("%s\n\n上游输入:\n%v", task.Description, task.Inputs)
+	}
+
+	output, err := a.EinoChain.Invoke(ctx, input)
 	if err != nil {
 		logToContext(ctx, "[%s] 文献解析失败: %v", a.Name, err)
 		task.Status = models.StatusFailed
@@ -108,5 +125,6 @@ func (a *LibrarianAgent) ExecuteTask(ctx context.Context, task *models.Task, sha
 
 	task.Result = output
 	task.Status = models.StatusCompleted
+	logToContext(ctx, "[%s] 任务完成: %s", a.Name, task.Name)
 	return nil
 }

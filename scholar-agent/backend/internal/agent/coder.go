@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -14,6 +15,11 @@ import (
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
+)
+
+const (
+	defaultSandboxImage  = "python:3.9-bullseye"
+	defaultPipTimeoutSec = "60"
 )
 
 // Agent 接口定义了系统中自治工作者的标准行为
@@ -37,10 +43,11 @@ func logToContext(ctx context.Context, format string, v ...interface{}) {
 
 // CoderAgent 负责根据需求生成代码，并在沙箱中迭代测试
 type CoderAgent struct {
-	Name         string
-	SystemPrompt string
-	Sandbox      *sandbox.SandboxClient
-	EinoChain    compose.Runnable[string, string] // 使用 Eino 编排的执行链
+	Name          string
+	SystemPrompt  string
+	Sandbox       *sandbox.SandboxClient
+	CodeOnlyChain compose.Runnable[string, string]
+	EinoChain     compose.Runnable[string, string] // 使用 Eino 编排的执行链
 }
 
 // NewCoderAgent 实例化一个新的 CoderAgent，并初始化真实的 Eino 执行链
@@ -67,8 +74,16 @@ func NewCoderAgent(sandbox *sandbox.SandboxClient) *CoderAgent {
 		   - 确保代码在没有外部网络依赖数据集的情况下也能运行（例如生成随机数据作为 Dummy Dataset 来测试网络跑通）。`,
 		Sandbox: sandbox,
 	}
+	agent.SystemPrompt = `你是一名资深的 AI 科研助理和 Python 开发者。你的任务是根据用户需求生成、改写或检查代码。
+
+请严格遵守以下规则：
+1. 只输出有效的代码内容，不要附带 Markdown 代码块包裹或额外说明。
+2. 如果任务只是代码生成、静态检查、改写或补全，不要主动假设必须运行代码。
+3. 只有在任务明确进入沙箱执行阶段时，才依赖第三方库安装、运行环境和绘图输出。
+4. 如果用户要求画图，默认将图像保存到约定路径，而不是调用交互式显示。`
 
 	// 初始化真实的 Eino 编排链 (Real LLM -> Sandbox Execution)
+	agent.SystemPrompt += "\n7. 代码必须兼容 Python 3.9，禁止使用 Python 3.10+ 语法，例如 match/case、except*、以及 X | Y 类型联合语法；请改用 typing.Optional 或 typing.Union。\n8. 生成依赖框架代码时，优先选择 Python 3.9 可用且稳定的 API，避免依赖只在更新解释器下可运行的新特性。"
 	agent.initRealEinoChain()
 
 	return agent
@@ -103,6 +118,39 @@ func (a *CoderAgent) initRealEinoChain() {
 	}
 
 	// 2. 构建 Eino Graph
+	codeOnlyGraph := compose.NewGraph[string, string]()
+	codeOnlyGraph.AddLambdaNode("Prompt_Builder", compose.InvokableLambda(func(ctx context.Context, input string) ([]*schema.Message, error) {
+		logToContext(ctx, "[%s] Eino 节点 [Prompt_Builder]: 正在组装代码生成提示词", a.Name)
+		messages := []*schema.Message{
+			{Role: schema.System, Content: a.SystemPrompt},
+			{Role: schema.User, Content: fmt.Sprintf("请完成以下任务：\n%s", input)},
+		}
+		return messages, nil
+	}))
+	codeOnlyGraph.AddChatModelNode("LLM_Generate_Code", chatModel)
+	codeOnlyGraph.AddLambdaNode("Code_Extractor", compose.InvokableLambda(func(ctx context.Context, msg *schema.Message) (string, error) {
+		logToContext(ctx, "[%s] Eino 节点 [Code_Extractor]: 开始提取大模型生成的代码", a.Name)
+		code := msg.Content
+		code = strings.TrimPrefix(code, "```python\n")
+		code = strings.TrimPrefix(code, "```python")
+		code = strings.TrimSuffix(code, "```")
+		logToContext(ctx, "[%s] 成功提取到可执行代码", a.Name)
+		if codeChan, ok := ctx.Value("codeChannel").(chan string); ok {
+			codeChan <- code
+		}
+		return code, nil
+	}))
+	codeOnlyGraph.AddEdge(compose.START, "Prompt_Builder")
+	codeOnlyGraph.AddEdge("Prompt_Builder", "LLM_Generate_Code")
+	codeOnlyGraph.AddEdge("LLM_Generate_Code", "Code_Extractor")
+	codeOnlyGraph.AddEdge("Code_Extractor", compose.END)
+
+	codeOnlyRunnable, err := codeOnlyGraph.Compile(context.Background())
+	if err != nil {
+		log.Fatalf("编译 Eino CodeOnly 链失败: %v", err)
+	}
+	a.CodeOnlyChain = codeOnlyRunnable
+
 	graph := compose.NewGraph[string, string]()
 
 	// 节点 1: 提示词模板 (Prompt Template)
@@ -149,7 +197,7 @@ func (a *CoderAgent) initRealEinoChain() {
 		if !ok || containerID == "" {
 			logToContext(ctx, "[Warning] 无法获取长生命周期容器 ID，降级为单次执行模式")
 			// 创建临时沙箱执行
-			tempID, err := a.Sandbox.CreatePersistentSandbox(ctx, "temp", "", "")
+			tempID, err := a.Sandbox.CreatePersistentSandbox(ctx, "temp", defaultSandboxImage, "")
 			if err != nil {
 				return "", fmt.Errorf("创建临时沙箱失败: %w", err)
 			}
@@ -262,11 +310,13 @@ func (a *CoderAgent) initMockEinoChain() {
 			return code, nil
 		}
 		// 临时执行环境
-		tempID, _ := a.Sandbox.CreatePersistentSandbox(ctx, "mock", "", "")
+		tempID, _ := a.Sandbox.CreatePersistentSandbox(ctx, "mock", defaultSandboxImage, "")
 		defer a.Sandbox.CleanupSandbox(context.Background(), tempID)
 
 		// 同样写入文件执行，提高成功率
-		scriptPath := filepath.Join("/tmp", "scholar_workspace_mock", "run_script.py")
+		tempDir, _ := os.MkdirTemp("", "scholar_workspace_mock_")
+		defer os.RemoveAll(tempDir)
+		scriptPath := filepath.Join(tempDir, "run_script.py")
 		_ = os.MkdirAll(filepath.Dir(scriptPath), 0777)
 		_ = os.WriteFile(scriptPath, []byte(code), 0666)
 
@@ -285,6 +335,12 @@ func (a *CoderAgent) initMockEinoChain() {
 
 // ExecuteTask 使用 Eino Chain 执行任务
 func (a *CoderAgent) ExecuteTask(ctx context.Context, task *models.Task, sharedContext map[string]interface{}) error {
+	if task != nil && task.Type == "resolve_dependencies" {
+		return a.resolveDependenciesTask(ctx, task)
+	}
+	if task != nil && task.AssignedTo == "sandbox_agent" && shouldUseDeterministicSandboxPath(task) {
+		return a.executeSandboxTask(ctx, task)
+	}
 	log.Printf("[%s] 开始执行任务: %s (使用 Eino 驱动)", a.Name, task.Name)
 
 	codeChan := make(chan string, 10)
@@ -302,7 +358,17 @@ func (a *CoderAgent) ExecuteTask(ctx context.Context, task *models.Task, sharedC
 	}()
 
 	// 通过 Eino 链运行任务描述
-	output, err := a.EinoChain.Invoke(ctx, task.Description)
+	selectedChain := a.CodeOnlyChain
+	usesSandbox := task.AssignedTo == "sandbox_agent"
+	if usesSandbox || selectedChain == nil {
+		selectedChain = a.EinoChain
+	}
+	if usesSandbox {
+		logToContext(ctx, "[%s] 当前节点为 sandbox_agent，执行时才会尝试创建或复用沙箱容器", a.Name)
+	} else {
+		logToContext(ctx, "[%s] 当前节点为 %s，仅执行代码生成/检查链路，不触发沙箱创建", a.Name, task.AssignedTo)
+	}
+	output, err := selectedChain.Invoke(ctx, task.Description)
 	close(codeChan) // 关闭通道让 goroutine 退出
 
 	if err != nil {
@@ -319,6 +385,586 @@ func (a *CoderAgent) ExecuteTask(ctx context.Context, task *models.Task, sharedC
 }
 
 // mockLLMGenerateCode 模拟大模型根据提示词生成 Python 代码
+func (a *CoderAgent) executeSandboxTask(ctx context.Context, task *models.Task) error {
+	if task == nil {
+		return fmt.Errorf("task is nil")
+	}
+	if a.Sandbox == nil {
+		task.Status = models.StatusFailed
+		task.Error = "sandbox client is not configured"
+		return fmt.Errorf("%s", task.Error)
+	}
+
+	switch inferSandboxTaskKind(task) {
+	case "prepare_runtime":
+		return a.prepareRuntime(ctx, task)
+	case "install_dependencies":
+		return a.installDependencies(ctx, task)
+	case "execute_code":
+		return a.executeCodeInSandbox(ctx, task)
+	default:
+		return a.executeCodeInSandbox(ctx, task)
+	}
+}
+
+func (a *CoderAgent) prepareRuntime(ctx context.Context, task *models.Task) error {
+	logToContext(ctx, "[%s] Preparing runtime for %s", a.Name, task.Name)
+
+	if existing := chooseNonEmpty(extractTaskInputLike(task, "runtime_session"), extractTaskInputLike(task, "runtime_env"), extractTaskInputLike(task, "prepared_runtime")); strings.HasPrefix(existing, "dk-") || strings.HasPrefix(existing, "os-") {
+		task.Result = existing
+		logToContext(ctx, "[%s] Reusing existing runtime: %s", a.Name, existing)
+		if task.Metadata == nil {
+			task.Metadata = map[string]any{}
+		}
+		task.Metadata["artifact_values"] = map[string]string{
+			"runtime_session": existing,
+		}
+		task.Status = models.StatusCompleted
+		return nil
+	}
+
+	sandboxID, err := a.Sandbox.CreatePersistentSandbox(ctx, task.ID, defaultSandboxImage, "")
+	if err != nil {
+		task.Status = models.StatusFailed
+		task.Error = fmt.Sprintf("failed to create runtime sandbox: %v", err)
+		return err
+	}
+	task.Result = sandboxID
+	logToContext(ctx, "[%s] Runtime ready: %s", a.Name, sandboxID)
+	if task.Metadata == nil {
+		task.Metadata = map[string]any{}
+	}
+	task.Metadata["artifact_values"] = buildArtifactValueMap(task, map[string]string{
+		"runtime_session": sandboxID,
+	})
+	task.Status = models.StatusCompleted
+	return nil
+}
+
+func (a *CoderAgent) installDependencies(ctx context.Context, task *models.Task) error {
+	runtimeSession := chooseNonEmpty(extractTaskInputLike(task, "runtime_session"), extractTaskInputLike(task, "runtime_env"))
+	if strings.TrimSpace(runtimeSession) == "" {
+		task.Status = models.StatusFailed
+		task.Error = "missing runtime_session input for dependency installation"
+		return fmt.Errorf("%s", task.Error)
+	}
+
+	rawDependencySpec := extractTaskInputLike(task, "dependency_spec")
+	dependencies, parseErr := parseDependencySpec(rawDependencySpec)
+	if parseErr != nil {
+		task.Status = models.StatusFailed
+		task.Error = fmt.Sprintf("invalid dependency_spec: %v", parseErr)
+		task.Result = strings.TrimSpace(rawDependencySpec)
+		return fmt.Errorf("%s", task.Error)
+	}
+	if len(dependencies) == 0 {
+		task.Result = "no external dependencies detected"
+		task.Status = models.StatusCompleted
+		if task.Metadata == nil {
+			task.Metadata = map[string]any{}
+		}
+		task.Metadata["artifact_values"] = buildArtifactValueMap(task, map[string]string{
+			"prepared_runtime":          runtimeSession,
+			"dependency_install_report": "no external dependencies detected",
+		})
+		return nil
+	}
+
+	dependencies = normalizeDependenciesForPython39(dependencies)
+	logToContext(ctx, "[%s] Installing dependencies in sandbox %s for Python 3.9: %s", a.Name, runtimeSession, strings.Join(dependencies, ", "))
+	cmd := append([]string{"python3", "-m", "pip", "install", "--default-timeout", defaultPipTimeoutSec}, dependencies...)
+	res, err := a.Sandbox.ExecCommandStream(ctx, runtimeSession, cmd, func(stream string, line string) {
+		logToContext(ctx, "[%s] pip %s: %s", a.Name, stream, line)
+	})
+	if err != nil {
+		task.Status = models.StatusFailed
+		task.Error = fmt.Sprintf("dependency installation failed: %v", err)
+		return err
+	}
+	if res == nil {
+		task.Status = models.StatusFailed
+		task.Error = "dependency installation returned nil response"
+		return fmt.Errorf("%s", task.Error)
+	}
+	logToContext(ctx, "[%s] pip install exit_code=%d", a.Name, res.ExitCode)
+	if res.ExitCode != 0 {
+		task.Status = models.StatusFailed
+		task.Result = strings.TrimSpace(res.Stdout)
+		task.Error = chooseNonEmpty(strings.TrimSpace(res.Stderr), fmt.Sprintf("pip install exited with code %d", res.ExitCode))
+		return fmt.Errorf("%s", task.Error)
+	}
+
+	report := strings.TrimSpace(res.Stdout)
+	if report == "" {
+		report = "dependencies installed successfully"
+	}
+	task.Result = report
+	task.Status = models.StatusCompleted
+	if task.Metadata == nil {
+		task.Metadata = map[string]any{}
+	}
+	task.Metadata["artifact_values"] = buildArtifactValueMap(task, map[string]string{
+		"prepared_runtime":          runtimeSession,
+		"dependency_install_report": report,
+	})
+	return nil
+}
+
+func (a *CoderAgent) executeCodeInSandbox(ctx context.Context, task *models.Task) error {
+	code := extractTaskInputLike(task, "generated_code")
+	if strings.TrimSpace(code) == "" {
+		task.Status = models.StatusFailed
+		task.Error = "missing generated_code input for sandbox execution"
+		return fmt.Errorf("%s", task.Error)
+	}
+
+	runtimeSession := chooseNonEmpty(extractTaskInputLike(task, "prepared_runtime"), extractTaskInputLike(task, "runtime_session"), extractTaskInputLike(task, "runtime_env"))
+	sandboxID := runtimeSession
+	ownsEphemeralSandbox := false
+	if strings.TrimSpace(sandboxID) == "" || (!strings.HasPrefix(sandboxID, "dk-") && !strings.HasPrefix(sandboxID, "os-")) {
+		if strings.TrimSpace(runtimeSession) != "" {
+			task.Status = models.StatusFailed
+			task.Error = "invalid prepared_runtime artifact: expected sandbox id"
+			task.Result = strings.TrimSpace(runtimeSession)
+			return fmt.Errorf("%s", task.Error)
+		}
+		image := sandboxID
+		if strings.TrimSpace(image) == "" {
+			image = defaultSandboxImage
+		}
+		logToContext(ctx, "[%s] Running %s in sandbox image %s", a.Name, task.Name, image)
+		var err error
+		sandboxID, err = a.Sandbox.CreatePersistentSandbox(ctx, task.ID, image, "")
+		if err != nil {
+			task.Status = models.StatusFailed
+			task.Error = fmt.Sprintf("failed to create execution sandbox: %v", err)
+			return err
+		}
+		ownsEphemeralSandbox = true
+	}
+	if ownsEphemeralSandbox {
+		defer a.Sandbox.CleanupSandbox(context.Background(), sandboxID)
+	}
+
+	if err := a.validatePythonSyntaxInSandbox(ctx, sandboxID, code); err != nil {
+		task.Status = models.StatusFailed
+		task.Error = fmt.Sprintf("python syntax validation failed: %v", err)
+		return err
+	}
+
+	res, err := a.Sandbox.RunPythonCodeStream(ctx, sandboxID, code, func(stream string, line string) {
+		logToContext(ctx, "[%s] python %s: %s", a.Name, stream, line)
+	})
+	if err != nil {
+		task.Status = models.StatusFailed
+		task.Error = fmt.Sprintf("sandbox execution failed: %v", err)
+		return err
+	}
+	if res == nil {
+		task.Status = models.StatusFailed
+		task.Error = "sandbox execution returned nil response"
+		return fmt.Errorf("%s", task.Error)
+	}
+	if res.ExitCode != 0 {
+		task.Status = models.StatusFailed
+		task.Result = strings.TrimSpace(res.Stdout)
+		task.Error = strings.TrimSpace(res.Stderr)
+		if task.Error == "" {
+			task.Error = fmt.Sprintf("sandbox exited with code %d", res.ExitCode)
+		}
+		logToContext(ctx, "[%s] sandbox run exit_code=%d", a.Name, res.ExitCode)
+		return fmt.Errorf("%s", task.Error)
+	}
+
+	logToContext(ctx, "[%s] sandbox run exit_code=%d", a.Name, res.ExitCode)
+	if len(res.Images) > 0 {
+		logToContext(ctx, "[%s] sandbox produced %d image artifact(s)", a.Name, len(res.Images))
+	}
+	task.Code = code
+	task.Result = strings.TrimSpace(res.Stdout)
+	if task.Result == "" {
+		task.Result = strings.TrimSpace(res.Stderr)
+	}
+	if len(res.Images) > 0 {
+		task.ImageBase64 = res.Images[0]
+	}
+	task.Status = models.StatusCompleted
+	return nil
+}
+
+func (a *CoderAgent) resolveDependenciesTask(ctx context.Context, task *models.Task) error {
+	code := extractTaskInputLike(task, "generated_code")
+	if strings.TrimSpace(code) == "" {
+		code = task.Code
+	}
+	if strings.TrimSpace(code) == "" {
+		task.Status = models.StatusFailed
+		task.Error = "missing generated_code input for dependency resolution"
+		return fmt.Errorf("%s", task.Error)
+	}
+
+	dependencies := normalizeDependenciesForPython39(detectPythonDependencies(code))
+	payload, err := json.Marshal(dependencies)
+	if err != nil {
+		task.Status = models.StatusFailed
+		task.Error = fmt.Sprintf("failed to marshal dependency spec: %v", err)
+		return err
+	}
+
+	task.Result = string(payload)
+	task.Status = models.StatusCompleted
+	if task.Metadata == nil {
+		task.Metadata = map[string]any{}
+	}
+	task.Metadata["artifact_values"] = map[string]string{
+		"dependency_spec": string(payload),
+	}
+	logToContext(ctx, "[%s] 识别到依赖: %s", a.Name, chooseNonEmpty(strings.Join(dependencies, ", "), "none"))
+	return nil
+}
+
+func extractTaskInput(task *models.Task, key string) string {
+	if task == nil || task.Inputs == nil {
+		return ""
+	}
+	value, ok := task.Inputs[key]
+	if !ok || value == nil {
+		return ""
+	}
+	if s, ok := value.(string); ok {
+		return s
+	}
+	return fmt.Sprint(value)
+}
+
+func extractTaskInputLike(task *models.Task, key string) string {
+	if value := extractTaskInput(task, key); strings.TrimSpace(value) != "" {
+		return value
+	}
+	if task == nil || task.Inputs == nil {
+		return ""
+	}
+	for inputKey, value := range task.Inputs {
+		if strings.HasSuffix(strings.TrimSpace(inputKey), "_"+key) || strings.EqualFold(strings.TrimSpace(inputKey), key) {
+			if stringValue := extractTaskInput(task, inputKey); strings.TrimSpace(stringValue) != "" {
+				return stringValue
+			}
+		}
+		if value == nil {
+			continue
+		}
+	}
+	return ""
+}
+
+func shouldUseDeterministicSandboxPath(task *models.Task) bool {
+	if task == nil {
+		return false
+	}
+	if strings.TrimSpace(task.Type) != "" {
+		return true
+	}
+	if strings.TrimSpace(extractTaskInputLike(task, "generated_code")) != "" {
+		return true
+	}
+	if strings.TrimSpace(extractTaskInputLike(task, "dependency_spec")) != "" {
+		return true
+	}
+	if strings.TrimSpace(extractTaskInputLike(task, "runtime_session")) != "" || strings.TrimSpace(extractTaskInputLike(task, "prepared_runtime")) != "" || strings.TrimSpace(extractTaskInputLike(task, "runtime_env")) != "" {
+		return true
+	}
+	return false
+}
+
+func inferSandboxTaskKind(task *models.Task) string {
+	if task == nil {
+		return "execute_code"
+	}
+
+	switch strings.ToLower(strings.TrimSpace(task.Type)) {
+	case "prepare_runtime", "env_setup", "prepare_environment", "setup_runtime", "test_environment":
+		return "prepare_runtime"
+	case "install_dependencies", "dependency_install":
+		return "install_dependencies"
+	case "execute_code", "baseline_run", "run_benchmark":
+		return "execute_code"
+	}
+
+	context := strings.ToLower(strings.Join([]string{task.Name, task.Description}, " "))
+	switch {
+	case strings.Contains(context, "prepare_runtime"), strings.Contains(context, "env_setup"), strings.Contains(context, "prepare runtime"), strings.Contains(context, "prepare environment"), strings.Contains(context, "setup runtime"), strings.Contains(context, "test environment"):
+		return "prepare_runtime"
+	case strings.Contains(context, "install_depend"), strings.Contains(context, "pip install"):
+		return "install_dependencies"
+	case strings.Contains(context, "execute_code"), strings.Contains(context, "baseline_run"), strings.Contains(context, "run benchmark"), strings.Contains(context, "benchmark"), strings.Contains(context, "execute"):
+		return "execute_code"
+	default:
+		if strings.TrimSpace(extractTaskInputLike(task, "dependency_spec")) != "" && strings.TrimSpace(extractTaskInputLike(task, "runtime_session")) != "" && strings.TrimSpace(extractTaskInputLike(task, "generated_code")) == "" {
+			return "install_dependencies"
+		}
+		if strings.TrimSpace(extractTaskInputLike(task, "generated_code")) == "" {
+			return "prepare_runtime"
+		}
+		return "execute_code"
+	}
+}
+
+func parseDependencySpec(raw string) ([]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+
+	var deps []string
+	if err := json.Unmarshal([]byte(raw), &deps); err == nil {
+		return uniqueDependencies(deps), nil
+	}
+
+	if looksLikeRichTextDependencySpec(raw) {
+		return nil, fmt.Errorf("expected structured dependency list but received report-like content")
+	}
+
+	parts := strings.Split(raw, ",")
+	cleaned := uniqueDependencies(parts)
+	if len(cleaned) == 0 {
+		return nil, nil
+	}
+	for _, item := range cleaned {
+		if !isValidDependencyToken(item) {
+			return nil, fmt.Errorf("invalid dependency token %q", item)
+		}
+	}
+	return cleaned, nil
+}
+
+func detectPythonDependencies(code string) []string {
+	standard := map[string]struct{}{
+		"abc": {}, "argparse": {}, "asyncio": {}, "base64": {}, "collections": {}, "contextlib": {}, "copy": {}, "csv": {}, "dataclasses": {}, "datetime": {}, "functools": {},
+		"hashlib": {}, "io": {}, "itertools": {}, "json": {}, "logging": {}, "math": {}, "os": {}, "pathlib": {}, "random": {},
+		"re": {}, "statistics": {}, "string": {}, "subprocess": {}, "sys": {}, "tempfile": {}, "time": {}, "typing": {}, "uuid": {}, "warnings": {},
+	}
+
+	packageMap := map[string]string{
+		"cv2":                 "opencv-python",
+		"sklearn":             "scikit-learn",
+		"PIL":                 "pillow",
+		"bs4":                 "beautifulsoup4",
+		"yaml":                "pyyaml",
+		"llama_index":         "llama-index",
+		"langchain_openai":    "langchain-openai",
+		"langchain_community": "langchain-community",
+		"faiss":               "faiss-cpu",
+	}
+
+	deps := make([]string, 0, 8)
+	lines := strings.Split(code, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "import ") {
+			modules := strings.Split(strings.TrimPrefix(trimmed, "import "), ",")
+			for _, module := range modules {
+				name := strings.Fields(strings.TrimSpace(module))
+				if len(name) == 0 {
+					continue
+				}
+				root := strings.Split(name[0], ".")[0]
+				if _, ok := standard[root]; ok {
+					continue
+				}
+				if mapped, ok := packageMap[root]; ok {
+					deps = append(deps, mapped)
+				} else {
+					deps = append(deps, root)
+				}
+			}
+		}
+		if strings.HasPrefix(trimmed, "from ") {
+			parts := strings.Fields(trimmed)
+			if len(parts) < 2 {
+				continue
+			}
+			root := strings.Split(parts[1], ".")[0]
+			if _, ok := standard[root]; ok {
+				continue
+			}
+			if mapped, ok := packageMap[root]; ok {
+				deps = append(deps, mapped)
+			} else {
+				deps = append(deps, root)
+			}
+		}
+	}
+
+	return filterStandardLibraryDependencies(uniqueDependencies(deps))
+}
+
+func uniqueDependencies(items []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		name := strings.TrimSpace(strings.Trim(item, `"'`))
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	return out
+}
+
+func normalizeDependenciesForPython39(items []string) []string {
+	normalized := make([]string, 0, len(items)+1)
+	seen := map[string]struct{}{}
+	appendOnce := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+
+	for _, item := range filterStandardLibraryDependencies(items) {
+		name := strings.TrimSpace(item)
+		switch strings.ToLower(name) {
+		case "llama-index":
+			appendOnce("llama-index<0.12")
+			appendOnce("pydantic<2.10")
+		default:
+			appendOnce(name)
+		}
+	}
+	return normalized
+}
+
+func filterStandardLibraryDependencies(items []string) []string {
+	standard := map[string]struct{}{
+		"abc": {}, "argparse": {}, "asyncio": {}, "base64": {}, "collections": {}, "contextlib": {}, "copy": {}, "csv": {}, "dataclasses": {}, "datetime": {}, "functools": {},
+		"hashlib": {}, "io": {}, "itertools": {}, "json": {}, "logging": {}, "math": {}, "os": {}, "pathlib": {}, "random": {},
+		"re": {}, "statistics": {}, "string": {}, "subprocess": {}, "sys": {}, "tempfile": {}, "time": {}, "typing": {}, "uuid": {}, "warnings": {},
+	}
+
+	filtered := make([]string, 0, len(items))
+	for _, item := range items {
+		name := strings.TrimSpace(strings.Trim(item, `"'`))
+		root := strings.Split(strings.ToLower(name), ".")[0]
+		root = strings.Split(root, "<")[0]
+		root = strings.Split(root, ">")[0]
+		root = strings.Split(root, "=")[0]
+		root = strings.Split(root, "[")[0]
+		if _, ok := standard[root]; ok {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
+}
+
+func (a *CoderAgent) validatePythonSyntaxInSandbox(ctx context.Context, sandboxID string, code string) error {
+	encoded, err := json.Marshal(code)
+	if err != nil {
+		return fmt.Errorf("marshal python source failed: %w", err)
+	}
+
+	validator := fmt.Sprintf(
+		"import ast\nsource = %s\nast.parse(source)\nprint('syntax_ok')\n",
+		string(encoded),
+	)
+	res, err := a.Sandbox.RunPythonCodeStream(ctx, sandboxID, validator, func(stream string, line string) {
+		logToContext(ctx, "[%s] syntax %s: %s", a.Name, stream, line)
+	})
+	if err != nil {
+		return fmt.Errorf("syntax validation sandbox error: %w", err)
+	}
+	if res == nil {
+		return fmt.Errorf("syntax validation returned nil response")
+	}
+	if res.ExitCode != 0 {
+		return fmt.Errorf("%s", chooseNonEmpty(strings.TrimSpace(res.Stderr), strings.TrimSpace(res.Stdout), fmt.Sprintf("syntax validation exited with code %d", res.ExitCode)))
+	}
+	return nil
+}
+
+func chooseNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func buildArtifactValueMap(task *models.Task, base map[string]string) map[string]string {
+	out := map[string]string{}
+	for key, value := range base {
+		if strings.TrimSpace(value) != "" {
+			out[key] = value
+		}
+	}
+	if task == nil {
+		return out
+	}
+	for _, outputKey := range task.OutputArtifacts {
+		lowerKey := strings.ToLower(strings.TrimSpace(outputKey))
+		switch {
+		case strings.Contains(lowerKey, "runtime_session"):
+			out[outputKey] = chooseNonEmpty(base["runtime_session"], base["prepared_runtime"])
+		case strings.Contains(lowerKey, "prepared_runtime"):
+			out[outputKey] = chooseNonEmpty(base["prepared_runtime"], base["runtime_session"])
+		case strings.Contains(lowerKey, "dependency_install_report"):
+			out[outputKey] = base["dependency_install_report"]
+		case strings.Contains(lowerKey, "dependency_spec"):
+			out[outputKey] = base["dependency_spec"]
+		}
+	}
+	return out
+}
+
+func looksLikeRichTextDependencySpec(raw string) bool {
+	normalized := strings.ToLower(raw)
+	markers := []string{
+		"\n#",
+		"\n##",
+		"```",
+		"|",
+		"任务目标",
+		"结论",
+		"建议",
+		"report",
+		"summary",
+		"分析",
+	}
+	for _, marker := range markers {
+		if strings.Contains(normalized, strings.ToLower(marker)) {
+			return true
+		}
+	}
+	return false
+}
+
+func isValidDependencyToken(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case strings.ContainsRune("._-<>!=[]", r):
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func (a *CoderAgent) mockLLMGenerateCode(prompt string) string {
 	return `
 import sys

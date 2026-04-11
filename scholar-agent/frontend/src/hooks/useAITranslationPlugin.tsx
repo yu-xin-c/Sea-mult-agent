@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { 
   highlightPlugin, 
   type RenderHighlightTargetProps, 

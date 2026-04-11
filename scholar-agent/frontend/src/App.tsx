@@ -1,8 +1,8 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Background, Controls, ReactFlow, useNodesState, useEdgesState, Panel } from '@xyflow/react';
 import type { Node, Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Send, Bot, FileText, Code, Database, TerminalSquare, Play, X, Eye, FileUp, Maximize2, Minimize2, Languages, Loader2, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
+import { Send, Bot, FileText, Code, Database, TerminalSquare, Play, X, Eye, FileUp, Maximize2, Languages, Loader2, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
 import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -30,17 +30,68 @@ interface ChatMessage {
 interface Task {
   ID: string;
   Name: string;
+  Type?: string;
   Description: string;
   AssignedTo: string;
   Status: string;
   Dependencies: string[];
 }
 
-interface Plan {
-  ID: string;
-  UserIntent: string;
-  Tasks: Record<string, Task>;
-  Status: string;
+interface GraphTask {
+  id: string;
+  name: string;
+  type: string;
+  description: string;
+  assigned_to: string;
+  status: string;
+  dependencies: string[];
+  required_artifacts: string[];
+  output_artifacts: string[];
+  parallelizable: boolean;
+  result?: string;
+  code?: string;
+  image_base64?: string;
+  error?: string;
+}
+
+interface GraphEdge {
+  id: string;
+  from: string;
+  to: string;
+  type: string;
+}
+
+interface PlanGraph {
+  id: string;
+  user_intent: string;
+  intent_type: string;
+  status: string;
+  nodes: GraphTask[];
+  edges: GraphEdge[];
+}
+
+interface IntentContext {
+  raw_intent: string;
+  intent_type: string;
+  entities: Record<string, unknown>;
+  constraints: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+}
+
+interface PlanEvent {
+  plan_id: string;
+  event_type: string;
+  task_id?: string;
+  task_status?: string;
+  payload?: Record<string, unknown>;
+  timestamp: string;
+}
+
+interface NodeExecutionState {
+  logs: string;
+  result: string;
+  code: string;
+  imageBase64?: string;
 }
 
 // --- Agent 图标映射 ---
@@ -55,13 +106,41 @@ const getAgentIcon = (agentName: string) => {
 };
 
 // --- 主应用组件 ---
+const isTaskIntent = (input: string) => {
+  const normalized = input.toLowerCase();
+  return [
+    /对比|比较|评估|选型|复现|执行|运行|画图|绘图|代码|论文|报告|总结|分析/,
+    /rag|benchmark|plot|matplotlib|python|reproduce|summary|report/,
+  ].some((pattern) => pattern.test(normalized));
+};
+
+const stringifyEntity = (value: unknown) => {
+  if (Array.isArray(value)) return value.join(', ');
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (value == null || value === '') return '-';
+  return String(value);
+};
+
+const uiText = {
+  appWelcome: '你好，我是 ScholarAgent 科研助手。你可以直接让我做规划、复现实验、代码执行、论文总结或框架对比。',
+  planGenerated: '我已经生成新的规划拓扑图，右侧也会展示 intent_context，方便你核对 planner 是否真的理解了问题。',
+  backendError: '后端请求失败，请确认 Go 服务正在 :8080 端口运行。',
+  graphTitle: '多智能体执行计划 (DAG)',
+  graphHint: '点击节点可查看详情并触发真实执行',
+  runAll: '一键运行所有节点',
+  suggestionsTitle: '试试这些任务',
+  inputPlaceholder: '例如：对比 LangChain 和 LlamaIndex，做一个 RAG 框架选型。',
+};
+
 export default function App() {
   const [prompt, setPrompt] = useState('');
   const [loading, setLoading] = useState(false);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const [activePlanId, setActivePlanId] = useState<string | null>(null);
+  const [intentContext, setIntentContext] = useState<IntentContext | null>(null);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([
-    { role: 'system', text: '你好！我是 ScholarAgent 智能科研助理。请问今天有什么我可以帮你的？' }
+    { role: 'system', text: uiText.appWelcome }
   ]);
   
   // Resizable Panels State
@@ -75,7 +154,7 @@ export default function App() {
   const [isFullTranslating, setIsFullTranslating] = useState(false);
 
   // 新增状态：保存各个节点的执行状态（日志、结果、代码、图表），避免关闭侧边栏后丢失
-  const [nodeStates, setNodeStates] = useState<Record<string, { logs: string, result: string, code: string, imageBase64?: string }>>({});
+  const [nodeStates, setNodeStates] = useState<Record<string, NodeExecutionState>>({});
 
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [executionLogs, setExecutionLogs] = useState<string>('');
@@ -94,6 +173,7 @@ export default function App() {
   const [isReportExpanded, setIsReportExpanded] = useState(false);
   const [isPlotExpanded, setIsPlotExpanded] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(true);
+  const planEventSourceRef = useRef<EventSource | null>(null);
 
   // 实例化 AI 翻译插件
   const handleAskAI = useCallback((selectedText: string) => {
@@ -105,10 +185,182 @@ export default function App() {
 
   const aiTranslationPluginInstance = useAITranslationPlugin(handleAskAI);
 
+const graphTaskToTask = (task: GraphTask): Task => ({
+  ID: task.id,
+  Name: task.name,
+  Type: task.type,
+  Description: task.description,
+  AssignedTo: task.assigned_to,
+  Status: task.status,
+    Dependencies: task.dependencies ?? [],
+  });
+
+  const getTaskStyleByStatus = (status?: string) => {
+    switch (status) {
+      case 'ready':
+        return { borderColor: '#3b82f6', backgroundColor: '#eff6ff' };
+      case 'in_progress':
+        return { borderColor: '#f59e0b', backgroundColor: '#fffbeb' };
+      case 'completed':
+        return { borderColor: '#22c55e', backgroundColor: '#f0fdf4' };
+      case 'failed':
+        return { borderColor: '#ef4444', backgroundColor: '#fef2f2' };
+      case 'blocked':
+        return { borderColor: '#6b7280', backgroundColor: '#f3f4f6' };
+      default:
+        return { borderColor: '#e5e7eb', backgroundColor: '#ffffff' };
+    }
+  };
+
+  const updateNodeVisualState = (taskId: string, status: string) => {
+    setNodes(nds => nds.map(n => {
+      if (n.id !== taskId) return n;
+      const task = n.data.task as Task;
+      const updatedTask = { ...task, Status: status };
+      const styleState = getTaskStyleByStatus(status);
+      return {
+        ...n,
+        data: {
+          ...n.data,
+          status,
+          task: updatedTask,
+          label: (
+            <div className="flex flex-col gap-2 p-2 w-56">
+              <div className="flex items-center justify-between border-b pb-2">
+                <div className="flex items-center gap-2">
+                  {getAgentIcon(updatedTask.AssignedTo)}
+                  <span className="font-semibold text-xs text-gray-700">{updatedTask.AssignedTo}</span>
+                </div>
+              </div>
+              <div className="text-sm text-gray-800 text-left font-medium">{updatedTask.Name}</div>
+              <div className="text-xs text-gray-400 capitalize text-left">状态: {status}</div>
+            </div>
+          )
+        },
+        style: {
+          ...(n.style || {}),
+          ...styleState,
+        }
+      };
+    }));
+
+    setSelectedTask(prev => prev && prev.ID === taskId ? { ...prev, Status: status } : prev);
+  };
+
+  const patchNodeState = (taskId: string, updater: (prev: NodeExecutionState) => NodeExecutionState) => {
+    setNodeStates(prev => {
+      const current = prev[taskId] || { logs: '', result: '', code: '', imageBase64: '' };
+      const next = updater(current);
+
+      if (selectedTask?.ID === taskId) {
+        setExecutionLogs(next.logs);
+        setExecutionResult(next.result);
+        setExecutionCode(next.code);
+        setExecutionImage(next.imageBase64 || '');
+      }
+
+      return {
+        ...prev,
+        [taskId]: next,
+      };
+    });
+  };
+
+  const appendNodeLog = (taskId: string, line: string) => {
+    patchNodeState(taskId, (prev) => ({
+      ...prev,
+      logs: prev.logs ? `${prev.logs}\n${line}` : line,
+    }));
+  };
+
+  const connectPlanStream = (planId: string) => {
+    if (planEventSourceRef.current) {
+      planEventSourceRef.current.close();
+    }
+
+    const source = new EventSource(`http://localhost:8080/api/plans/${planId}/stream`);
+    planEventSourceRef.current = source;
+
+    source.addEventListener('plan_event', (evt) => {
+      const event = JSON.parse((evt as MessageEvent).data) as PlanEvent;
+
+      if (event.task_id && event.task_status) {
+        updateNodeVisualState(event.task_id, event.task_status);
+      }
+
+      if (event.event_type === 'task_ready' && event.task_id) {
+        appendNodeLog(event.task_id, `[Plan] ready`);
+      }
+
+      if (event.event_type === 'task_started' && event.task_id) {
+        appendNodeLog(event.task_id, `[Plan] started`);
+      }
+
+      if (event.event_type === 'task_log' && event.task_id) {
+        appendNodeLog(event.task_id, String(event.payload?.message || ''));
+      }
+
+      if (event.event_type === 'artifact_created' && event.task_id) {
+        const keys = Array.isArray(event.payload?.artifact_keys) ? event.payload?.artifact_keys?.join(', ') : '';
+        appendNodeLog(event.task_id, `[Plan] artifacts created${keys ? `: ${keys}` : ''}`);
+      }
+
+      if (event.event_type === 'task_blocked' && event.task_id) {
+        const upstream = String(event.payload?.upstream_task_id || '');
+        appendNodeLog(event.task_id, `[Plan] blocked${upstream ? ` by ${upstream}` : ''}`);
+      }
+
+      if (event.event_type === 'task_completed' && event.task_id) {
+        patchNodeState(event.task_id, (prev) => ({
+          ...prev,
+          logs: prev.logs ? `${prev.logs}\n[Plan] task_completed` : '[Plan] task_completed',
+          result: String(event.payload?.result || event.payload?.result_summary || prev.result || ''),
+          code: String(event.payload?.code || prev.code || ''),
+          imageBase64: String(event.payload?.image_base64 || prev.imageBase64 || ''),
+        }));
+      }
+
+      if (event.event_type === 'task_failed' && event.task_id) {
+        const errorText = String(event.payload?.error || 'Task failed');
+        patchNodeState(event.task_id, (prev) => ({
+          ...prev,
+          logs: prev.logs ? `${prev.logs}\n[Plan Error] ${errorText}` : `[Plan Error] ${errorText}`,
+        }));
+      }
+
+      if (event.event_type === 'plan_completed' || event.event_type === 'plan_failed') {
+        source.close();
+        planEventSourceRef.current = null;
+        setIsExecuting(false);
+        setChatHistory(prev => [...prev, {
+          role: 'system',
+          text: event.event_type === 'plan_completed'
+            ? '整张拓扑图已经执行完成。'
+            : `计划执行失败：${String(event.payload?.error || event.payload?.reason || '未知错误')}`
+        }]);
+      }
+    });
+
+    source.onerror = () => {
+      source.close();
+      if (planEventSourceRef.current === source) {
+        planEventSourceRef.current = null;
+      }
+    };
+  };
+
   // 自动滚动日志到底部
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [executionLogs]);
+
+  useEffect(() => {
+    return () => {
+      if (planEventSourceRef.current) {
+        planEventSourceRef.current.close();
+      }
+    };
+  }, []);
 
   // Handle Resize Events
   useEffect(() => {
@@ -170,7 +422,7 @@ export default function App() {
     setPrompt(''); // 清空输入框
     
     // 智能判断意图：是否包含任务触发关键词
-    const isTaskRequest = /对比|评估|选型|RAG|复现|跑一下|执行|画|绘图|plot|matplotlib/.test(userPrompt);
+    const isTaskRequest = isTaskIntent(userPrompt);
     
     try {
       if (isTaskRequest) {
@@ -179,16 +431,23 @@ export default function App() {
           intent: userPrompt
         });
 
-        const generatedPlan = response.data.plan;
-        renderDAG(generatedPlan); // 渲染 DAG 图
+        const generatedPlanGraph = response.data.plan_graph as PlanGraph | undefined;
+        const returnedIntentContext = response.data.intent_context as IntentContext | undefined;
+        if (!generatedPlanGraph) {
+          throw new Error('Backend did not return plan_graph');
+        }
+        setIntentContext(returnedIntentContext ?? null);
+        setActivePlanId(generatedPlanGraph.id);
+        renderGraphDAG(generatedPlanGraph);
         
         setChatHistory(prev => [...prev, { 
           role: 'system', 
-          text: `我已分析您的需求，并为您生成了专属的多智能体协作工作流。您可以点击右侧的 DAG 节点查看详情或执行任务。`,
+          text: uiText.planGenerated,
           actions: ['open_pdf', 'translate_full', 'close_pdf']
         }]);
       } else {
         // 2. 简单问答逻辑 (Chat)
+        setIntentContext(null);
         const response = await axios.post('http://localhost:8080/api/chat', {
           message: userPrompt
         });
@@ -201,7 +460,7 @@ export default function App() {
       
     } catch (error) {
       console.error(error);
-      setChatHistory(prev => [...prev, { role: 'system', text: '抱歉，连接后端服务失败。请确保 Go 后端运行在 :8080 端口。' }]);
+      setChatHistory(prev => [...prev, { role: 'system', text: uiText.backendError }]);
     } finally {
       setLoading(false);
     }
@@ -233,6 +492,7 @@ export default function App() {
           body: JSON.stringify({
             task_id: task.ID,
             task_name: task.Name,
+            task_type: task.Type,
             assigned_to: task.AssignedTo,
             task_description: task.Description + (task.AssignedTo === 'coder_agent' || task.AssignedTo === 'sandbox_agent' ? "\n\n(提示: 请务必输出一段可执行的完整 Python 代码，完成上述任务目标)" : "")
           })
@@ -389,6 +649,31 @@ export default function App() {
   // 一键运行所有任务
   const handleRunAllTasks = async () => {
     if (isExecuting) return;
+    if (activePlanId) {
+      setIsExecuting(true);
+      setChatHistory(prev => [...prev, {
+        role: 'system',
+        text: '正在启动整张拓扑图执行，并订阅计划级状态流。'
+      }]);
+
+      try {
+        await axios.post(`http://localhost:8080/api/plans/${activePlanId}/execute`, {});
+        connectPlanStream(activePlanId);
+      } catch (error) {
+        console.error(error);
+        setIsExecuting(false);
+        setChatHistory(prev => [...prev, {
+          role: 'system',
+          text: '启动整图执行失败，请确认后端计划接口已经启动。'
+        }]);
+      }
+      return;
+    }
+    setChatHistory(prev => [...prev, {
+      role: 'system',
+      text: '当前前端已经切换到 plan_graph 主流程，无法回退旧任务列表执行链路。请重新生成计划后再执行。'
+    }]);
+    return;
     
     // 找出所有未完成的任务，按节点在数组中的顺序依次执行 (Planner 生成的顺序通常是合理的)
     const taskNodes = nodes.filter(n => n.data.task && n.data.status !== 'completed');
@@ -446,7 +731,9 @@ export default function App() {
   };
 
   // 渲染有向无环图 (DAG)
-  const renderDAG = (plan: Plan) => {
+  const renderDAG = (_legacyPlan: unknown) => {
+    return;
+    /*
     const newNodes: Node[] = [];
     const newEdges: Edge[] = [];
     
@@ -500,6 +787,107 @@ export default function App() {
           animated: true,
           style: { stroke: '#94a3b8', strokeWidth: 2 }
         });
+      });
+    });
+
+    setNodes(newNodes);
+    setEdges(newEdges);
+    */
+  };
+  void renderDAG;
+
+  const renderGraphDAG = (planGraph: PlanGraph) => {
+    const newNodes: Node[] = [];
+    const newEdges: Edge[] = [];
+
+    const levelMap: Record<string, number> = {};
+    const laneOrder = ['librarian_agent', 'coder_agent', 'sandbox_agent', 'data_agent', 'general_agent'];
+    const laneOffsets: Record<string, number> = {
+      librarian_agent: 40,
+      coder_agent: 180,
+      sandbox_agent: 320,
+      data_agent: 460,
+      general_agent: 600,
+    };
+    const tasksById = Object.fromEntries(planGraph.nodes.map((task) => [task.id, task]));
+
+    const resolveLevel = (task: GraphTask): number => {
+      if (typeof levelMap[task.id] === 'number') return levelMap[task.id];
+      if (!task.dependencies.length) {
+        levelMap[task.id] = 0;
+        return 0;
+      }
+
+      const level = Math.max(...task.dependencies.map((depId) => {
+        const dep = tasksById[depId];
+        return dep ? resolveLevel(dep) + 1 : 1;
+      }));
+      levelMap[task.id] = level;
+      return level;
+    };
+
+    const sortedTasks = [...planGraph.nodes].sort((a, b) => {
+      const levelDiff = resolveLevel(a) - resolveLevel(b);
+      if (levelDiff !== 0) return levelDiff;
+      return laneOrder.indexOf(a.assigned_to) - laneOrder.indexOf(b.assigned_to);
+    });
+
+    const levelCounts: Record<string, number> = {};
+    sortedTasks.forEach((task) => {
+      const level = resolveLevel(task);
+      const laneKey = task.assigned_to in laneOffsets ? task.assigned_to : 'general_agent';
+      const bucketKey = `${laneKey}-${level}`;
+      const stackIndex = levelCounts[bucketKey] || 0;
+      levelCounts[bucketKey] = stackIndex + 1;
+      const legacyTask = graphTaskToTask(task);
+      const styleState = getTaskStyleByStatus(task.status);
+
+      newNodes.push({
+        id: task.id,
+        position: {
+          x: 80 + (level * 320),
+          y: laneOffsets[laneKey] + (stackIndex * 110),
+        },
+        data: {
+          task: legacyTask,
+          status: task.status,
+          label: (
+            <div className="flex flex-col gap-2 p-2 w-56">
+              <div className="flex items-center justify-between border-b pb-2">
+                <div className="flex items-center gap-2">
+                  {getAgentIcon(task.assigned_to)}
+                  <span className="font-semibold text-xs text-gray-700">{task.assigned_to}</span>
+                </div>
+                <span className="text-[10px] uppercase tracking-wide text-gray-400">L{level + 1}</span>
+              </div>
+              <div className="text-sm text-gray-800 text-left font-medium">{task.name}</div>
+              <div className="text-xs text-gray-400 capitalize text-left">状态: {task.status}</div>
+            </div>
+          )
+        },
+        style: {
+          borderRadius: '8px',
+          backgroundColor: styleState.backgroundColor,
+          border: '2px solid',
+          borderColor: styleState.borderColor,
+          boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+          cursor: 'pointer',
+        }
+      });
+    });
+
+    planGraph.edges.forEach((edge) => {
+      newEdges.push({
+        id: edge.id,
+        source: edge.from,
+        target: edge.to,
+        animated: edge.type === 'control',
+        style: {
+          stroke: edge.type === 'data' ? '#c084fc' : '#94a3b8',
+          strokeWidth: edge.type === 'data' ? 1.5 : 2.5,
+          strokeDasharray: edge.type === 'data' ? '6 4' : undefined
+        },
+        label: edge.type === 'data' ? 'data' : undefined
       });
     });
 
@@ -723,12 +1111,32 @@ export default function App() {
       {/* 右侧面板: DAG 可视化区 */}
       <div className="flex-1 relative flex overflow-hidden">
         <div className="flex-1 h-full relative">
-          <div className="absolute top-4 left-4 z-10 bg-white px-4 py-2 rounded-lg shadow-sm border border-gray-200">
+          <div className="absolute top-4 left-4 z-10 bg-white px-4 py-2 rounded-lg shadow-sm border border-gray-200 max-w-md">
             <h2 className="font-semibold text-gray-700 flex items-center gap-2">
               <TerminalSquare className="w-4 h-4" />
-              多智能体执行计划 (DAG)
+              {uiText.graphTitle}
             </h2>
-            <p className="text-xs text-gray-500 mt-1">点击节点可查看详情并触发真实执行</p>
+            <p className="text-xs text-gray-500 mt-1">{uiText.graphHint}</p>
+            {intentContext && (
+              <div className="mt-3 space-y-2 border-t border-gray-100 pt-3 text-xs text-gray-600">
+                <div className="flex flex-wrap gap-2">
+                  <span className="rounded-full bg-blue-50 px-2 py-1 text-blue-700">
+                    intent_type: {intentContext.intent_type}
+                  </span>
+                  <span className="rounded-full bg-slate-100 px-2 py-1 text-slate-700">
+                    entities: {Object.keys(intentContext.entities || {}).length}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="rounded-md bg-gray-50 px-2 py-1">frameworks: {stringifyEntity(intentContext.entities?.frameworks)}</div>
+                  <div className="rounded-md bg-gray-50 px-2 py-1">paper_title: {stringifyEntity(intentContext.entities?.paper_title)}</div>
+                  <div className="rounded-md bg-gray-50 px-2 py-1">needs_plot: {stringifyEntity(intentContext.entities?.needs_plot)}</div>
+                  <div className="rounded-md bg-gray-50 px-2 py-1">needs_fix: {stringifyEntity(intentContext.entities?.needs_fix)}</div>
+                  <div className="rounded-md bg-gray-50 px-2 py-1">needs_benchmark: {stringifyEntity(intentContext.entities?.needs_benchmark)}</div>
+                  <div className="rounded-md bg-gray-50 px-2 py-1">output_mode: {stringifyEntity(intentContext.entities?.output_mode)}</div>
+                </div>
+              </div>
+            )}
           </div>
           
           <ReactFlow
@@ -749,7 +1157,7 @@ export default function App() {
                 className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-xl shadow-lg flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50 disabled:grayscale"
               >
                 <Play className="w-4 h-4 fill-current" />
-                一键运行所有节点
+                {uiText.runAll}
               </button>
             </Panel>
           </ReactFlow>
