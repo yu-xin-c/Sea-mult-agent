@@ -1,18 +1,15 @@
-package checkpoint
+package checkpoint_test
 
 import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yu-xin-c/Sea-mult-agent/docker-core/checkpoint"
 )
 
 func TestManager_NewManager(t *testing.T) {
-	// NewManager with nil sandbox — only tests non-Docker paths
-	m := &Manager{
-		sandbox:  nil,
-		registry: NewSnapshotRegistry(),
-		injector: NewFeedbackInjector(),
-	}
+	m := checkpoint.NewManager(nil)
 
 	if m.Registry() == nil {
 		t.Fatal("registry should not be nil")
@@ -23,10 +20,7 @@ func TestManager_NewManager(t *testing.T) {
 }
 
 func TestManager_RecordFailureAndGetFeedback(t *testing.T) {
-	m := &Manager{
-		registry: NewSnapshotRegistry(),
-		injector: NewFeedbackInjector(),
-	}
+	m := checkpoint.NewManager(nil)
 
 	feedback := m.RecordFailureAndGetFeedback("node-A", "pip install torch", "ERROR: no matching distribution")
 
@@ -37,16 +31,13 @@ func TestManager_RecordFailureAndGetFeedback(t *testing.T) {
 		t.Error("feedback should contain System Guard prefix")
 	}
 
-	if m.injector.FailureCount() != 1 {
-		t.Errorf("expected 1 failure recorded, got %d", m.injector.FailureCount())
+	if m.Injector().FailureCount() != 1 {
+		t.Errorf("expected 1 failure recorded, got %d", m.Injector().FailureCount())
 	}
 }
 
 func TestManager_GetFullFeedbackContext(t *testing.T) {
-	m := &Manager{
-		registry: NewSnapshotRegistry(),
-		injector: NewFeedbackInjector(),
-	}
+	m := checkpoint.NewManager(nil)
 
 	// Empty context
 	if m.GetFullFeedbackContext() != "" {
@@ -67,10 +58,7 @@ func TestManager_GetFullFeedbackContext(t *testing.T) {
 }
 
 func TestManager_RollbackToNode_NoSnapshot(t *testing.T) {
-	m := &Manager{
-		registry: NewSnapshotRegistry(),
-		injector: NewFeedbackInjector(),
-	}
+	m := checkpoint.NewManager(nil)
 
 	_, err := m.RollbackToNode(nil, "nonexistent-node")
 	if err == nil {
@@ -82,10 +70,7 @@ func TestManager_RollbackToNode_NoSnapshot(t *testing.T) {
 }
 
 func TestManager_RollbackToLatest_NoSnapshot(t *testing.T) {
-	m := &Manager{
-		registry: NewSnapshotRegistry(),
-		injector: NewFeedbackInjector(),
-	}
+	m := checkpoint.NewManager(nil)
 
 	_, err := m.RollbackToLatest(nil)
 	if err == nil {
@@ -97,23 +82,20 @@ func TestManager_RollbackToLatest_NoSnapshot(t *testing.T) {
 }
 
 func TestManager_RegistryIntegration(t *testing.T) {
-	m := &Manager{
-		registry: NewSnapshotRegistry(),
-		injector: NewFeedbackInjector(),
-	}
+	m := checkpoint.NewManager(nil)
 
 	// Simulate registering snapshots (normally done by Commit)
-	m.registry.Register(Snapshot{
+	m.Registry().Register(checkpoint.Snapshot{
 		NodeID:    "node-A",
 		ImageID:   "img-aaa",
 		CreatedAt: time.Now().Unix(),
 	})
-	m.registry.Register(Snapshot{
+	m.Registry().Register(checkpoint.Snapshot{
 		NodeID:    "node-B",
 		ImageID:   "img-bbb",
 		CreatedAt: time.Now().Unix(),
 	})
-	m.registry.Register(Snapshot{
+	m.Registry().Register(checkpoint.Snapshot{
 		NodeID:    "node-C",
 		ImageID:   "img-ccc",
 		CreatedAt: time.Now().Unix(),
@@ -124,32 +106,29 @@ func TestManager_RegistryIntegration(t *testing.T) {
 	}
 
 	// Verify RollbackToNode checks the right snapshot
-	snap, ok := m.registry.GetByNodeID("node-B")
+	snap, ok := m.Registry().GetByNodeID("node-B")
 	if !ok || snap.ImageID != "img-bbb" {
 		t.Fatal("should find node-B with img-bbb")
 	}
 
 	// Simulate registry rollback
-	m.registry.RollbackTo("node-B")
+	m.Registry().RollbackTo("node-B")
 	if m.Registry().Len() != 2 {
 		t.Fatalf("expected 2 snapshots after rollback, got %d", m.Registry().Len())
 	}
 
-	_, ok = m.registry.GetByNodeID("node-C")
+	_, ok = m.Registry().GetByNodeID("node-C")
 	if ok {
 		t.Error("node-C should be removed after rollback to node-B")
 	}
 }
 
 func TestManager_FeedbackAndRegistryWorkflow(t *testing.T) {
-	m := &Manager{
-		registry: NewSnapshotRegistry(),
-		injector: NewFeedbackInjector(),
-	}
+	m := checkpoint.NewManager(nil)
 
 	// Register some snapshots
-	m.registry.Register(Snapshot{NodeID: "step1", ImageID: "img1"})
-	m.registry.Register(Snapshot{NodeID: "step2", ImageID: "img2"})
+	m.Registry().Register(checkpoint.Snapshot{NodeID: "step1", ImageID: "img1"})
+	m.Registry().Register(checkpoint.Snapshot{NodeID: "step2", ImageID: "img2"})
 
 	// Record a failure at step2
 	feedback := m.RecordFailureAndGetFeedback("step2", "make build", "compilation error")
@@ -167,13 +146,13 @@ func TestManager_FeedbackAndRegistryWorkflow(t *testing.T) {
 	}
 
 	// Rollback registry to step1
-	m.registry.RollbackTo("step1")
+	m.Registry().RollbackTo("step1")
 	if m.Registry().Len() != 1 {
 		t.Errorf("expected 1 snapshot after rollback, got %d", m.Registry().Len())
 	}
 
 	// Failure history survives registry rollback
-	if m.injector.FailureCount() != 1 {
+	if m.Injector().FailureCount() != 1 {
 		t.Error("failure history should persist after registry rollback")
 	}
 }

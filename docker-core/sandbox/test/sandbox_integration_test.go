@@ -1,4 +1,4 @@
-package sandbox
+package sandbox_test
 
 import (
 	"context"
@@ -7,10 +7,11 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/yu-xin-c/Sea-mult-agent/docker-core/sandbox"
 )
 
 // 集成测试：需要 Docker 运行环境
-// 运行: SANDBOX_INTEGRATION_TEST=1 go test -v -run TestIntegration ./sandbox/...
+// 运行: SANDBOX_INTEGRATION_TEST=1 go test -v -run TestIntegration ./sandbox/test/...
 
 func skipIfNoDocker(t *testing.T) {
 	t.Helper()
@@ -23,13 +24,13 @@ func TestIntegration_SandboxLifecycle(t *testing.T) {
 	skipIfNoDocker(t)
 
 	ctx := context.Background()
-	cfg := DefaultConfig()
+	cfg := sandbox.DefaultConfig()
 	cfg.Runtime = "runc"
 	cfg.AuditLogDir = t.TempDir()
 	cfg.ExecTimeout = 30 * time.Second
 
 	// 1. 创建沙箱
-	box, err := New(ctx, cfg)
+	box, err := sandbox.New(ctx, cfg)
 	if err != nil {
 		t.Fatalf("failed to create sandbox: %v", err)
 	}
@@ -69,12 +70,12 @@ func TestIntegration_EngineRestartFrom(t *testing.T) {
 	skipIfNoDocker(t)
 
 	ctx := context.Background()
-	cfg := DefaultConfig()
+	cfg := sandbox.DefaultConfig()
 	cfg.Runtime = "runc"
 	cfg.AuditLogDir = t.TempDir()
 	cfg.ExecTimeout = 30 * time.Second
 
-	box, err := New(ctx, cfg)
+	box, err := sandbox.New(ctx, cfg)
 	if err != nil {
 		t.Fatalf("failed to create sandbox: %v", err)
 	}

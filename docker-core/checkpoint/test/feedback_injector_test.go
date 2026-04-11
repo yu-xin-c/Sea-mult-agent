@@ -1,13 +1,15 @@
-package checkpoint
+package checkpoint_test
 
 import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yu-xin-c/Sea-mult-agent/docker-core/checkpoint"
 )
 
 func TestFeedbackInjector_SingleFailure(t *testing.T) {
-	fi := NewFeedbackInjector()
+	fi := checkpoint.NewFeedbackInjector()
 
 	prompt := fi.GenerateNegativeFeedback("pip install cuda-python")
 
@@ -23,20 +25,20 @@ func TestFeedbackInjector_SingleFailure(t *testing.T) {
 }
 
 func TestFeedbackInjector_FullContext(t *testing.T) {
-	fi := NewFeedbackInjector()
+	fi := checkpoint.NewFeedbackInjector()
 
 	// 空时应返回空字符串
 	if fi.GenerateFullContext() != "" {
 		t.Error("should return empty for no failures")
 	}
 
-	fi.RecordFailure(FailureRecord{
+	fi.RecordFailure(checkpoint.FailureRecord{
 		NodeID:    "node-A",
 		Command:   "pip install torch",
 		Stderr:    "ERROR: no matching distribution",
 		Timestamp: time.Now(),
 	})
-	fi.RecordFailure(FailureRecord{
+	fi.RecordFailure(checkpoint.FailureRecord{
 		NodeID:    "node-B",
 		Command:   "apt install libcuda",
 		Stderr:    "E: Unable to locate package",
@@ -60,14 +62,14 @@ func TestFeedbackInjector_FullContext(t *testing.T) {
 }
 
 func TestFeedbackInjector_FailureCount(t *testing.T) {
-	fi := NewFeedbackInjector()
+	fi := checkpoint.NewFeedbackInjector()
 
 	if fi.FailureCount() != 0 {
 		t.Error("should start at 0")
 	}
 
-	fi.RecordFailure(FailureRecord{NodeID: "a", Command: "cmd1"})
-	fi.RecordFailure(FailureRecord{NodeID: "b", Command: "cmd2"})
+	fi.RecordFailure(checkpoint.FailureRecord{NodeID: "a", Command: "cmd1"})
+	fi.RecordFailure(checkpoint.FailureRecord{NodeID: "b", Command: "cmd2"})
 
 	if fi.FailureCount() != 2 {
 		t.Errorf("expected 2, got %d", fi.FailureCount())
@@ -75,8 +77,8 @@ func TestFeedbackInjector_FailureCount(t *testing.T) {
 }
 
 func TestFeedbackInjector_Reset(t *testing.T) {
-	fi := NewFeedbackInjector()
-	fi.RecordFailure(FailureRecord{NodeID: "a", Command: "cmd1"})
+	fi := checkpoint.NewFeedbackInjector()
+	fi.RecordFailure(checkpoint.FailureRecord{NodeID: "a", Command: "cmd1"})
 	fi.Reset()
 
 	if fi.FailureCount() != 0 {
@@ -88,9 +90,9 @@ func TestFeedbackInjector_Reset(t *testing.T) {
 }
 
 func TestFeedbackInjector_StderrTruncation(t *testing.T) {
-	fi := NewFeedbackInjector()
+	fi := checkpoint.NewFeedbackInjector()
 	longStderr := strings.Repeat("x", 500)
-	fi.RecordFailure(FailureRecord{
+	fi.RecordFailure(checkpoint.FailureRecord{
 		NodeID:  "a",
 		Command: "cmd",
 		Stderr:  longStderr,
@@ -104,8 +106,8 @@ func TestFeedbackInjector_StderrTruncation(t *testing.T) {
 }
 
 func TestFeedbackInjector_Failures(t *testing.T) {
-	fi := NewFeedbackInjector()
-	fi.RecordFailure(FailureRecord{NodeID: "a", Command: "cmd1"})
+	fi := checkpoint.NewFeedbackInjector()
+	fi.RecordFailure(checkpoint.FailureRecord{NodeID: "a", Command: "cmd1"})
 
 	failures := fi.Failures()
 	if len(failures) != 1 {

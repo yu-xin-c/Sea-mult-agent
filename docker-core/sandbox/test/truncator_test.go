@@ -1,12 +1,14 @@
-package sandbox
+package sandbox_test
 
 import (
 	"strings"
 	"testing"
+
+	"github.com/yu-xin-c/Sea-mult-agent/docker-core/sandbox"
 )
 
 func TestTruncator_NoTruncateNeeded(t *testing.T) {
-	tr := NewTruncator(5, 5)
+	tr := sandbox.NewTruncator(5, 5)
 	input := "line1\nline2\nline3"
 	got := tr.Truncate(input)
 	if got != input {
@@ -15,7 +17,7 @@ func TestTruncator_NoTruncateNeeded(t *testing.T) {
 }
 
 func TestTruncator_EmptyInput(t *testing.T) {
-	tr := NewTruncator(5, 5)
+	tr := sandbox.NewTruncator(5, 5)
 	got := tr.Truncate("")
 	if got != "" {
 		t.Errorf("expected empty string, got: %s", got)
@@ -23,7 +25,7 @@ func TestTruncator_EmptyInput(t *testing.T) {
 }
 
 func TestTruncator_TruncatesMiddle(t *testing.T) {
-	tr := NewTruncator(2, 2)
+	tr := sandbox.NewTruncator(2, 2)
 
 	lines := make([]string, 20)
 	for i := range lines {
@@ -45,7 +47,7 @@ func TestTruncator_TruncatesMiddle(t *testing.T) {
 }
 
 func TestTruncator_ExactBoundary(t *testing.T) {
-	tr := NewTruncator(5, 5)
+	tr := sandbox.NewTruncator(5, 5)
 
 	lines := make([]string, 10)
 	for i := range lines {

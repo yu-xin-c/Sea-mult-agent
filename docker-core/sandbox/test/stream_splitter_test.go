@@ -1,10 +1,12 @@
-package sandbox
+package sandbox_test
 
 import (
 	"io"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yu-xin-c/Sea-mult-agent/docker-core/sandbox"
 )
 
 func TestStreamSplitter_BasicFlow(t *testing.T) {
@@ -13,7 +15,7 @@ func TestStreamSplitter_BasicFlow(t *testing.T) {
 	reader := strings.NewReader(content)
 
 	dir := t.TempDir()
-	ss, err := NewStreamSplitter(reader, dir)
+	ss, err := sandbox.NewStreamSplitter(reader, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +43,7 @@ func TestStreamSplitter_NonZeroExitCode(t *testing.T) {
 	content := "error occurred\n__SANDBOX_EOF_456__:1\n"
 	reader := strings.NewReader(content)
 
-	ss, err := NewStreamSplitter(reader, t.TempDir())
+	ss, err := sandbox.NewStreamSplitter(reader, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +65,7 @@ func TestStreamSplitter_Timeout(t *testing.T) {
 	// 使用一个永远不关闭的 reader 来模拟超时场景
 	pr, _ := io.Pipe()
 
-	ss, err := NewStreamSplitter(pr, t.TempDir())
+	ss, err := sandbox.NewStreamSplitter(pr, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

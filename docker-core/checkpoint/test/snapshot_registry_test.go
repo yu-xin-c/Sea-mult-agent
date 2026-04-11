@@ -1,14 +1,16 @@
-package checkpoint
+package checkpoint_test
 
 import (
 	"testing"
+
+	"github.com/yu-xin-c/Sea-mult-agent/docker-core/checkpoint"
 )
 
 func TestSnapshotRegistry_RegisterAndGet(t *testing.T) {
-	reg := NewSnapshotRegistry()
+	reg := checkpoint.NewSnapshotRegistry()
 
-	reg.Register(Snapshot{NodeID: "node-A", ImageID: "img-aaa"})
-	reg.Register(Snapshot{NodeID: "node-B", ImageID: "img-bbb"})
+	reg.Register(checkpoint.Snapshot{NodeID: "node-A", ImageID: "img-aaa"})
+	reg.Register(checkpoint.Snapshot{NodeID: "node-B", ImageID: "img-bbb"})
 
 	if reg.Len() != 2 {
 		t.Fatalf("expected 2 snapshots, got %d", reg.Len())
@@ -29,15 +31,15 @@ func TestSnapshotRegistry_RegisterAndGet(t *testing.T) {
 }
 
 func TestSnapshotRegistry_GetLatest(t *testing.T) {
-	reg := NewSnapshotRegistry()
+	reg := checkpoint.NewSnapshotRegistry()
 
 	_, ok := reg.GetLatest()
 	if ok {
 		t.Error("should return false when empty")
 	}
 
-	reg.Register(Snapshot{NodeID: "node-A", ImageID: "img-aaa"})
-	reg.Register(Snapshot{NodeID: "node-B", ImageID: "img-bbb"})
+	reg.Register(checkpoint.Snapshot{NodeID: "node-A", ImageID: "img-aaa"})
+	reg.Register(checkpoint.Snapshot{NodeID: "node-B", ImageID: "img-bbb"})
 
 	snap, ok := reg.GetLatest()
 	if !ok {
@@ -49,11 +51,11 @@ func TestSnapshotRegistry_GetLatest(t *testing.T) {
 }
 
 func TestSnapshotRegistry_RollbackTo(t *testing.T) {
-	reg := NewSnapshotRegistry()
+	reg := checkpoint.NewSnapshotRegistry()
 
-	reg.Register(Snapshot{NodeID: "node-A", ImageID: "img-aaa"})
-	reg.Register(Snapshot{NodeID: "node-B", ImageID: "img-bbb"})
-	reg.Register(Snapshot{NodeID: "node-C", ImageID: "img-ccc"})
+	reg.Register(checkpoint.Snapshot{NodeID: "node-A", ImageID: "img-aaa"})
+	reg.Register(checkpoint.Snapshot{NodeID: "node-B", ImageID: "img-bbb"})
+	reg.Register(checkpoint.Snapshot{NodeID: "node-C", ImageID: "img-ccc"})
 
 	// 回滚到 node-A，应该删除 node-B 和 node-C
 	ok := reg.RollbackTo("node-A")
@@ -77,8 +79,8 @@ func TestSnapshotRegistry_RollbackTo(t *testing.T) {
 }
 
 func TestSnapshotRegistry_RollbackToNonExistent(t *testing.T) {
-	reg := NewSnapshotRegistry()
-	reg.Register(Snapshot{NodeID: "node-A", ImageID: "img-aaa"})
+	reg := checkpoint.NewSnapshotRegistry()
+	reg.Register(checkpoint.Snapshot{NodeID: "node-A", ImageID: "img-aaa"})
 
 	ok := reg.RollbackTo("node-X")
 	if ok {
@@ -87,10 +89,10 @@ func TestSnapshotRegistry_RollbackToNonExistent(t *testing.T) {
 }
 
 func TestSnapshotRegistry_OverwriteSameNodeID(t *testing.T) {
-	reg := NewSnapshotRegistry()
+	reg := checkpoint.NewSnapshotRegistry()
 
-	reg.Register(Snapshot{NodeID: "node-A", ImageID: "img-v1"})
-	reg.Register(Snapshot{NodeID: "node-A", ImageID: "img-v2"})
+	reg.Register(checkpoint.Snapshot{NodeID: "node-A", ImageID: "img-v1"})
+	reg.Register(checkpoint.Snapshot{NodeID: "node-A", ImageID: "img-v2"})
 
 	if reg.Len() != 1 {
 		t.Fatalf("expected 1 snapshot (overwrite), got %d", reg.Len())
@@ -103,9 +105,9 @@ func TestSnapshotRegistry_OverwriteSameNodeID(t *testing.T) {
 }
 
 func TestSnapshotRegistry_All(t *testing.T) {
-	reg := NewSnapshotRegistry()
-	reg.Register(Snapshot{NodeID: "a", ImageID: "1"})
-	reg.Register(Snapshot{NodeID: "b", ImageID: "2"})
+	reg := checkpoint.NewSnapshotRegistry()
+	reg.Register(checkpoint.Snapshot{NodeID: "a", ImageID: "1"})
+	reg.Register(checkpoint.Snapshot{NodeID: "b", ImageID: "2"})
 
 	all := reg.All()
 	if len(all) != 2 {
