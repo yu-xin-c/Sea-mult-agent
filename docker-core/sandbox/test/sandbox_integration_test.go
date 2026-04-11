@@ -44,14 +44,11 @@ func TestIntegration_SandboxLifecycle(t *testing.T) {
 	t.Logf("Container created: %s", containerID[:12])
 
 	// 3. 执行简单命令
-	result, err := box.Execute(ctx, "echo hello_sandbox")
+	output, err := box.Execute(ctx, "echo hello_sandbox")
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
 	}
-	if result.ExitCode != 0 {
-		t.Errorf("expected exit code 0, got %d", result.ExitCode)
-	}
-	t.Logf("Output: %s", result.InferenceSummary)
+	t.Logf("Output: %s", output)
 
 	// 4. 验证状态持久化 (export → 跨命令保留)
 	_, err = box.Execute(ctx, "export TEST_VAR=sandbox_works")
@@ -59,11 +56,11 @@ func TestIntegration_SandboxLifecycle(t *testing.T) {
 		t.Fatalf("export failed: %v", err)
 	}
 
-	result2, err := box.Execute(ctx, "echo $TEST_VAR")
+	output2, err := box.Execute(ctx, "echo $TEST_VAR")
 	if err != nil {
 		t.Fatalf("echo var failed: %v", err)
 	}
-	t.Logf("Var output: %s", result2.RawOutput)
+	t.Logf("Var output: %s", output2)
 }
 
 func TestIntegration_EngineRestartFrom(t *testing.T) {

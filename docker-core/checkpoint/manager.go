@@ -36,12 +36,12 @@ func NewManager(sb *sandbox.Sandbox) *Manager {
 }
 
 // Commit 为当前容器状态创建快照
-// 在 DAG 节点执行成功 + Checker 验证通过后调用
-func (m *Manager) Commit(ctx context.Context, nodeID string) (*Snapshot, error) {
+// 对齐 executor.CheckpointManager 接口，返回 ImageID
+func (m *Manager) Commit(ctx context.Context, nodeID string) (string, error) {
 	engine := m.sandbox.Engine()
 	containerID := engine.ContainerID()
 	if containerID == "" {
-		return nil, fmt.Errorf("no active container to commit")
+		return "", fmt.Errorf("no active container to commit")
 	}
 
 	ref := fmt.Sprintf("checkpoint-%s-%d", nodeID, time.Now().Unix())
@@ -54,7 +54,7 @@ func (m *Manager) Commit(ctx context.Context, nodeID string) (*Snapshot, error) 
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("docker commit failed for node %s: %w", nodeID, err)
+		return "", fmt.Errorf("docker commit failed for node %s: %w", nodeID, err)
 	}
 
 	snap := Snapshot{
@@ -65,59 +65,51 @@ func (m *Manager) Commit(ctx context.Context, nodeID string) (*Snapshot, error) 
 	}
 	m.registry.Register(snap)
 
-	return &snap, nil
+	return resp.ID, nil
 }
 
 // Rollback 基于指定镜像 ID 执行回滚
-// 1. 销毁当前容器  2. 用快照镜像重建  3. 重新建立 TTY 会话  4. 清理注册表中过期快照
-func (m *Manager) Rollback(ctx context.Context, imageID string) (*RollbackResult, error) {
+// 对齐 executor.CheckpointManager 接口
+func (m *Manager) Rollback(ctx context.Context, imageID string) error {
 	engine := m.sandbox.Engine()
-	oldID := engine.ContainerID()
 
 	// 基于快照镜像重启容器
-	newID, err := engine.RestartFrom(ctx, imageID)
+	_, err := engine.RestartFrom(ctx, imageID)
 	if err != nil {
-		return nil, fmt.Errorf("rollback failed: %w", err)
+		return fmt.Errorf("rollback failed: %w", err)
 	}
 
 	// 重新建立 TTY 会话
 	if err := m.sandbox.ReattachSession(ctx); err != nil {
-		return nil, fmt.Errorf("rollback succeeded but session reattach failed: %w", err)
+		return fmt.Errorf("rollback succeeded but session reattach failed: %w", err)
 	}
 
-	// 查找 imageID 对应的 nodeID，清理注册表并填充 RestoredNodeID
-	result := &RollbackResult{
-		OldContainerID: oldID,
-		NewContainerID: newID,
-		ImageID:        imageID,
-	}
+	// 查找 imageID 对应的 nodeID，清理注册表
 	for _, snap := range m.registry.All() {
 		if snap.ImageID == imageID {
-			result.RestoredNodeID = snap.NodeID
 			m.registry.RollbackTo(snap.NodeID)
 			break
 		}
 	}
 
-	return result, nil
+	return nil
 }
 
 // RollbackToNode 回滚到指定 DAG 节点的快照
-func (m *Manager) RollbackToNode(ctx context.Context, nodeID string) (*RollbackResult, error) {
+func (m *Manager) RollbackToNode(ctx context.Context, nodeID string) error {
 	snap, ok := m.registry.GetByNodeID(nodeID)
 	if !ok {
-		return nil, fmt.Errorf("no snapshot found for node: %s", nodeID)
+		return fmt.Errorf("no snapshot found for node: %s", nodeID)
 	}
 
-	// Rollback 会自动匹配 imageID → nodeID 并清理注册表
 	return m.Rollback(ctx, snap.ImageID)
 }
 
 // RollbackToLatest 回滚到最近一次快照
-func (m *Manager) RollbackToLatest(ctx context.Context) (*RollbackResult, error) {
+func (m *Manager) RollbackToLatest(ctx context.Context) error {
 	snap, ok := m.registry.GetLatest()
 	if !ok {
-		return nil, fmt.Errorf("no snapshots available for rollback")
+		return fmt.Errorf("no snapshots available for rollback")
 	}
 	return m.RollbackToNode(ctx, snap.NodeID)
 }

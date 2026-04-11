@@ -1,0 +1,8 @@
+[llm]
+model = "deepseek-chat"
+base_url = "https://api.deepseek.com"
+api_key = "your-api-key"
+
+[resource]
+max_concurrent_io = 10
+max_gpu_tasks = 1

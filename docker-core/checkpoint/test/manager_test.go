@@ -60,7 +60,7 @@ func TestManager_GetFullFeedbackContext(t *testing.T) {
 func TestManager_RollbackToNode_NoSnapshot(t *testing.T) {
 	m := checkpoint.NewManager(nil)
 
-	_, err := m.RollbackToNode(nil, "nonexistent-node")
+	err := m.RollbackToNode(nil, "nonexistent-node")
 	if err == nil {
 		t.Fatal("should error when no snapshot found")
 	}
@@ -72,7 +72,7 @@ func TestManager_RollbackToNode_NoSnapshot(t *testing.T) {
 func TestManager_RollbackToLatest_NoSnapshot(t *testing.T) {
 	m := checkpoint.NewManager(nil)
 
-	_, err := m.RollbackToLatest(nil)
+	err := m.RollbackToLatest(nil)
 	if err == nil {
 		t.Fatal("should error when no snapshots available")
 	}

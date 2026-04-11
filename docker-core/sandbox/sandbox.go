@@ -44,15 +44,18 @@ func New(ctx context.Context, cfg Config) (*Sandbox, error) {
 	}, nil
 }
 
-// Execute 在沙箱内执行命令，返回精简后的结果
-func (s *Sandbox) Execute(ctx context.Context, command string) (*ExecResult, error) {
+// Execute 在沙箱内执行命令，仅返回原始输出字符串
+// 特别说明：为了兼容 executor.Sandbox 接口，如果 exit code != 0，将返回错误
+func (s *Sandbox) Execute(ctx context.Context, command string) (string, error) {
 	result, err := s.session.Execute(ctx, command)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	// 用 Truncator 生成推理摘要
-	result.InferenceSummary = s.truncator.Truncate(result.RawOutput)
-	return result, nil
+	
+	if result.ExitCode != 0 {
+		return result.RawOutput, fmt.Errorf("command failed with exit code %d", result.ExitCode)
+	}
+	return result.RawOutput, nil
 }
 
 // Engine 暴露底层 Engine（供 checkpoint 模块调用）

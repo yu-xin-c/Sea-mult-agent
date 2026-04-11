@@ -117,7 +117,8 @@ func (ss *StreamSplitter) ReadUntilDelimiter(delimiter string, timeoutCh <-chan 
 		// 扫描新到达的行
 		for i := scanFrom; i < len(ss.lines); i++ {
 			line := ss.lines[i]
-			if strings.Contains(line, delimiter) {
+			// 真正的退出码输出行应该是 "DELIMITER:CODE" 格式，且不应包含 "echo" 命令本身
+			if strings.Contains(line, delimiter) && !strings.Contains(line, "echo ") {
 				// 解析退出码
 				exitCode := 0
 				if idx := strings.LastIndex(line, ":"); idx != -1 {
