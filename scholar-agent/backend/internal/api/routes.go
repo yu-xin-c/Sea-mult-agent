@@ -384,7 +384,8 @@ func SetupRoutes(r *gin.Engine) {
 			}
 
 			c.JSON(http.StatusOK, gin.H{
-				"plan": planGraph,
+				"plan":      planGraph,
+				"plan_graph": planGraph,
 			})
 		})
 
@@ -631,6 +632,7 @@ func SetupRoutes(r *gin.Engine) {
 							c.SSEvent("result", gin.H{
 								"result":        task.Result,
 								"code":          task.Code,
+								"image_base64":  task.ImageBase64,
 								"image_base_64": task.ImageBase64,
 							})
 						}
