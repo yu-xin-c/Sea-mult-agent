@@ -319,13 +319,6 @@ func SetupRoutes(r *gin.Engine) {
 			intentCtx := inferIntentContextV2(payload.Intent)
 			logPlanRequest(payload.Intent, intentCtx)
 			intentType := intentCtx.IntentType
-			if contains(payload.Intent, []string{"对比", "评估", "选型", "RAG"}) {
-				intentType = "Framework_Evaluation"
-			} else if contains(payload.Intent, []string{"复现"}) {
-				intentType = "Paper_Reproduction"
-			} else if contains(payload.Intent, []string{"计算", "代码", "运行", "执行", "画图", "分析"}) {
-				intentType = "Code_Execution"
-			}
 
 			if false {
 				intentCtx = models.IntentContext{
