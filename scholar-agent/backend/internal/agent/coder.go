@@ -74,7 +74,7 @@ func NewCoderAgent(sandbox *sandbox.SandboxClient) *CoderAgent {
 		   - 确保代码在没有外部网络依赖数据集的情况下也能运行（例如生成随机数据作为 Dummy Dataset 来测试网络跑通）。`,
 		Sandbox: sandbox,
 	}
-	agent.SystemPrompt = `你是一名资深的 AI 科研助理和 Python 开发者。你的任务是根据用户需求生成、改写或检查代码。
+	agent.SystemPrompt += `你是一名资深的 AI 科研助理和 Python 开发者。你的任务是根据用户需求生成、改写或检查代码。
 
 请严格遵守以下规则：
 1. 只输出有效的代码内容，不要附带 Markdown 代码块包裹或额外说明。
