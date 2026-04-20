@@ -7,7 +7,7 @@
 
 ## Checklist
 
-- [ ] 我已阅读 [**CONTRIBUTING**](../scholar-agent/docs/CONTRIBUTING.md) 文档。
+- [ ] 我已阅读 [**CONTRIBUTING**](https://github.com/yu-xin-c/Sea-mult-agent/blob/main/scholar-agent/docs/CONTRIBUTING.md) 文档。
 - [ ] 我已检查并确认此 Pull Request 不包含仅适用于个人环境的变更。
 - [ ] 我已对自己的代码进行了自查。
 - [ ] 我的更改不会产生新的警告。
