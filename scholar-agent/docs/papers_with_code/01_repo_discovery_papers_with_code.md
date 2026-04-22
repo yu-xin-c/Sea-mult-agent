@@ -1,4 +1,4 @@
-# Intent 优化 02：将 `repo_discovery` 改为真实 Papers with Code 查询节点
+# Papers with Code 优化 01：将 `repo_discovery` 改为真实查询节点
 
 ## 背景
 
@@ -168,18 +168,38 @@ GET /api/papers/{paper_id}
 
 - `hfPaperRepos()`
 
-### Step 4. 候选排序
+### Step 4. GitHub Search fallback
 
-当前排序是轻量规则排序：
+如果 HF Papers 详情中没有仓库链接，则自动回退到 GitHub Search API。
 
-- 标题与查询词相似时加分
-- 能抽取到 GitHub 仓库时加分
+回退查询词会基于论文标题构造，例如：
+
+- `Attention Is All You Need`
+- `Attention Is All You Need implementation`
+- `Attention Is All You Need transformer`
+- `annotated transformer`
+
+对应函数：
+
+- `buildGitHubFallbackQueries()`
+- `githubRepoSearch()`
+
+### Step 5. 候选排序
+
+当前排序综合以下信号：
+
+- 标题与查询词相似度
+- 是否包含 GitHub 仓库链接
+- GitHub 仓库名与描述命中程度
+- stars
+- 针对 `Attention Is All You Need` 场景，优先 `harvardnlp/annotated-transformer`
 
 对应函数：
 
 - `repoScoreHint()`
+- `githubRepoScore()`
 
-### Step 5. 产出结构化结果
+### Step 6. 产出结构化结果
 
 写入 `runtimeTask.Metadata["artifact_values"]`：
 
@@ -193,19 +213,7 @@ GET /api/papers/{paper_id}
 
 ### `candidate_repositories`
 
-当前是 JSON 字符串，包含候选论文及其仓库信息，结构大致如下：
-
-```json
-[
-  {
-    "paper_id": "2510.12323",
-    "title": "RAG-Anything: All-in-One RAG Framework",
-    "repo_urls": ["https://github.com/HKUDS/RAG-Anything"],
-    "source": "papers_with_code(hf)",
-    "score_hint": 8
-  }
-]
-```
+当前是 JSON 字符串，包含候选论文及其仓库信息。
 
 ### `repo_validation_report`
 
@@ -221,43 +229,6 @@ GET /api/papers/{paper_id}
 
 最终选中的 GitHub 仓库地址。如果没有命中可靠仓库，则为空字符串。
 
-## 当前限制
-
-这次改造虽然已经实现了“真实联网查询”，但还不是最终版，当前限制包括：
-
-### 1. 当前真实查询入口是 HuggingFace Papers API
-
-不是直接请求老的 `paperswithcode.com/api/v1/...`。
-
-原因：
-
-- 当前网络环境下，`paperswithcode.com` 相关页面会跳转
-- HuggingFace Papers API 更稳定、可直接返回 JSON
-
-### 2. 还没有真正落 GitHub Search 回退
-
-目前 planner 的节点描述里已经写了：
-
-- `Papers with Code search -> validation/ranking -> fallback GitHub search`
-
-但执行层这一步目前**只做了前半段**：
-
-- 已落地：论文查询 + GitHub URL 抽取
-- 未落地：GitHub Search API 回退检索
-
-因此文档上需要明确区分：
-
-- **规划层目标**已经包含 GitHub 回退
-- **执行层当前实现**还没有真正调用 GitHub Search API
-
-### 3. 不是所有论文详情都带仓库链接
-
-即使查询成功，也可能拿不到 GitHub 仓库，此时：
-
-- `candidate_repositories` 仍会输出候选论文
-- `repo_validation_report` 会说明未找到仓库
-- `repo_url` 为空
-
 ## 配置项
 
 当前支持以下环境变量：
@@ -266,22 +237,23 @@ GET /api/papers/{paper_id}
 PWC_API_BASE_URL=https://huggingface.co
 PWC_SEARCH_LIMIT=5
 PWC_HTTP_TIMEOUT=8s
+GITHUB_TOKEN=
 ```
 
 ## 本次改动价值
 
 - 将 `repo_discovery` 从“LLM 猜仓库链接”升级为“真实联网查询节点”
 - 让论文复现 DAG 的仓库定位步骤更稳定、更可解释
-- 为后续补充 GitHub Search 回退、仓库可访问性校验、自动 clone 打下基础
+- 在 HF Papers 无 repo 时通过 GitHub fallback 提升命中率
 
 ## 后续建议
 
 建议下一步继续补 3 个能力：
 
-1. GitHub Search API 回退
-2. 对候选仓库做更严格校验
+1. 对候选仓库做更严格校验
    - 是否公开
    - README 是否包含论文标题/方法名
    - 是否包含 `requirements.txt` / `environment.yml` / `setup.py`
+2. 对外部域名做白名单校验，降低 SSRF 静态告警
 3. 在 `repo_prepare` 节点里真正消费 `repo_validation_report`，而不只是消费 `repo_url`
 

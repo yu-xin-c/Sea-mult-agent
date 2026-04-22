@@ -1,4 +1,4 @@
-# Intent 优化 03：`repo_discovery` 测试与实验记录
+# Papers with Code 优化 02：`repo_discovery` 测试与实验记录
 
 ## 目标
 
