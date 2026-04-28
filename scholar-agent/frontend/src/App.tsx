@@ -417,17 +417,19 @@ export default function App() {
     });
     const queue = taskList.filter(t => inDegree[t.ID] === 0).map(t => t.ID);
     const sortedTaskIds: string[] = [];
+    const sortedSet = new Set<string>();
     while (queue.length > 0) {
       const id = queue.shift()!;
       sortedTaskIds.push(id);
+      sortedSet.add(id);
       (adjList[id] || []).forEach(nextId => {
         inDegree[nextId]--;
         if (inDegree[nextId] === 0) queue.push(nextId);
       });
     }
     // 如果存在环，将剩余节点追加（降级处理）
-    taskList.forEach(t => { if (!sortedTaskIds.includes(t.ID)) sortedTaskIds.push(t.ID); });
-    const taskNodes = sortedTaskIds.map(id => taskMap[id]).filter(Boolean);
+    taskList.forEach(t => { if (!sortedSet.has(t.ID)) sortedTaskIds.push(t.ID); });
+    const taskNodes = sortedTaskIds.map(id => taskMap[id]).filter((t): t is Task => t != null);
     
     // 构建任务完成结果的共享上下文，用于将上游结果传递给下游任务
     const taskResults: Record<string, string> = {};

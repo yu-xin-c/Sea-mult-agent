@@ -33,6 +33,7 @@ func FakeLLM(messages []Message) LLMResponse {
 
 	// 简单规则模拟 LLM 决策
 	if len(messages) == 1 {
+		// json.Marshal on a map[string]string is always safe; the error branch guards against future type changes.
 		args, err := json.Marshal(map[string]string{"query": last})
 		if err != nil {
 			args = json.RawMessage(`{"query":""}`)

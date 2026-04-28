@@ -12,6 +12,10 @@ import (
 	"github.com/yu-xin-c/Sea-mult-agent/docker-core/sandbox"
 )
 
+// nonAlphanumRe matches any sequence of characters that are not lowercase ASCII letters or digits.
+// Used by sanitizeNodeID to produce Docker-safe image reference components.
+var nonAlphanumRe = regexp.MustCompile(`[^a-z0-9]+`)
+
 // RollbackResult 回滚操作的结果
 type RollbackResult struct {
 	OldContainerID string // 被销毁的旧容器 ID
@@ -145,8 +149,6 @@ func (m *Manager) Injector() *FeedbackInjector {
 
 // sanitizeNodeID replaces characters that are invalid in Docker image references
 // with hyphens, ensuring the resulting slug is safe to use as an image tag component.
-var nonAlphanumRe = regexp.MustCompile(`[^a-z0-9]+`)
-
 func sanitizeNodeID(nodeID string) string {
 	slug := nonAlphanumRe.ReplaceAllString(strings.ToLower(nodeID), "-")
 	slug = strings.Trim(slug, "-")
