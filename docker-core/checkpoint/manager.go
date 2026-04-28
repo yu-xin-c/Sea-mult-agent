@@ -12,9 +12,7 @@ import (
 	"github.com/yu-xin-c/Sea-mult-agent/docker-core/sandbox"
 )
 
-// nonAlphanumRe matches any sequence of characters that are not lowercase ASCII letters or digits.
-// Used by sanitizeNodeID to produce Docker-safe image reference components.
-var nonAlphanumRe = regexp.MustCompile(`[^a-z0-9]+`)
+var dockerRefSanitizer = regexp.MustCompile(`[^a-z0-9._-]+`)
 
 // RollbackResult 回滚操作的结果
 type RollbackResult struct {
@@ -50,7 +48,7 @@ func (m *Manager) Commit(ctx context.Context, nodeID string) (string, error) {
 		return "", fmt.Errorf("no active container to commit")
 	}
 
-	ref := fmt.Sprintf("checkpoint-%s-%d", sanitizeNodeID(nodeID), time.Now().Unix())
+	ref := fmt.Sprintf("checkpoint-%s-%d", sanitizeDockerRefComponent(nodeID), time.Now().Unix())
 
 	// Docker Commit：将当前容器文件系统 + 环境状态打包为新镜像
 	resp, err := engine.Client().ContainerCommit(ctx, containerID,
@@ -72,6 +70,16 @@ func (m *Manager) Commit(ctx context.Context, nodeID string) (string, error) {
 	m.registry.Register(snap)
 
 	return resp.ID, nil
+}
+
+func sanitizeDockerRefComponent(raw string) string {
+	v := strings.ToLower(strings.TrimSpace(raw))
+	v = dockerRefSanitizer.ReplaceAllString(v, "-")
+	v = strings.Trim(v, "-._")
+	if v == "" {
+		return "node"
+	}
+	return v
 }
 
 // Rollback 基于指定镜像 ID 执行回滚
@@ -145,15 +153,4 @@ func (m *Manager) Registry() *SnapshotRegistry {
 // Injector 暴露负反馈生成器
 func (m *Manager) Injector() *FeedbackInjector {
 	return m.injector
-}
-
-// sanitizeNodeID replaces characters that are invalid in Docker image references
-// with hyphens, ensuring the resulting slug is safe to use as an image tag component.
-func sanitizeNodeID(nodeID string) string {
-	slug := nonAlphanumRe.ReplaceAllString(strings.ToLower(nodeID), "-")
-	slug = strings.Trim(slug, "-")
-	if slug == "" {
-		slug = "node"
-	}
-	return slug
 }

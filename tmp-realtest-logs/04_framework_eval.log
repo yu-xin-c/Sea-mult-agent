@@ -1,0 +1,7 @@
+# scholar-agent-backend/internal/planner
+internal\planner\agent_planner.go:171:11: undefined: newNode
+internal\planner\agent_planner.go:205:10: undefined: buildRepoDiscoveryDescription
+internal\planner\agent_planner.go:211:83: undefined: bilingualTaskName
+internal\planner\agent_planner.go:390:21: undefined: buildRepoDiscoveryDescription
+FAIL	scholar-agent-backend/tests [build failed]
+FAIL

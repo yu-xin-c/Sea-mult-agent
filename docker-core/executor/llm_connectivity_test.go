@@ -4,24 +4,26 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/yu-xin-c/Sea-mult-agent/docker-core/config"
 )
 
 func TestLLMConnectivity(t *testing.T) {
-	if os.Getenv("REAL_INTEGRATION_TEST") != "1" {
-		t.Skip("跳过真实集成测试：请设置 REAL_INTEGRATION_TEST=1 以启用")
+	if os.Getenv("REAL_INTEGRATION_TEST") == "" && os.Getenv("REAL_LLM_TEST") == "" {
+		t.Skip("跳过真实 LLM 连通性测试：请设置 REAL_INTEGRATION_TEST=1 或 REAL_LLM_TEST=1")
 	}
+
 	fmt.Println("=== 开始 LLM 连通性与指令解析测试 ===")
 
 	// 1. 加载真实配置
 	cfg, err := config.LoadConfig("../config/config.toml")
 	if err != nil {
-		t.Skipf("跳过测试：无法加载配置文件: %v", err)
+		t.Skipf("跳过测试：未检测到可用 config.toml (%v)", err)
 	}
 
-	if cfg.LLM.APIKey == "your-api-key" || cfg.LLM.APIKey == "" {
+	if cfg.LLM.APIKey == "" || strings.Contains(strings.ToLower(cfg.LLM.APIKey), "your-api-key") {
 		t.Skip("跳过测试：未检测到有效的 API Key")
 	}
 

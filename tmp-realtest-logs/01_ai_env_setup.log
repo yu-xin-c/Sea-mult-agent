@@ -1,0 +1,13 @@
+=== RUN   TestRealIntegration_AI_EnvSetup
+
+馃殌 === [Full Real Flow] 寮€濮?AI 椹卞姩鐨?PyTorch 鐜瀹夎楠岃瘉 ===
+[Goal] 鍦?Ubuntu 鐜涓厤缃畬鏁寸殑鍏ㄦ爤涓庣洃鎺х幆澧冿紝鍏蜂綋瑕佹眰锛?1. 鍩虹渚濊禆锛氬繀椤绘渶鍏堟洿鏂?apt 婧愩€?2. 骞惰鍒嗘敮A锛氶潪浜や簰妯″紡瀹夎 python3 鍜?python3-pip銆?3. 骞惰鍒嗘敮B锛氬畨瑁?redis-server锛屼笖浠呭厑璁镐娇鐢?apt/apt-get 鏂规锛涚姝娇鐢?docker 鏂规鍜屾簮鐮佺紪璇戞柟妗堛€?4. 姹囨€婚獙璇侊細鍦ㄦ墍鏈夊垎鏀墽琛屽畬鎴愬悗锛屾墽琛?"python3 --version && redis-server --version" 杩涜瀹夊叏鍐掔儫娴嬭瘯銆?[Agent] 姝ｅ湪璋冪敤 AI 杩涜浠诲姟鍒嗚В涓庤鍒?(Plan)...
+[LLM Stats] Model: deepseek-v4-flash | Prompt: 353, Completion: 716, Total: 1069
+[Plan] AI 鐢熸垚鐨勪换鍔¤妭鐐?
+ - 鑺傜偣 [install_redis]: DEBIAN_FRONTEND=noninteractive apt-get install -y redis-server (渚濊禆: [update_apt])
+ - 鑺傜偣 [verify]: python3 --version && redis-server --version (渚濊禆: [install_python install_redis])
+ - 鑺傜偣 [update_apt]: DEBIAN_FRONTEND=noninteractive apt-get update -y (渚濊禆: [])
+ - 鑺傜偣 [install_python]: DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-pip (渚濊禆: [update_apt])
+
+[Execution] 寮曟搸寮€濮嬫墽琛?AI 瑙勫垝鐨勪换鍔℃祦...
+[Engine] Executing node: update_apt

@@ -170,7 +170,7 @@ export default function App() {
     setPrompt(''); // 清空输入框
     
     // 智能判断意图：是否包含任务触发关键词（扩展版）
-    const isTaskRequest = /对比|比较|评估|选型|rag|复现|跑一下|执行|画|绘图|plot|matplotlib|langchain|llamaindex|llama\.index|haystack|框架|配环境|安装依赖|vs\b/i.test(userPrompt);
+    const isTaskRequest = /对比|比较|评估|选型|rag|复现|跑一下|执行|画|绘图|plot|matplotlib|langchain|llamaindex|llama.index|haystack|框架|配环境|安装依赖|vs\b/.test(userPrompt.toLowerCase());
     
     try {
       if (isTaskRequest) {
@@ -224,6 +224,8 @@ export default function App() {
         [task.ID]: { logs: initLog, result: '', code: '', imageBase64: '' }
       }));
       
+      let latestResult = '';
+      let receivedResult = false;
       try {
         const response = await fetch('http://localhost:8080/api/execute', {
           method: 'POST',
@@ -287,6 +289,7 @@ export default function App() {
               // 默默收到心跳，保持连接
               console.log('💓 Heartbeat received');
             } else if (eventType === 'result') {
+              receivedResult = true;
               let finalResult = eventData;
               let generatedCode = '';
               let imageBase64 = '';
@@ -300,6 +303,7 @@ export default function App() {
               const completionMsg = `\n\n[🎉 Agent 思考与执行完毕]`;
               setExecutionLogs(prev => prev + completionMsg);
               setExecutionResult(finalResult);
+              latestResult = finalResult;
               setExecutionCode(generatedCode);
               setExecutionImage(imageBase64);
               lastResult = finalResult;
@@ -351,7 +355,10 @@ export default function App() {
             }
           }
         }
-        resolve(lastResult); // 完成，返回最终结果
+        if (!receivedResult) {
+          throw new Error('后端未返回 result 事件，任务结果不完整');
+        }
+        resolve(latestResult); // 完成并返回结果，避免读取异步 state 旧值
 
       } catch (error: any) {
         console.error(error);
@@ -427,8 +434,10 @@ export default function App() {
         if (inDegree[nextId] === 0) queue.push(nextId);
       });
     }
-    // 如果存在环，将剩余节点追加（降级处理）
-    taskList.forEach(t => { if (!sortedSet.has(t.ID)) sortedTaskIds.push(t.ID); });
+    if (sortedTaskIds.length !== taskList.length) {
+      setChatHistory(prev => [...prev, { role: 'system', text: '❌ 检测到循环依赖或非法任务图（DAG），已中止自动流水线执行。' }]);
+      return;
+    }
     const taskNodes = sortedTaskIds.map(id => taskMap[id]).filter((t): t is Task => t != null);
     
     // 构建任务完成结果的共享上下文，用于将上游结果传递给下游任务
@@ -438,6 +447,8 @@ export default function App() {
       role: 'system', 
       text: `🚀 开始全自动流水线任务！共需执行 ${taskNodes.length} 个节点，请耐心等待。` 
     }]);
+
+    let aborted = false;
     
     for (const task of taskNodes) {
       // 将所有依赖任务的结果拼接到当前任务的描述中
@@ -462,13 +473,14 @@ export default function App() {
           role: 'system', 
           text: `⚠️ 流水线在节点 **[${task.Name}]** 处中断。后续节点已取消自动执行。` 
         }]);
+        aborted = true;
         break;
       }
     }
     
     setChatHistory(prev => [...prev, { 
       role: 'system', 
-      text: `🏁 全自动流水线执行完毕！` 
+      text: aborted ? `⛔ 全自动流水线已中断。` : `🏁 全自动流水线执行完毕！` 
     }]);
   };
 

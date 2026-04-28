@@ -128,20 +128,24 @@ func TestWatchdogAuditAndRollback(t *testing.T) {
 
 // 新增：集成真实配置的测试
 func TestWatchdogWithRealConfig(t *testing.T) {
-	if os.Getenv("REAL_INTEGRATION_TEST") != "1" {
-		t.Skip("跳过真实集成测试：请设置 REAL_INTEGRATION_TEST=1 以启用")
+	if os.Getenv("REAL_INTEGRATION_TEST") == "" && os.Getenv("REAL_LLM_TEST") == "" {
+		t.Skip("跳过真实 LLM 测试：请设置 REAL_INTEGRATION_TEST=1 或 REAL_LLM_TEST=1")
 	}
+
 	fmt.Println("\n--- 场景 4: 真实配置加载与执行测试 ---")
 	// 1. 加载真实配置
 	fullCfg, err := config.LoadConfig("../config/config.toml")
 	if err != nil {
-		t.Skipf("跳过测试：无法加载配置文件: %v", err)
+		t.Skipf("跳过真实 LLM 测试：未检测到可用 config.toml (%v)", err)
 	}
 
 	// 2. 转换为 Watchdog 内部配置
 	wdCfg := Config{
 		MaxRetryWindow: fullCfg.Watchdog.MaxRetryWindow,
 		CommandTimeout: time.Duration(fullCfg.Watchdog.CommandTimeout) * time.Second,
+	}
+	if fullCfg.LLM.APIKey == "" || strings.Contains(strings.ToLower(fullCfg.LLM.APIKey), "your-api-key") {
+		t.Skip("跳过真实 LLM 测试：API key 为占位符或为空")
 	}
 	fmt.Printf("[Config] 加载成功: MaxRetryWindow=%d, Timeout=%v\n", wdCfg.MaxRetryWindow, wdCfg.CommandTimeout)
 
@@ -159,7 +163,7 @@ func TestWatchdogWithRealConfig(t *testing.T) {
 	wd := NewWatchdog(wdCfg, box, nil, realAgent)
 
 	ctx := context.Background()
-	
+
 	fmt.Println("[Test] 正在模拟一个失败指令以触发真实的 LLM 诊断请求...")
 	_, err = wd.Execute(ctx, "verify_llm")
 	if err != nil {
@@ -179,7 +183,7 @@ func TestWatchdogWithRealConfig(t *testing.T) {
 // 正常执行 -> 发现挂起并处理 -> 触发电路熔断 -> 环境损坏后通过模拟器回滚
 func TestWatchdogFullLifeCycle(t *testing.T) {
 	fmt.Println("\n--- 场景 5: 全生命周期模拟验证 (Simulator Based) ---")
-	
+
 	sim := NewSimulator()
 	cfg := Config{MaxRetryWindow: 2, CommandTimeout: 500 * time.Millisecond}
 	wd := NewWatchdog(cfg, sim, sim, &MockAgent{})

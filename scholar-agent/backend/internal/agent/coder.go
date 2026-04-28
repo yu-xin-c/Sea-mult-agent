@@ -198,7 +198,7 @@ func (a *CoderAgent) initRealEinoChain() {
 				})
 				if err != nil {
 					logToContext(ctx, "[%s] 临时沙箱自修复调用失败: %v", a.Name, err)
-					return fmt.Sprintf("Self-Correction 调用大模型失败: %v\n最近输出:\n%s", err, output), fmt.Errorf("self-correction LLM call failed: %w", err)
+					return "", fmt.Errorf("Self-Correction 调用大模型失败: %w; 最近输出: %s", err, output)
 				}
 
 				currentCode = strings.TrimPrefix(msg.Content, "```python\n")
@@ -207,7 +207,7 @@ func (a *CoderAgent) initRealEinoChain() {
 				finalOutput = fmt.Sprintf("执行失败，已尝试修复。错误日志:\n%v\n输出:\n%s", runErr, output)
 			}
 
-			return finalOutput + "\n\n【达到最大重试次数，任务执行失败】", fmt.Errorf("max retries exceeded; last output: %s", finalOutput)
+			return "", fmt.Errorf("达到最大重试次数，任务执行失败: %s", finalOutput)
 		}
 
 		maxRetries := 4
@@ -237,7 +237,11 @@ func (a *CoderAgent) initRealEinoChain() {
 
 			if err != nil || (res != nil && res.ExitCode != 0) || hasPythonExecutionError(output) {
 				if err == nil {
-					err = fmt.Errorf("exit code: %d", res.ExitCode)
+					if res != nil {
+						err = fmt.Errorf("exit code: %d", res.ExitCode)
+					} else {
+						err = fmt.Errorf("execution failed with empty response")
+					}
 				}
 				if hasPythonExecutionError(output) {
 					err = fmt.Errorf("execution output contains runtime/import errors")
@@ -260,7 +264,7 @@ func (a *CoderAgent) initRealEinoChain() {
 				})
 				if err != nil {
 					logToContext(ctx, "[%s] 错误: 自修复调用大模型失败: %v", a.Name, err)
-					return fmt.Sprintf("Self-Correction 调用大模型失败: %v\n最近输出:\n%s", err, output), fmt.Errorf("self-correction LLM call failed: %w", err)
+					return "", fmt.Errorf("Self-Correction 调用大模型失败: %w; 最近输出: %s", err, output)
 				}
 
 				currentCode = strings.TrimPrefix(msg.Content, "```python\n")
@@ -277,7 +281,7 @@ func (a *CoderAgent) initRealEinoChain() {
 		}
 
 		logToContext(ctx, "[%s] 达到最大重试次数，任务执行失败", a.Name)
-		return finalOutput + "\n\n【达到最大重试次数，任务执行失败】", fmt.Errorf("max retries exceeded; last output: %s", finalOutput)
+		return "", fmt.Errorf("达到最大重试次数，任务执行失败: %s", finalOutput)
 	}))
 
 	// 3. 定义边 (Edges) 将节点串联起来
@@ -308,7 +312,13 @@ func (a *CoderAgent) initMockEinoChain() {
 			return code, nil
 		}
 		// 临时执行环境
-		tempID, _ := a.Sandbox.CreatePersistentSandbox(ctx, "mock", "python:3.11-slim", "")
+		tempID, err := a.Sandbox.CreatePersistentSandbox(ctx, "mock", "python:3.11-slim", "")
+		if err != nil {
+			return "", fmt.Errorf("mock 沙箱创建失败: %w", err)
+		}
+		if strings.TrimSpace(tempID) == "" {
+			return "", fmt.Errorf("mock 沙箱返回空容器 ID")
+		}
 		defer a.Sandbox.CleanupSandbox(context.Background(), tempID)
 
 		// 同样写入文件执行，提高成功率
@@ -316,7 +326,10 @@ func (a *CoderAgent) initMockEinoChain() {
 		_ = os.MkdirAll(filepath.Dir(scriptPath), 0777)
 		_ = os.WriteFile(scriptPath, []byte(code), 0666)
 
-		res, _ := a.Sandbox.RunPythonCode(ctx, tempID, code)
+		res, err := a.Sandbox.RunPythonCode(ctx, tempID, code)
+		if err != nil {
+			return "", fmt.Errorf("mock 沙箱执行失败: %w", err)
+		}
 		return res.Stdout + res.Stderr, nil
 	}))
 	graph.AddEdge(compose.START, "LLM_Generate_Code")

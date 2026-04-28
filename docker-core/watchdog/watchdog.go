@@ -3,6 +3,7 @@ package watchdog
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/yu-xin-c/Sea-mult-agent/docker-core/executor"
@@ -57,8 +58,8 @@ func (w *Watchdog) Execute(ctx context.Context, cmd string) (string, error) {
 		}
 	}
 
-	// 4. 语义断路器检测（仅在执行失败时触发）
-	if err != nil && w.cb.RecordAndCheck(cmd, output) {
+	// 4. 语义断路器检测（仅在失败信号下参与，避免对重复成功命令误熟断）
+	if shouldRecordForCircuit(err, output) && w.cb.RecordAndCheck(cmd, output) {
 		return "", &WatchdogError{
 			Type:    ErrTypeCircuitBroken,
 			Message: "Circuit breaker triggered: detected an infinite semantic loop.",
@@ -79,6 +80,29 @@ func (w *Watchdog) Execute(ctx context.Context, cmd string) (string, error) {
 	}
 
 	return output, nil
+}
+
+func shouldRecordForCircuit(err error, output string) bool {
+	if err != nil {
+		return true
+	}
+	lower := strings.ToLower(output)
+	failureSignals := []string{
+		"error:",
+		" failed:",
+		"failed to",
+		"traceback",
+		"exception:",
+		"segmentation fault",
+		"command not found",
+		"no such file or directory",
+	}
+	for _, s := range failureSignals {
+		if strings.Contains(lower, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // Close 代理到底层 Sandbox 的关闭逻辑

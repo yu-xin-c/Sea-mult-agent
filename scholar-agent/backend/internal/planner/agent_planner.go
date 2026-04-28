@@ -8,9 +8,11 @@ import (
 	"os"
 	"scholar-agent-backend/internal/models"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/schema"
+	"github.com/google/uuid"
 )
 
 type plannerAgent struct {
@@ -409,4 +411,64 @@ func ensureArtifacts(current []string, required ...string) []string {
 		out = append(out, item)
 	}
 	return out
+}
+
+func newNode(
+	name string,
+	typeName string,
+	assignedTo string,
+	dependencies []string,
+	requiredArtifacts []string,
+	outputArtifacts []string,
+	parallelizable bool,
+	rawIntent string,
+) *models.TaskNode {
+	now := time.Now()
+	if dependencies == nil {
+		dependencies = []string{}
+	}
+	if requiredArtifacts == nil {
+		requiredArtifacts = []string{}
+	}
+	if outputArtifacts == nil {
+		outputArtifacts = []string{}
+	}
+
+	return &models.TaskNode{
+		ID:                uuid.New().String(),
+		Name:              bilingualTaskName(name),
+		Type:              typeName,
+		Description:       strings.TrimSpace(rawIntent),
+		AssignedTo:        assignedTo,
+		Status:            models.StatusPending,
+		Dependencies:      dependencies,
+		RequiredArtifacts: requiredArtifacts,
+		OutputArtifacts:   outputArtifacts,
+		Parallelizable:    parallelizable,
+		RetryLimit:        1,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+}
+
+func bilingualTaskName(name string) string {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return "任务 / Task"
+	}
+	// 已经是中英双语格式时直接复用
+	if strings.Contains(trimmed, " / ") {
+		return trimmed
+	}
+	return trimmed + " / " + trimmed
+}
+
+func buildRepoDiscoveryDescription(rawIntent string) string {
+	return fmt.Sprintf(`请在执行前完成代码仓库发现流程，并输出可直接复现的 repo_url：
+1. 先用 Papers with Code 按论文标题/关键词检索候选仓库
+2. 对候选仓库做有效性验证（活跃度、README 完整性、复现脚本可用性）
+3. 若 PWC 未找到可用仓库，再执行 GitHub 检索并重复验证
+4. 最终输出 candidate_repositories、repo_validation_report、repo_url
+
+用户原始意图：%s`, strings.TrimSpace(rawIntent))
 }
