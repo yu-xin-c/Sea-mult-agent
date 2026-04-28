@@ -170,7 +170,7 @@ export default function App() {
     setPrompt(''); // 清空输入框
     
     // 智能判断意图：是否包含任务触发关键词（扩展版）
-    const isTaskRequest = /对比|比较|评估|选型|RAG|复现|跑一下|执行|画|绘图|plot|matplotlib|langchain|llamaindex|llama.index|haystack|框架|配环境|安装依赖|vs\b/.test(userPrompt.toLowerCase());
+    const isTaskRequest = /对比|比较|评估|选型|rag|复现|跑一下|执行|画|绘图|plot|matplotlib|langchain|llamaindex|llama\.index|haystack|框架|配环境|安装依赖|vs\b/i.test(userPrompt);
     
     try {
       if (isTaskRequest) {
@@ -208,8 +208,8 @@ export default function App() {
   };
 
   // 触发真实的 Agent 执行 (调用 DeepSeek + 沙箱)
-  const handleExecuteTask = async (task: Task) => {
-    return new Promise<void>(async (resolve, reject) => {
+  const handleExecuteTask = async (task: Task): Promise<string> => {
+    return new Promise<string>(async (resolve, reject) => {
       setIsExecuting(true);
       setSelectedTask(task); // 自动选中当前正在执行的任务，方便查看日志
       setViewMode('logs');
@@ -247,6 +247,7 @@ export default function App() {
         const reader = response.body.getReader();
         const decoder = new TextDecoder('utf-8');
         let buffer = '';
+        let lastResult = '';
 
         while (true) {
           let readResult;
@@ -301,6 +302,7 @@ export default function App() {
               setExecutionResult(finalResult);
               setExecutionCode(generatedCode);
               setExecutionImage(imageBase64);
+              lastResult = finalResult;
               
               setNodeStates(prev => ({
                 ...prev,
@@ -349,7 +351,7 @@ export default function App() {
             }
           }
         }
-        resolve(); // 完成
+        resolve(lastResult); // 完成，返回最终结果
 
       } catch (error: any) {
         console.error(error);
@@ -390,8 +392,42 @@ export default function App() {
   const handleRunAllTasks = async () => {
     if (isExecuting) return;
     
-    // 找出所有未完成的任务，按依赖关系拓扑排序后依次执行
-    const taskNodes = nodes.filter(n => n.data.task && n.data.status !== 'completed');
+    // 找出所有未完成的任务节点
+    const pendingNodes = nodes.filter(n => n.data.task && n.data.status !== 'completed');
+    
+    // 拓扑排序：基于 Dependencies 字段确定执行顺序
+    const taskList = pendingNodes.map(n => n.data.task as Task);
+    const taskMap: Record<string, Task> = {};
+    taskList.forEach(t => { taskMap[t.ID] = t; });
+    
+    // Kahn's algorithm
+    const inDegree: Record<string, number> = {};
+    const adjList: Record<string, string[]> = {};
+    taskList.forEach(t => {
+      inDegree[t.ID] = 0;
+      adjList[t.ID] = [];
+    });
+    taskList.forEach(t => {
+      (t.Dependencies || []).forEach(depId => {
+        if (adjList[depId]) {
+          adjList[depId].push(t.ID);
+          inDegree[t.ID] = (inDegree[t.ID] || 0) + 1;
+        }
+      });
+    });
+    const queue = taskList.filter(t => inDegree[t.ID] === 0).map(t => t.ID);
+    const sortedTaskIds: string[] = [];
+    while (queue.length > 0) {
+      const id = queue.shift()!;
+      sortedTaskIds.push(id);
+      (adjList[id] || []).forEach(nextId => {
+        inDegree[nextId]--;
+        if (inDegree[nextId] === 0) queue.push(nextId);
+      });
+    }
+    // 如果存在环，将剩余节点追加（降级处理）
+    taskList.forEach(t => { if (!sortedTaskIds.includes(t.ID)) sortedTaskIds.push(t.ID); });
+    const taskNodes = sortedTaskIds.map(id => taskMap[id]).filter(Boolean);
     
     // 构建任务完成结果的共享上下文，用于将上游结果传递给下游任务
     const taskResults: Record<string, string> = {};
@@ -401,9 +437,7 @@ export default function App() {
       text: `🚀 开始全自动流水线任务！共需执行 ${taskNodes.length} 个节点，请耐心等待。` 
     }]);
     
-    for (const node of taskNodes) {
-      const task = node.data.task as Task;
-      
+    for (const task of taskNodes) {
       // 将所有依赖任务的结果拼接到当前任务的描述中
       const depResults: string[] = [];
       for (const depId of (task.Dependencies || [])) {
@@ -417,9 +451,9 @@ export default function App() {
         : task;
       
       try {
-        await handleExecuteTask(enrichedTask);
+        const result = await handleExecuteTask(enrichedTask);
         // 保存当前任务结果，供下游使用
-        taskResults[task.ID] = nodeStates[task.ID]?.result || '';
+        taskResults[task.ID] = result || '';
       } catch (e) {
         console.error(`Task ${task.Name} failed:`, e);
         setChatHistory(prev => [...prev, { 

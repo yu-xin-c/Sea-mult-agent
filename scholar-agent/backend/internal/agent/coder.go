@@ -198,7 +198,7 @@ func (a *CoderAgent) initRealEinoChain() {
 				})
 				if err != nil {
 					logToContext(ctx, "[%s] 临时沙箱自修复调用失败: %v", a.Name, err)
-					return fmt.Sprintf("Self-Correction 调用大模型失败: %v\n最近输出:\n%s", err, output), nil
+					return fmt.Sprintf("Self-Correction 调用大模型失败: %v\n最近输出:\n%s", err, output), fmt.Errorf("self-correction LLM call failed: %w", err)
 				}
 
 				currentCode = strings.TrimPrefix(msg.Content, "```python\n")
@@ -207,7 +207,7 @@ func (a *CoderAgent) initRealEinoChain() {
 				finalOutput = fmt.Sprintf("执行失败，已尝试修复。错误日志:\n%v\n输出:\n%s", runErr, output)
 			}
 
-			return finalOutput + "\n\n【达到最大重试次数，任务执行失败】", nil
+			return finalOutput + "\n\n【达到最大重试次数，任务执行失败】", fmt.Errorf("max retries exceeded; last output: %s", finalOutput)
 		}
 
 		maxRetries := 4
@@ -260,7 +260,7 @@ func (a *CoderAgent) initRealEinoChain() {
 				})
 				if err != nil {
 					logToContext(ctx, "[%s] 错误: 自修复调用大模型失败: %v", a.Name, err)
-					return fmt.Sprintf("Self-Correction 调用大模型失败: %v\n最近输出:\n%s", err, output), nil
+					return fmt.Sprintf("Self-Correction 调用大模型失败: %v\n最近输出:\n%s", err, output), fmt.Errorf("self-correction LLM call failed: %w", err)
 				}
 
 				currentCode = strings.TrimPrefix(msg.Content, "```python\n")
@@ -277,7 +277,7 @@ func (a *CoderAgent) initRealEinoChain() {
 		}
 
 		logToContext(ctx, "[%s] 达到最大重试次数，任务执行失败", a.Name)
-		return finalOutput + "\n\n【达到最大重试次数，任务执行失败】", nil
+		return finalOutput + "\n\n【达到最大重试次数，任务执行失败】", fmt.Errorf("max retries exceeded; last output: %s", finalOutput)
 	}))
 
 	// 3. 定义边 (Edges) 将节点串联起来

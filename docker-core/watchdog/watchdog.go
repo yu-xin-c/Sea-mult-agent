@@ -57,8 +57,8 @@ func (w *Watchdog) Execute(ctx context.Context, cmd string) (string, error) {
 		}
 	}
 
-	// 4. 语义断路器检测
-	if w.cb.RecordAndCheck(cmd, output) {
+	// 4. 语义断路器检测（仅在执行失败时触发）
+	if err != nil && w.cb.RecordAndCheck(cmd, output) {
 		return "", &WatchdogError{
 			Type:    ErrTypeCircuitBroken,
 			Message: "Circuit breaker triggered: detected an infinite semantic loop.",

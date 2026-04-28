@@ -33,12 +33,14 @@ func FakeLLM(messages []Message) LLMResponse {
 
 	// 简单规则模拟 LLM 决策
 	if len(messages) == 1 {
+		args, err := json.Marshal(map[string]string{"query": last})
+		if err != nil {
+			args = json.RawMessage(`{"query":""}`)
+		}
 		return LLMResponse{
 			ToolCall: &ToolCall{
-				Name: "search_web",
-				Arguments: json.RawMessage(fmt.Sprintf(`{
-					"query": "%s"
-				}`, last)),
+				Name:      "search_web",
+				Arguments: json.RawMessage(args),
 			},
 		}
 	}

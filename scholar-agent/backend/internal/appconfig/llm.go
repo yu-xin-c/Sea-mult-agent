@@ -45,8 +45,8 @@ func LoadLLMConfig() (LLMConfig, error) {
 			return
 		}
 
-		if cfg.LLM.APIKey == "" {
-			loadErr = fmt.Errorf("配置文件缺少 llm.api_key (%s)", cfgPath)
+		if cfg.LLM.APIKey == "" || cfg.LLM.APIKey == "your-api-key" {
+			loadErr = fmt.Errorf("配置文件缺少有效的 llm.api_key（当前值为占位符或空）(%s)", cfgPath)
 			return
 		}
 		if cfg.LLM.BaseURL == "" {

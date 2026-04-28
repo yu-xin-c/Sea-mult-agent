@@ -3,18 +3,22 @@ package executor
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/yu-xin-c/Sea-mult-agent/docker-core/config"
 )
 
 func TestLLMConnectivity(t *testing.T) {
+	if os.Getenv("REAL_INTEGRATION_TEST") != "1" {
+		t.Skip("跳过真实集成测试：请设置 REAL_INTEGRATION_TEST=1 以启用")
+	}
 	fmt.Println("=== 开始 LLM 连通性与指令解析测试 ===")
 
 	// 1. 加载真实配置
 	cfg, err := config.LoadConfig("../config/config.toml")
 	if err != nil {
-		t.Fatalf("加载配置文件失败: %v", err)
+		t.Skipf("跳过测试：无法加载配置文件: %v", err)
 	}
 
 	if cfg.LLM.APIKey == "your-api-key" || cfg.LLM.APIKey == "" {

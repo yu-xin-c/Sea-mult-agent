@@ -3,6 +3,8 @@ package checkpoint
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -44,7 +46,7 @@ func (m *Manager) Commit(ctx context.Context, nodeID string) (string, error) {
 		return "", fmt.Errorf("no active container to commit")
 	}
 
-	ref := fmt.Sprintf("checkpoint-%s-%d", nodeID, time.Now().Unix())
+	ref := fmt.Sprintf("checkpoint-%s-%d", sanitizeNodeID(nodeID), time.Now().Unix())
 
 	// Docker Commit：将当前容器文件系统 + 环境状态打包为新镜像
 	resp, err := engine.Client().ContainerCommit(ctx, containerID,
@@ -139,4 +141,17 @@ func (m *Manager) Registry() *SnapshotRegistry {
 // Injector 暴露负反馈生成器
 func (m *Manager) Injector() *FeedbackInjector {
 	return m.injector
+}
+
+// sanitizeNodeID replaces characters that are invalid in Docker image references
+// with hyphens, ensuring the resulting slug is safe to use as an image tag component.
+var nonAlphanumRe = regexp.MustCompile(`[^a-z0-9]+`)
+
+func sanitizeNodeID(nodeID string) string {
+	slug := nonAlphanumRe.ReplaceAllString(strings.ToLower(nodeID), "-")
+	slug = strings.Trim(slug, "-")
+	if slug == "" {
+		slug = "node"
+	}
+	return slug
 }
