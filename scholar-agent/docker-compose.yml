@@ -20,8 +20,13 @@ services:
     volumes:
       - /tmp:/tmp
       - ../docker-core/config:/app/config:ro
+    env_file:
+      - path: ./backend.env
+        required: false
     environment:
       - SANDBOX_URL=http://docker-sandbox:8082
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+      - OPENAI_MODEL_NAME=${OPENAI_MODEL_NAME:-}
     depends_on:
       - docker-sandbox
     networks:

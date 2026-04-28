@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -38,6 +39,13 @@ type PythonRunResponse struct {
 	Stderr   string   `json:"stderr"`
 	ExitCode int      `json:"exit_code"`
 	Images   []string `json:"images,omitempty"`
+}
+
+type executionStreamEvent struct {
+	Type     string             `json:"type"`
+	Stream   string             `json:"stream,omitempty"`
+	Message  string             `json:"message,omitempty"`
+	Response *PythonRunResponse `json:"response,omitempty"`
 }
 
 func NewSandboxClient(baseURL string) *SandboxClient {
@@ -127,6 +135,10 @@ func (s *SandboxClient) RunPythonCode(ctx context.Context, sandboxID string, cod
 	return &res, nil
 }
 
+func (s *SandboxClient) RunPythonCodeStream(ctx context.Context, sandboxID string, code string, onChunk func(stream string, line string)) (*PythonRunResponse, error) {
+	return s.streamExecution(ctx, sandboxID, "/python/stream", PythonRunRequest{Code: code}, onChunk)
+}
+
 // ExecCommand 在沙箱中执行命令
 func (s *SandboxClient) ExecCommand(ctx context.Context, sandboxID string, cmd []string) (*PythonRunResponse, error) {
 	reqBody, _ := json.Marshal(map[string][]string{"cmd": cmd})
@@ -153,4 +165,61 @@ func (s *SandboxClient) ExecCommand(ctx context.Context, sandboxID string, cmd [
 	}
 
 	return &res, nil
+}
+
+func (s *SandboxClient) ExecCommandStream(ctx context.Context, sandboxID string, cmd []string, onChunk func(stream string, line string)) (*PythonRunResponse, error) {
+	return s.streamExecution(ctx, sandboxID, "/commands/stream", map[string][]string{"cmd": cmd}, onChunk)
+}
+
+func (s *SandboxClient) streamExecution(ctx context.Context, sandboxID string, suffix string, payload any, onChunk func(stream string, line string)) (*PythonRunResponse, error) {
+	reqBody, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, "POST", s.BaseURL+"/api/v1/sandboxes/"+sandboxID+suffix, bytes.NewBuffer(reqBody))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := s.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("stream execution failed (Status %d): %s", resp.StatusCode, string(body))
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	buffer := make([]byte, 0, 64*1024)
+	scanner.Buffer(buffer, 1024*1024)
+
+	var finalResponse *PythonRunResponse
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+
+		var event executionStreamEvent
+		if err := json.Unmarshal(line, &event); err != nil {
+			return nil, fmt.Errorf("decode execution stream failed: %w", err)
+		}
+
+		switch event.Type {
+		case "chunk":
+			if onChunk != nil {
+				onChunk(event.Stream, event.Message)
+			}
+		case "final":
+			finalResponse = event.Response
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if finalResponse == nil {
+		return nil, fmt.Errorf("stream execution ended without final response")
+	}
+	return finalResponse, nil
 }

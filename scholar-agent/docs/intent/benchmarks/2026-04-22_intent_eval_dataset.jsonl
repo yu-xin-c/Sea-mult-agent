@@ -1,0 +1,80 @@
+{"text":"帮我对比一下 LangChain 和 LlamaIndex 在 RAG 场景下的召回率与延迟表现","label":"Framework_Evaluation"}
+{"text":"评估 LangGraph、CrewAI、AutoGen 三种多智能体框架的任务编排能力","label":"Framework_Evaluation"}
+{"text":"请做一个 Haystack 和 LlamaIndex 的 benchmark，并输出结构化总结","label":"Framework_Evaluation"}
+{"text":"比较 LangChain 与 Haystack 在知识库问答中的开发复杂度","label":"Framework_Evaluation"}
+{"text":"对比不同 RAG 框架在长文档检索下的吞吐和成本","label":"Framework_Evaluation"}
+{"text":"请评测 LangChain、LlamaIndex 和 Haystack 的 Agent 工具调用稳定性","label":"Framework_Evaluation"}
+{"text":"帮我比较一下 AutoGen 和 CrewAI 在多 Agent 协作场景下的任务成功率","label":"Framework_Evaluation"}
+{"text":"评估 LangChain 与 LangGraph 在复杂工作流编排上的可维护性","label":"Framework_Evaluation"}
+{"text":"请对比 Haystack 和 LlamaIndex 在企业知识库检索中的延迟表现","label":"Framework_Evaluation"}
+{"text":"给我一个 LangChain、Haystack、LlamaIndex 的性能选型建议","label":"Framework_Evaluation"}
+{"text":"比较不同框架在 query rewrite 接入后的收益差异","label":"Framework_Evaluation"}
+{"text":"帮我评估 LangGraph 和 CrewAI 在工具调用链路中的稳定性","label":"Framework_Evaluation"}
+{"text":"对比多个 RAG 框架在长上下文问答下的准确率和成本","label":"Framework_Evaluation"}
+{"text":"请做一个 framework benchmark，比较 LangChain 和 AutoGen 的执行时延","label":"Framework_Evaluation"}
+{"text":"比较 LangChain 与 LlamaIndex 在 Agent memory 能力上的差异","label":"Framework_Evaluation"}
+{"text":"评测 Haystack、LangGraph 和 CrewAI 在复杂任务分解中的表现","label":"Framework_Evaluation"}
+{"text":"帮我从性能、开发效率和调试成本三个维度比较 LangChain 与 Haystack","label":"Framework_Evaluation"}
+{"text":"请比较不同多智能体框架在 A/B 实验编排中的易用性","label":"Framework_Evaluation"}
+{"text":"对比 LangGraph 和 AutoGen 在多轮任务规划中的鲁棒性","label":"Framework_Evaluation"}
+{"text":"给我评估一下 LlamaIndex 和 Haystack 在检索增强场景的优缺点","label":"Framework_Evaluation"}
+{"text":"复现 Attention Is All You Need 这篇论文的 Transformer 实验","label":"Paper_Reproduction"}
+{"text":"帮我重跑 ResNet 论文的 baseline，并排查指标对不上的原因","label":"Paper_Reproduction"}
+{"text":"请复现一篇关于 Query Rewrite 的论文，并把训练曲线画出来","label":"Paper_Reproduction"}
+{"text":"这篇论文的实验结果跑不出来，帮我 debug 一下复现代码","label":"Paper_Reproduction"}
+{"text":"复现 Transformer 论文并检查为什么 BLEU 分数偏低","label":"Paper_Reproduction"}
+{"text":"请按照论文描述重新实现模型并验证是否能复现实验表格结果","label":"Paper_Reproduction"}
+{"text":"复现一篇 RAG reranker 论文，并验证 Recall@10 是否一致","label":"Paper_Reproduction"}
+{"text":"请根据论文方法重新搭建实验环境并复现实验结果","label":"Paper_Reproduction"}
+{"text":"帮我复现一篇关于多智能体协作的论文并分析失败原因","label":"Paper_Reproduction"}
+{"text":"重现实验论文里的 ablation study，并检查与原文表格的差异","label":"Paper_Reproduction"}
+{"text":"复现一篇 Query Expansion 论文，看看为什么指标低于论文结果","label":"Paper_Reproduction"}
+{"text":"请按照论文里的超参数设置重跑实验并生成对照表","label":"Paper_Reproduction"}
+{"text":"这篇检索论文复现时结果偏差很大，帮我定位问题","label":"Paper_Reproduction"}
+{"text":"帮我把论文中的模型从头实现一遍，并验证能否复现图 3","label":"Paper_Reproduction"}
+{"text":"请复现 BERT 论文中的分类实验并排查精度下降原因","label":"Paper_Reproduction"}
+{"text":"根据论文描述恢复训练流程，重现实验曲线","label":"Paper_Reproduction"}
+{"text":"复现一篇 long-context RAG 论文，并检查实验配置是否遗漏","label":"Paper_Reproduction"}
+{"text":"请重跑论文里的 baseline 和主方法，比较结果是否一致","label":"Paper_Reproduction"}
+{"text":"我想 reproduce 一篇检索增强生成论文，并把复现误差分析出来","label":"Paper_Reproduction"}
+{"text":"帮我修复论文复现实验中的数据预处理问题","label":"Paper_Reproduction"}
+{"text":"运行一段 Python 代码计算前 100 个质数","label":"Code_Execution"}
+{"text":"帮我写脚本统计这个 CSV 的均值和标准差","label":"Code_Execution"}
+{"text":"请执行一段代码，把实验结果画成折线图","label":"Code_Execution"}
+{"text":"分析这段代码的时间复杂度并运行测试","label":"Code_Execution"}
+{"text":"用 Python 读取日志并统计每个接口的 P95 延迟","label":"Code_Execution"}
+{"text":"帮我写一个 matplotlib 脚本把训练损失画出来","label":"Code_Execution"}
+{"text":"写一段 Python 程序计算这个模型输出的 top-k accuracy","label":"Code_Execution"}
+{"text":"帮我跑个脚本把 JSONL 数据转换成 CSV","label":"Code_Execution"}
+{"text":"请执行代码统计实验日志中的错误率","label":"Code_Execution"}
+{"text":"写个脚本读取 parquet 文件并计算每列缺失值比例","label":"Code_Execution"}
+{"text":"帮我运行一段代码生成箱线图比较不同实验组","label":"Code_Execution"}
+{"text":"请用 Python 画一下训练集和验证集 loss 曲线","label":"Code_Execution"}
+{"text":"帮我写脚本合并两个结果文件并输出 diff","label":"Code_Execution"}
+{"text":"运行一个小程序计算 embedding 相似度矩阵","label":"Code_Execution"}
+{"text":"请执行一段 pandas 代码统计每个用户的平均会话时长","label":"Code_Execution"}
+{"text":"写代码把这批实验图片拼成一个对照面板","label":"Code_Execution"}
+{"text":"帮我跑脚本提取日志里的 request id 并计数","label":"Code_Execution"}
+{"text":"请写一段 matplotlib 代码绘制双轴图","label":"Code_Execution"}
+{"text":"执行 Python 脚本，对结果做 bootstrap 重采样","label":"Code_Execution"}
+{"text":"帮我计算 confusion matrix 并把热力图画出来","label":"Code_Execution"}
+{"text":"总结一下 RAG 技术的最新研究进展","label":"General"}
+{"text":"解释一下 Transformer 里的 Multi-Head Attention","label":"General"}
+{"text":"给我一份 Query Rewrite 在 RAG 中应用方式的综述","label":"General"}
+{"text":"推荐几个适合科研助手的文献管理方案","label":"General"}
+{"text":"请概述一下多智能体系统中的任务分解方法","label":"General"}
+{"text":"帮我解释一下向量数据库召回和重排各自的作用","label":"General"}
+{"text":"介绍一下 retrieval-augmented generation 的核心思想","label":"General"}
+{"text":"请解释一下 reranker 在检索系统中的价值","label":"General"}
+{"text":"给我总结一下近两年 Agent 规划研究的主要方向","label":"General"}
+{"text":"讲讲为什么 query rewrite 能提升问答效果","label":"General"}
+{"text":"帮我梳理一下知识图谱问答和 RAG 的差别","label":"General"}
+{"text":"请说明一下多模态检索系统通常由哪些模块构成","label":"General"}
+{"text":"推荐一些适合入门 LLM Agent 的学习资料","label":"General"}
+{"text":"帮我解释一下 dense retrieval 和 sparse retrieval 的区别","label":"General"}
+{"text":"概述一下长上下文模型当前面临的主要挑战","label":"General"}
+{"text":"请总结一下多智能体协作中的通信机制","label":"General"}
+{"text":"讲一下 evaluation harness 在模型评测中的作用","label":"General"}
+{"text":"我想了解一下 embedding 模型如何影响召回质量","label":"General"}
+{"text":"请解释一下 RAG 中召回、重排、生成三阶段的分工","label":"General"}
+{"text":"帮我总结一下 current LLM tool use 的主要研究问题","label":"General"}

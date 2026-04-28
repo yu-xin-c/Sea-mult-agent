@@ -31,7 +31,7 @@ export const useAITranslationPlugin = (onAskAI?: (text: string) => void) => {
         await new Promise(r => setTimeout(r, 20));
         setTranslatedText(prev => prev + mockResult[i]);
       }
-    } catch (error) {
+    } catch {
       setTranslatedText('请求 AI 翻译时发生网络错误，请重试。');
     } finally {
       setIsTranslating(false);
