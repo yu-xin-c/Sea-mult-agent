@@ -1,5 +1,5 @@
 # 使用官方 Node 镜像作为基础
-FROM node:18-bullseye AS builder
+FROM node:20-bullseye AS builder
 
 WORKDIR /app
 COPY package*.json ./

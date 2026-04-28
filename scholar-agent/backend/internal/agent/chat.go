@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 	"log"
-	"os"
+	"scholar-agent-backend/internal/appconfig"
 	"scholar-agent-backend/internal/models"
 	"scholar-agent-backend/internal/prompts"
 	"strings"
@@ -33,23 +33,15 @@ func NewChatAgent(coder *CoderAgent) *ChatAgent {
 }
 
 func (a *ChatAgent) initEinoChain() {
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		log.Fatal("OPENAI_API_KEY environment variable is not set")
-	}
-	baseURL := os.Getenv("OPENAI_BASE_URL")
-	if baseURL == "" {
-		baseURL = "https://api.deepseek.com/v1"
-	}
-	modelName := os.Getenv("OPENAI_MODEL_NAME")
-	if modelName == "" {
-		modelName = "deepseek-chat"
+	llmCfg, err := appconfig.LoadLLMConfig()
+	if err != nil {
+		log.Fatalf("加载 LLM 配置失败: %v", err)
 	}
 
 	chatModel, err := openai.NewChatModel(context.Background(), &openai.ChatModelConfig{
-		BaseURL: baseURL,
-		APIKey:  apiKey,
-		Model:   modelName,
+		BaseURL: llmCfg.BaseURL,
+		APIKey:  llmCfg.APIKey,
+		Model:   llmCfg.Model,
 	})
 	if err != nil {
 		log.Fatalf("初始化聊天模型失败: %v", err)

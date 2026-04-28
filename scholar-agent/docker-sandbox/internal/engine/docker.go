@@ -10,10 +10,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
 )
+
+var containerIDPattern = regexp.MustCompile(`^[a-f0-9]{12,64}$`)
 
 type NativeDockerEngine struct {
 	mu         sync.RWMutex
@@ -65,14 +68,17 @@ func (e *NativeDockerEngine) Create(ctx context.Context, image string, mountPath
 
 func extractContainerIDFromDockerRunOutput(raw string) string {
 	// `docker run -d` may print image pull progress before the final container id
-	// when the image is not present locally. We only want the last non-empty line.
+	// when the image is not present locally. We scan from the last line upward and
+	// validate the candidate against the expected hex container-id pattern.
 	lines := strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
 		if line == "" {
 			continue
 		}
-		return line
+		if containerIDPattern.MatchString(line) {
+			return line
+		}
 	}
 	return ""
 }

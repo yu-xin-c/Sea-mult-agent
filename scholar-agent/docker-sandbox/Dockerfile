@@ -1,14 +1,15 @@
 # 使用官方 Go 镜像作为编译环境
 FROM golang:1.22-bullseye AS builder
 
+ENV GOTOOLCHAIN=auto
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod tidy
 COPY . .
-RUN go build -o bin/sandbox main.go
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/sandbox main.go
 
-# 使用带有 Docker CLI 的镜像，方便调试（虽然我们使用 SDK）
-FROM debian:bullseye-slim
+# 直接使用官方 Docker CLI 运行时镜像，避免 apt 源不稳定
+FROM docker:27-cli
 WORKDIR /app
 COPY --from=builder /app/bin/sandbox .
 

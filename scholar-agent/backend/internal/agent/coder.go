@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"scholar-agent-backend/internal/appconfig"
 	"scholar-agent-backend/internal/models"
 	"scholar-agent-backend/internal/prompts"
 	"scholar-agent-backend/internal/sandbox"
@@ -53,6 +54,15 @@ type CoderAgent struct {
 	EinoChain     compose.Runnable[string, string] // 使用 Eino 编排的执行链
 }
 
+func BuildCoderSystemPrompt() string {
+	return "你是一个资深的 AI 科研助理和 Python 开发者。你的任务是在 Docker 沙箱（python:3.9-bullseye 镜像）中生成可运行的 Python 代码。\n\n" +
+		"【通用约束】：\n" +
+		"1. 只输出纯 Python 代码，不要 Markdown 包裹。\n" +
+		"2. 依赖名称必须保持通用，例如 your-package-name；不要在通用提示词中写死具体框架。\n" +
+		"3. 不依赖外网 API、私有密钥或远程数据集，优先使用本地构造样例。\n" +
+		"4. 运行结束后输出 JSON 格式的结果摘要，便于调度器解析。\n"
+}
+
 type coderContextKey string
 
 const (
@@ -77,26 +87,15 @@ func NewCoderAgent(sandbox *sandbox.SandboxClient) *CoderAgent {
 // initRealEinoChain 使用字节跳动 Eino 框架和真实的 LLM 模型编排逻辑流
 func (a *CoderAgent) initRealEinoChain() {
 	// 1. 初始化真实的 LLM ChatModel
-	// 使用用户提供的 DeepSeek API Key
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		log.Fatal("OPENAI_API_KEY environment variable is not set")
-	}
-
-	baseURL := os.Getenv("OPENAI_BASE_URL")
-	if baseURL == "" {
-		baseURL = "https://api.deepseek.com/v1"
-	}
-
-	modelName := os.Getenv("OPENAI_MODEL_NAME")
-	if modelName == "" {
-		modelName = "deepseek-chat"
+	llmCfg, err := appconfig.LoadLLMConfig()
+	if err != nil {
+		log.Fatalf("加载 LLM 配置失败: %v", err)
 	}
 
 	chatModel, err := openai.NewChatModel(context.Background(), &openai.ChatModelConfig{
-		BaseURL: baseURL,
-		APIKey:  apiKey,
-		Model:   modelName,
+		BaseURL: llmCfg.BaseURL,
+		APIKey:  llmCfg.APIKey,
+		Model:   llmCfg.Model,
 	})
 	if err != nil {
 		log.Fatalf("初始化大模型失败: %v", err)

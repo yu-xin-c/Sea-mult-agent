@@ -85,19 +85,36 @@ func (p *Planner) GeneratePlan(intent string, intentType string) (*models.Plan, 
 		UpdatedAt:  time.Now(),
 	}
 
-	// Mock logic based on a theoretical "IntentType" from BERT
+	// Legacy plan shape used by older API/tests. The graph planner above is the
+	// production path; this remains small and deterministic for compatibility.
 	if intentType == "Framework_Evaluation" {
-		t1 := createMockTask("Retrieve Documentation & Best Practices for Target Frameworks", "librarian_agent", nil, intent)
-		t2 := createMockTask("Generate Environment Setup & Integration Code for Framework A", "coder_agent", []string{t1.ID}, intent)
-		t3 := createMockTask("Generate Environment Setup & Integration Code for Framework B", "coder_agent", []string{t1.ID}, intent)
-		t4 := createMockTask("Execute A/B Tests with User Data in Sandbox", "sandbox_agent", []string{t2.ID, t3.ID}, intent)
-		t5 := createMockTask("Analyze Metrics & Generate Evaluation Report", "data_agent", []string{t4.ID}, intent)
+		frameworks := frameworkLabels(strings.ToLower(intent))
+		left := frameworkDisplayName(frameworks, 0, "Framework A")
+		right := frameworkDisplayName(frameworks, 1, "Framework B")
+		useCase := "RAG 问答"
+		if hasAny(strings.ToLower(intent), "agent", "智能体") {
+			useCase = "Agent 构建"
+		}
+
+		t1 := createMockTaskWithDescription(
+			"Retrieve Documentation & Best Practices for Target Frameworks",
+			"librarian_agent",
+			nil,
+			fmt.Sprintf("请调研 %s 与 %s 在 %s 场景下的核心架构、典型代码模式、依赖和适用边界。\n原始需求：%s", left, right, useCase, intent),
+		)
+		t2 := createMockTaskWithDescription("Generate "+left+" Example Code", "coder_agent", []string{t1.ID}, frameworkTaskDescription(left, useCase, intent))
+		t3 := createMockTaskWithDescription("Generate "+right+" Example Code", "coder_agent", []string{t1.ID}, frameworkTaskDescription(right, useCase, intent))
+		t4 := createMockTaskWithDescription(
+			"Analyze Metrics & Generate Evaluation Report",
+			"data_agent",
+			[]string{t2.ID, t3.ID},
+			fmt.Sprintf("请根据 %s 与 %s 的执行输出生成客观对比报告，覆盖实验配置、核心指标、适用场景和选型建议。\n原始需求：%s", left, right, intent),
+		)
 
 		plan.Tasks[t1.ID] = t1
 		plan.Tasks[t2.ID] = t2
 		plan.Tasks[t3.ID] = t3
 		plan.Tasks[t4.ID] = t4
-		plan.Tasks[t5.ID] = t5
 	} else if intentType == "Paper_Reproduction" {
 		t1 := createMockTask("Parse Paper & Extract Algorithm Details", "librarian_agent", nil, intent)
 		t2 := createMockTask("Find/Clone Open Source Repository", "coder_agent", []string{t1.ID}, intent)
@@ -143,6 +160,62 @@ func createMockTask(name, agent string, deps []string, context string) *models.T
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}
+}
+
+func createMockTaskWithDescription(name, agent string, deps []string, description string) *models.Task {
+	if deps == nil {
+		deps = []string{}
+	}
+	displayName := bilingualTaskName(name)
+	return &models.Task{
+		ID:           uuid.New().String(),
+		Name:         displayName,
+		Description:  description,
+		AssignedTo:   agent,
+		Status:       models.StatusPending,
+		Dependencies: deps,
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}
+}
+
+var legacyFrameworkPackageMap = map[string][]string{
+	"langchain":   {"langchain"},
+	"llamaindex":  {"llama-index"},
+	"llama-index": {"llama-index"},
+	"haystack":    {"haystack-ai"},
+	"autogen":     {"pyautogen"},
+	"crewai":      {"crewai"},
+	"langgraph":   {"langgraph"},
+}
+
+func frameworkTaskDescription(name, useCase, intent string) string {
+	packages := legacyFrameworkPackages(name)
+	packageList := strings.Join(packages, " ")
+	primaryPackage := packages[0]
+
+	return fmt.Sprintf(`请编写一个完整的 Python 脚本，在 Docker 沙箱（python:3.9-bullseye）中演示使用该目标框架实现 "%s" 功能。
+
+目标框架：%s
+建议安装包：%s
+
+关键要求：
+1. 使用该目标框架实现核心流程，依赖声明应围绕目标框架，不要混入另一个被比较框架
+2. 使用 Dummy 数据或本地构造样例，不依赖外部数据集、私有密钥或远程 API
+3. 运行结束后打印关键指标（如耗时、输出摘要、是否成功）
+4. 将结果以 JSON 格式打印到最后一行，格式：{"framework": "%s", "latency_ms": 数字, "output_preview": "字符串"}
+5. 脚本逻辑必须自洽，可解释，不能为通过测试而硬编码结果
+
+例如 %s
+原始需求：%s`, useCase, name, packageList, name, primaryPackage, intent)
+}
+
+func legacyFrameworkPackages(name string) []string {
+	key := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(name), "_", "-"))
+	if packages, ok := legacyFrameworkPackageMap[key]; ok && len(packages) > 0 {
+		return packages
+	}
+	return []string{strings.ToLower(strings.TrimSpace(name))}
 }
 
 func newNode(name, taskType, agent string, deps, requiredArtifacts, outputArtifacts []string, parallelizable bool, context string) *models.TaskNode {
