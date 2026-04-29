@@ -80,9 +80,43 @@ export interface NodeExecutionState {
   imageBase64?: string;
 }
 
+export interface ReproductionResourceProbe {
+  cpu_count?: number;
+  memory_gb?: number;
+  disk_free_gb?: number;
+  gpu_count?: number;
+  gpu_names?: string[];
+  thresholds?: Record<string, unknown>;
+}
+
+export interface ReproductionModeDecision {
+  requested_mode?: string;
+  effective_mode?: string;
+  full_eligible?: boolean;
+  reasons?: string[];
+  probe?: ReproductionResourceProbe;
+}
+
+export interface PlanClarificationOption {
+  id: string;
+  label: string;
+  description: string;
+}
+
+export interface PlanClarification {
+  required?: boolean;
+  type?: string;
+  recommended_mode?: string;
+  question: string;
+  options?: PlanClarificationOption[];
+  mode_decision?: ReproductionModeDecision;
+  resource_probe?: ReproductionResourceProbe;
+}
+
 export interface PlanResponse {
   message: string;
   plan_graph: PlanGraph;
+  clarification?: PlanClarification;
   intent_context?: IntentContext;
   session_id?: string;
   anon_user_id?: string;
@@ -107,6 +141,7 @@ export interface ExecuteTaskPayload {
   task_type?: string;
   task_description: string;
   assigned_to: string;
+  inputs?: Record<string, unknown>;
 }
 
 export interface ExecuteTaskResultEvent {

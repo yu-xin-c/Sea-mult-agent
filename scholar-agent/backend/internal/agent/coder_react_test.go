@@ -249,6 +249,7 @@ func TestDetectPythonDependencies_FiltersExpandedStdlibSet(t *testing.T) {
 from __future__ import division
 import inspect
 import codecs
+import glob
 import urllib.request
 import tarfile
 import torch
@@ -256,5 +257,40 @@ import torch
 	deps := detectPythonDependencies(code)
 	if strings.Join(deps, ",") != "torch" {
 		t.Fatalf("unexpected deps: %v", deps)
+	}
+}
+
+func TestResolveDependenciesTask_SmokeRunnerIgnoresHeavyRepoScripts(t *testing.T) {
+	workspace := t.TempDir()
+	for _, file := range []string{
+		"scholar_repro_smoke.py",
+		"src/train.py",
+	} {
+		path := filepath.Join(workspace, file)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	smokePath := filepath.Join(workspace, "scholar_repro_smoke.py")
+	if err := os.WriteFile(smokePath, []byte("import json\nimport torch\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "src", "train.py"), []byte("import wandb\nfrom datasets import load_dataset\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	task := &models.Task{
+		Type: "resolve_dependencies",
+		Inputs: map[string]any{
+			"workspace_path": workspace,
+			"code_file_path": smokePath,
+			"generated_code": "import json\nimport torch\n",
+		},
+	}
+	if err := (&CoderAgent{}).resolveDependenciesTask(context.Background(), task); err != nil {
+		t.Fatalf("resolveDependenciesTask returned error: %v", err)
+	}
+	if task.Result != `["torch"]` {
+		t.Fatalf("expected only torch dependency, got %s", task.Result)
 	}
 }

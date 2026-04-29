@@ -186,7 +186,8 @@ func (s *Scheduler) promotePendingNodesToReady(plan *models.PlanGraph) {
 				TaskID:     node.ID,
 				TaskStatus: string(node.Status),
 				Payload: map[string]any{
-					"name": node.Name,
+					"name":   node.Name,
+					"inputs": summarizeTaskInputs(plan, node),
 				},
 				Timestamp: time.Now(),
 			})
@@ -379,6 +380,7 @@ func (s *Scheduler) markTaskCompleted(planID, taskID string, result *models.Task
 			TaskID:    taskID,
 			Payload: map[string]any{
 				"artifact_keys": keys,
+				"artifacts":     summarizeArtifacts(result.Artifacts),
 			},
 			Timestamp: now,
 		})
@@ -429,6 +431,48 @@ func (s *Scheduler) markTaskFailed(planID, taskID string, result *models.TaskExe
 		Timestamp: now,
 	})
 	return nil
+}
+
+func summarizeTaskInputs(plan *models.PlanGraph, node *models.TaskNode) []map[string]any {
+	if plan == nil || node == nil {
+		return nil
+	}
+
+	inputs := []map[string]any{}
+	for _, key := range node.RequiredArtifacts {
+		artifact, ok := plan.Artifacts[key]
+		if !ok {
+			continue
+		}
+		inputs = append(inputs, map[string]any{
+			"key":              key,
+			"type":             artifact.Type,
+			"producer_task_id": artifact.ProducerTaskID,
+			"value_preview":    previewValue(artifact.Value),
+		})
+	}
+	return inputs
+}
+
+func summarizeArtifacts(artifacts []models.Artifact) []map[string]any {
+	out := make([]map[string]any, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		out = append(out, map[string]any{
+			"key":              artifact.Key,
+			"type":             artifact.Type,
+			"producer_task_id": artifact.ProducerTaskID,
+			"value_preview":    previewValue(artifact.Value),
+		})
+	}
+	return out
+}
+
+func previewValue(value string) string {
+	const limit = 1000
+	if len(value) <= limit {
+		return value
+	}
+	return value[:limit] + "...[truncated]"
 }
 
 func (s *Scheduler) blockDependents(planID, taskID string) error {

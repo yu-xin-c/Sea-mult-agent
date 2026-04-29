@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { ChatMessage, IntentContext, PlanGraph } from '../../contracts/api';
+import type { ChatMessage, IntentContext, PlanClarification, PlanGraph } from '../../contracts/api';
 import { chat, createPlan } from '../../services/api/scholarApi';
 import { uiText } from '../constants/uiText';
 
@@ -53,6 +53,48 @@ const createWelcomeMessage = (): ChatMessage => ({
   role: 'system',
   text: uiText.appWelcome,
 });
+
+const formatPlanClarification = (clarification?: PlanClarification) => {
+  if (!clarification?.required || clarification.type !== 'paper_reproduction_mode') return '';
+
+  const probe = clarification.resource_probe;
+  const decision = clarification.mode_decision;
+  const lines = [
+    '### 需要确认复现模式',
+    '',
+    clarification.question,
+  ];
+
+  if (clarification.recommended_mode) {
+    lines.push('', `**当前建议模式：** \`${clarification.recommended_mode}\``);
+  }
+
+  if (probe) {
+    lines.push(
+      '',
+      '**本机资源探测：**',
+      `- CPU：${probe.cpu_count ?? '未知'}`,
+      `- 内存：${typeof probe.memory_gb === 'number' ? `${probe.memory_gb.toFixed(1)}GB` : '未知'}`,
+      `- 可用磁盘：${typeof probe.disk_free_gb === 'number' ? `${probe.disk_free_gb.toFixed(1)}GB` : '未知'}`,
+      `- CUDA GPU：${probe.gpu_count ?? 0}`,
+    );
+  }
+
+  if (decision?.reasons?.length) {
+    lines.push('', '**判断依据：**', ...decision.reasons.map((reason) => `- ${reason}`));
+  }
+
+  if (clarification.options?.length) {
+    lines.push(
+      '',
+      '**可选运行方式：**',
+      ...clarification.options.map((option) => `- \`${option.id}\` ${option.label}：${option.description}`),
+    );
+  }
+
+  lines.push('', '当前会先生成任务拓扑；如果你确认要全量复现，下一步可以把运行模式切到 `full`。');
+  return lines.join('\n');
+};
 
 const createSessionRecord = (index: number): ChatSessionRecord => {
   const now = new Date().toISOString();
@@ -291,6 +333,13 @@ export function useScholarChatFlow(options: UseScholarChatFlowOptions) {
           activePlanId: generatedPlanGraph.id,
           planGraph: generatedPlanGraph,
         });
+        const clarificationText = formatPlanClarification(response.clarification);
+        if (clarificationText) {
+          appendMessageToSession(requestSessionId, {
+            role: 'system',
+            text: clarificationText,
+          });
+        }
         appendMessageToSession(requestSessionId, {
           role: 'system',
           text: uiText.planGenerated,

@@ -102,19 +102,30 @@ func (p *Planner) GeneratePlan(intent string, intentType string) (*models.Plan, 
 			nil,
 			fmt.Sprintf("请调研 %s 与 %s 在 %s 场景下的核心架构、典型代码模式、依赖和适用边界。\n原始需求：%s", left, right, useCase, intent),
 		)
-		t2 := createMockTaskWithDescription("Generate "+left+" Example Code", "coder_agent", []string{t1.ID}, frameworkTaskDescription(left, useCase, intent))
-		t3 := createMockTaskWithDescription("Generate "+right+" Example Code", "coder_agent", []string{t1.ID}, frameworkTaskDescription(right, useCase, intent))
-		t4 := createMockTaskWithDescription(
-			"Analyze Metrics & Generate Evaluation Report",
+		t2 := createMockTaskWithDescription(
+			"Design Shared RAG Benchmark Protocol",
 			"data_agent",
-			[]string{t2.ID, t3.ID},
-			fmt.Sprintf("请根据 %s 与 %s 的执行输出生成客观对比报告，覆盖实验配置、核心指标、适用场景和选型建议。\n原始需求：%s", left, right, intent),
+			[]string{t1.ID},
+			fmt.Sprintf("请设计一个对 %s 与 %s 都公平的 %s 性能评测协议，固定输入样例、检索语料、指标口径和 JSON 输出字段。\n原始需求：%s", left, right, useCase, intent),
+		)
+		t3 := createMockTaskWithDescription("Generate "+left+" RAG Benchmark Code", "coder_agent", []string{t1.ID, t2.ID}, frameworkTaskDescription(left, useCase, intent))
+		t4 := createMockTaskWithDescription("Generate "+right+" RAG Benchmark Code", "coder_agent", []string{t1.ID, t2.ID}, frameworkTaskDescription(right, useCase, intent))
+		t5 := createMockTaskWithDescription("Run "+left+" Benchmark in Sandbox", "sandbox_agent", []string{t3.ID}, frameworkRunTaskDescription(left, intent))
+		t6 := createMockTaskWithDescription("Run "+right+" Benchmark in Sandbox", "sandbox_agent", []string{t4.ID}, frameworkRunTaskDescription(right, intent))
+		t7 := createMockTaskWithDescription(
+			"Compare RAG Benchmark Results",
+			"data_agent",
+			[]string{t5.ID, t6.ID},
+			fmt.Sprintf("请根据 %s 与 %s 的沙箱执行输出生成客观性能对比报告，覆盖实验配置、延迟、成功率、输出质量、依赖复杂度、适用场景和选型建议。\n原始需求：%s", left, right, intent),
 		)
 
 		plan.Tasks[t1.ID] = t1
 		plan.Tasks[t2.ID] = t2
 		plan.Tasks[t3.ID] = t3
 		plan.Tasks[t4.ID] = t4
+		plan.Tasks[t5.ID] = t5
+		plan.Tasks[t6.ID] = t6
+		plan.Tasks[t7.ID] = t7
 	} else if intentType == "Paper_Reproduction" {
 		t1 := createMockTask("Parse Paper & Extract Algorithm Details", "librarian_agent", nil, intent)
 		t2 := createMockTask("Find/Clone Open Source Repository", "coder_agent", []string{t1.ID}, intent)
@@ -208,6 +219,18 @@ func frameworkTaskDescription(name, useCase, intent string) string {
 
 例如 %s
 原始需求：%s`, useCase, name, packageList, name, primaryPackage, intent)
+}
+
+func frameworkRunTaskDescription(name, intent string) string {
+	return fmt.Sprintf(`请在沙箱中运行 %s 的 RAG 基准测试脚本，并保留完整 stdout/stderr。
+
+运行要求：
+1. 安装脚本声明的最小依赖，不引入另一个被比较框架
+2. 运行同一份基准协议输入，避免临时改动测试数据
+3. 记录安装是否成功、脚本是否成功、端到端耗时、最后一行 JSON 指标和关键错误
+4. 如果运行失败，输出可复现的失败原因，供最终报告公平对比
+
+原始需求：%s`, name, intent)
 }
 
 func legacyFrameworkPackages(name string) []string {
@@ -571,12 +594,13 @@ func buildPaperReproductionNodesV2(intent models.IntentContext) []*models.TaskNo
 
 	t1 := newNode("Parse "+paperTitle+" & Extract Method", "paper_parse", "librarian_agent", nil, nil, []string{"parsed_paper"}, true, context)
 	t2 := newRepoDiscoveryNode([]string{t1.ID}, context, intent)
-	t3 := newNode("Prepare Workspace", "repo_prepare", "coder_agent", []string{t2.ID}, []string{"repo_url", "candidate_repositories", "repo_validation_report"}, []string{"workspace_path", "code_file_path", "generated_code", "repo_manifest"}, false, context)
+	t3 := newNode("Prepare Workspace", "repo_prepare", "coder_agent", []string{t2.ID}, []string{"repo_url", "candidate_repositories", "repo_validation_report"}, []string{"workspace_path", "code_file_path", "generated_code", "repo_manifest", "reproduction_mode_report"}, false, context)
+	t3.Inputs = buildPaperReproductionInputs(intent)
 	t4 := newNode("Resolve "+paperTitle+" Dependencies", "resolve_dependencies", "coder_agent", []string{t3.ID}, []string{"workspace_path", "code_file_path", "generated_code", "repo_manifest"}, []string{"dependency_spec"}, false, context)
 	t5 := newNode("Setup Runtime Environment", "prepare_runtime", "sandbox_agent", []string{t4.ID}, []string{"workspace_path", "dependency_spec"}, []string{"runtime_session"}, false, context)
 	t6 := newNode("Install "+paperTitle+" Dependencies", "install_dependencies", "sandbox_agent", []string{t5.ID}, []string{"runtime_session", "dependency_spec"}, []string{"prepared_runtime", "dependency_install_report"}, false, context)
 	t7 := newNode("Execute Baseline", "execute_code", "sandbox_agent", []string{t6.ID}, []string{"workspace_path", "code_file_path", "generated_code", "prepared_runtime"}, []string{"run_metrics"}, false, context)
-	t8 := newNode("Compare With Paper Claims", "paper_compare", "data_agent", []string{t7.ID}, []string{"run_metrics", "parsed_paper"}, []string{"comparison_report"}, false, context)
+	t8 := newNode("Compare With Paper Claims", "paper_compare", "data_agent", []string{t7.ID}, []string{"run_metrics", "parsed_paper", "repo_manifest", "reproduction_mode_report"}, []string{"comparison_report"}, false, context)
 
 	nodes := []*models.TaskNode{t1, t2, t3, t4, t5, t6, t7, t8}
 	lastID := t8.ID
@@ -593,6 +617,29 @@ func buildPaperReproductionNodesV2(intent models.IntentContext) []*models.TaskNo
 		nodes = append(nodes, t8)
 	}
 	return nodes
+}
+
+func buildPaperReproductionInputs(intent models.IntentContext) map[string]any {
+	raw := strings.ToLower(strings.Join([]string{intent.RawIntent, intent.RewrittenIntent}, " "))
+	requestedMode := "auto"
+	fullRequested := boolEntity(intent.Entities, "full_reproduction") ||
+		boolEntity(intent.Constraints, "full_reproduction") ||
+		hasAny(raw, "full reproduction", "full run", "bleu", "wmt14", "完整复现", "全量复现", "完整实验", "全量实验")
+	if boolEntity(intent.Entities, "smoke_reproduction") ||
+		boolEntity(intent.Constraints, "smoke_reproduction") ||
+		hasAny(raw, "smoke", "最小实验", "快速验证") {
+		requestedMode = "smoke"
+	}
+	if fullRequested {
+		requestedMode = "full"
+	}
+	if rawMode := strings.TrimSpace(stringEntity(intent.Constraints, "reproduction_mode", "")); rawMode != "" {
+		requestedMode = rawMode
+	}
+	return map[string]any{
+		"requested_reproduction_mode": requestedMode,
+		"full_reproduction_requested": fullRequested,
+	}
 }
 
 func buildCodeExecutionNodesV2(intent models.IntentContext) []*models.TaskNode {
@@ -825,6 +872,9 @@ func bilingualTaskName(name string) string {
 	case strings.HasPrefix(trimmed, "Run ") && strings.HasSuffix(trimmed, " Benchmark"):
 		target := strings.TrimSuffix(strings.TrimPrefix(trimmed, "Run "), " Benchmark")
 		return fmt.Sprintf("运行 %s 基准测试 / %s", target, trimmed)
+	case strings.HasPrefix(trimmed, "Run ") && strings.HasSuffix(trimmed, " Benchmark in Sandbox"):
+		target := strings.TrimSuffix(strings.TrimPrefix(trimmed, "Run "), " Benchmark in Sandbox")
+		return fmt.Sprintf("在沙箱中运行 %s 基准测试 / %s", target, trimmed)
 	case strings.HasPrefix(trimmed, "Parse ") && strings.HasSuffix(trimmed, " & Extract Method"):
 		target := strings.TrimSuffix(strings.TrimPrefix(trimmed, "Parse "), " & Extract Method")
 		return fmt.Sprintf("解析 %s 并提取方法 / %s", target, trimmed)
@@ -838,26 +888,28 @@ func bilingualTaskName(name string) string {
 
 func exactTaskNameTranslations() map[string]string {
 	return map[string]string{
-		"Research Candidate Frameworks":     "调研候选框架",
-		"Generate Selection Recommendation": "生成选型建议",
-		"Generate Benchmark Report":         "生成基准测试报告",
-		"Locate Reference Repository":       "定位参考仓库",
-		"Prepare Workspace":                 "准备工作区",
-		"Setup Runtime Environment":         "搭建运行环境",
-		"Execute Baseline":                  "执行基线实验",
-		"Compare With Paper Claims":         "对比论文声明结果",
-		"Visualize Reproduction Results":    "可视化复现实验结果",
-		"Fix Gaps And Rerun":                "修复问题并重新运行",
-		"Generate Code":                     "生成代码",
-		"Resolve Dependencies":              "解析依赖",
-		"Prepare Runtime":                   "准备运行环境",
-		"Install Dependencies":              "安装依赖",
-		"Execute Code":                      "执行代码",
-		"Render Output Plot":                "渲染输出图表",
-		"Verify And Summarize Result":       "校验并总结结果",
-		"Collect Background Context":        "收集背景信息",
-		"Synthesize Response":               "综合生成回答",
-		"Process Request":                   "处理请求",
+		"Research Candidate Frameworks":        "调研候选框架",
+		"Generate Selection Recommendation":    "生成选型建议",
+		"Generate Benchmark Report":            "生成基准测试报告",
+		"Design Shared RAG Benchmark Protocol": "设计共享 RAG 评测协议",
+		"Compare RAG Benchmark Results":        "对比 RAG 基准测试结果",
+		"Locate Reference Repository":          "定位参考仓库",
+		"Prepare Workspace":                    "准备工作区",
+		"Setup Runtime Environment":            "搭建运行环境",
+		"Execute Baseline":                     "执行基线实验",
+		"Compare With Paper Claims":            "对比论文声明结果",
+		"Visualize Reproduction Results":       "可视化复现实验结果",
+		"Fix Gaps And Rerun":                   "修复问题并重新运行",
+		"Generate Code":                        "生成代码",
+		"Resolve Dependencies":                 "解析依赖",
+		"Prepare Runtime":                      "准备运行环境",
+		"Install Dependencies":                 "安装依赖",
+		"Execute Code":                         "执行代码",
+		"Render Output Plot":                   "渲染输出图表",
+		"Verify And Summarize Result":          "校验并总结结果",
+		"Collect Background Context":           "收集背景信息",
+		"Synthesize Response":                  "综合生成回答",
+		"Process Request":                      "处理请求",
 		"Retrieve Documentation & Best Practices for Target Frameworks": "获取目标框架文档与最佳实践",
 		"Generate Environment Setup & Integration Code for Framework A": "为框架 A 生成环境配置与集成代码",
 		"Generate Environment Setup & Integration Code for Framework B": "为框架 B 生成环境配置与集成代码",

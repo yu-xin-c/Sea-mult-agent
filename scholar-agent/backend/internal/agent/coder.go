@@ -1066,7 +1066,7 @@ var pythonStandardLibraryModules = map[string]struct{}{
 	"hashlib": {}, "io": {}, "itertools": {}, "json": {}, "logging": {}, "math": {}, "os": {}, "pathlib": {}, "random": {},
 	"re": {}, "statistics": {}, "string": {}, "subprocess": {}, "sys": {}, "tempfile": {}, "time": {}, "typing": {}, "uuid": {}, "warnings": {},
 	// 标准库：避免被误判为 PyPI 包（例如 `shutil` 不是第三方依赖，pip 永远装不上）
-	"__future__": {}, "codecs": {}, "inspect": {}, "shutil": {}, "tarfile": {}, "urllib": {},
+	"__future__": {}, "codecs": {}, "glob": {}, "inspect": {}, "shutil": {}, "tarfile": {}, "urllib": {},
 }
 
 var pythonImportPackageMap = map[string]string{
@@ -1389,7 +1389,9 @@ func (a *CoderAgent) resolveDependenciesTask(ctx context.Context, task *models.T
 
 	dependencies := make([]string, 0, 16)
 	codeDependencies := detectPythonDependencies(code)
-	if strings.TrimSpace(workspacePath) != "" {
+	if isReproductionSmokeRunnerPath(codeFilePath) {
+		dependencies = append(dependencies, codeDependencies...)
+	} else if strings.TrimSpace(workspacePath) != "" {
 		workspaceDependencies := filterWorkspaceLocalDependencies(detectWorkspacePythonDependencies(workspacePath), workspacePath)
 		dependencies = append(dependencies, workspaceDependencies...)
 		repoDependencies := detectRepositoryDependencies(workspacePath)
@@ -1422,6 +1424,10 @@ func (a *CoderAgent) resolveDependenciesTask(ctx context.Context, task *models.T
 	}
 	logToContext(ctx, "[%s] 识别到依赖: %s", a.Name, chooseNonEmpty(strings.Join(dependencies, ", "), "none"))
 	return nil
+}
+
+func isReproductionSmokeRunnerPath(path string) bool {
+	return strings.EqualFold(filepath.Base(strings.TrimSpace(path)), "scholar_repro_smoke.py")
 }
 
 func extractTaskInput(task *models.Task, key string) string {

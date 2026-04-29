@@ -43,6 +43,75 @@ interface Plan {
   Status: string;
 }
 
+interface ReproductionResourceProbe {
+  cpu_count?: number;
+  memory_gb?: number;
+  disk_free_gb?: number;
+  gpu_count?: number;
+}
+
+interface ReproductionModeDecision {
+  effective_mode?: string;
+  full_eligible?: boolean;
+  reasons?: string[];
+}
+
+interface PlanClarification {
+  required?: boolean;
+  type?: string;
+  recommended_mode?: string;
+  question?: string;
+  options?: Array<{
+    id: string;
+    label: string;
+    description: string;
+  }>;
+  mode_decision?: ReproductionModeDecision;
+  resource_probe?: ReproductionResourceProbe;
+}
+
+const formatPlanClarification = (clarification?: PlanClarification) => {
+  if (!clarification?.required || clarification.type !== 'paper_reproduction_mode') return '';
+
+  const probe = clarification.resource_probe;
+  const decision = clarification.mode_decision;
+  const lines = [
+    '### 需要确认复现模式',
+    '',
+    clarification.question || '检测到论文复现可能涉及全量实验，请确认运行模式。',
+  ];
+
+  if (clarification.recommended_mode) {
+    lines.push('', `**当前建议模式：** \`${clarification.recommended_mode}\``);
+  }
+
+  if (probe) {
+    lines.push(
+      '',
+      '**本机资源探测：**',
+      `- CPU：${probe.cpu_count ?? '未知'}`,
+      `- 内存：${typeof probe.memory_gb === 'number' ? `${probe.memory_gb.toFixed(1)}GB` : '未知'}`,
+      `- 可用磁盘：${typeof probe.disk_free_gb === 'number' ? `${probe.disk_free_gb.toFixed(1)}GB` : '未知'}`,
+      `- CUDA GPU：${probe.gpu_count ?? 0}`,
+    );
+  }
+
+  if (decision?.reasons?.length) {
+    lines.push('', '**判断依据：**', ...decision.reasons.map((reason) => `- ${reason}`));
+  }
+
+  if (clarification.options?.length) {
+    lines.push(
+      '',
+      '**可选运行方式：**',
+      ...clarification.options.map((option) => `- \`${option.id}\` ${option.label}：${option.description}`),
+    );
+  }
+
+  lines.push('', '当前会先生成任务拓扑；如果你确认要全量复现，下一步可以把运行模式切到 `full`。');
+  return lines.join('\n');
+};
+
 // --- Agent 图标映射 ---
 const getAgentIcon = (agentName: string) => {
   switch (agentName) {
@@ -180,13 +249,20 @@ export default function App() {
         });
 
         const generatedPlan = response.data.plan;
+        if (!generatedPlan) throw new Error('Backend did not return plan');
         renderDAG(generatedPlan); // 渲染 DAG 图
 
-        setChatHistory(prev => [...prev, {
+        const clarificationText = formatPlanClarification(response.data.clarification);
+        const systemMessages: ChatMessage[] = [];
+        if (clarificationText) {
+          systemMessages.push({ role: 'system', text: clarificationText });
+        }
+        systemMessages.push({
           role: 'system',
           text: `我已分析您的需求，并为您生成了专属的多智能体协作工作流。您可以点击右侧的 DAG 节点查看详情或执行任务。`,
           actions: ['open_pdf', 'translate_full', 'close_pdf']
-        }]);
+        });
+        setChatHistory(prev => [...prev, ...systemMessages]);
       } else {
         // 2. 简单问答逻辑 (Chat)
         const response = await axios.post('http://localhost:8080/api/chat', {

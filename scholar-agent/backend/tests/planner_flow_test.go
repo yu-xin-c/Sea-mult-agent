@@ -17,13 +17,14 @@ func TestGeneratePlan_FrameworkEvaluationExample(t *testing.T) {
 		t.Fatalf("GeneratePlan returned error: %v", err)
 	}
 
-	if len(plan.Tasks) != 4 {
-		t.Fatalf("expected 4 tasks, got %d", len(plan.Tasks))
+	if len(plan.Tasks) != 7 {
+		t.Fatalf("expected 7 tasks, got %d", len(plan.Tasks))
 	}
 
-	var librarianCount, coderCount, dataCount int
+	var librarianCount, coderCount, sandboxCount, dataCount int
 	var coderTasks []string
 	var reportTaskFound bool
+	var runTaskFound bool
 
 	for _, task := range plan.Tasks {
 		switch task.AssignedTo {
@@ -32,6 +33,14 @@ func TestGeneratePlan_FrameworkEvaluationExample(t *testing.T) {
 		case "coder_agent":
 			coderCount++
 			coderTasks = append(coderTasks, task.Description)
+			if len(task.Dependencies) != 2 {
+				t.Fatalf("expected generated code task %q to depend on research and benchmark protocol, got %d deps", task.Name, len(task.Dependencies))
+			}
+		case "sandbox_agent":
+			sandboxCount++
+			if strings.Contains(task.Name, "Benchmark") && len(task.Dependencies) == 1 {
+				runTaskFound = true
+			}
 		case "data_agent":
 			dataCount++
 			if len(task.Dependencies) == 2 {
@@ -40,11 +49,14 @@ func TestGeneratePlan_FrameworkEvaluationExample(t *testing.T) {
 		}
 	}
 
-	if librarianCount != 1 || coderCount != 2 || dataCount != 1 {
-		t.Fatalf("unexpected task distribution: librarian=%d coder=%d data=%d", librarianCount, coderCount, dataCount)
+	if librarianCount != 1 || coderCount != 2 || sandboxCount != 2 || dataCount != 2 {
+		t.Fatalf("unexpected task distribution: librarian=%d coder=%d sandbox=%d data=%d", librarianCount, coderCount, sandboxCount, dataCount)
 	}
 	if !reportTaskFound {
-		t.Fatal("expected a data_agent report task depending on both coder tasks")
+		t.Fatal("expected a data_agent report task depending on both sandbox run tasks")
+	}
+	if !runTaskFound {
+		t.Fatal("expected sandbox benchmark run tasks depending on generated code tasks")
 	}
 
 	if len(coderTasks) != 2 {

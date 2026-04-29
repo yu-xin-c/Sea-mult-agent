@@ -16,13 +16,20 @@ import (
 )
 
 type repoPrepareManifest struct {
-	RepoURL            string   `json:"repo_url"`
-	WorkspacePath      string   `json:"workspace_path"`
-	SelectedCodeFile   string   `json:"selected_code_file,omitempty"`
-	DependencyFiles    []string `json:"dependency_files,omitempty"`
-	CodeFileCandidates []string `json:"code_file_candidates,omitempty"`
-	CloneAttempts      []string `json:"clone_attempts,omitempty"`
+	RepoURL                string                    `json:"repo_url"`
+	WorkspacePath          string                    `json:"workspace_path"`
+	SelectedCodeFile       string                    `json:"selected_code_file,omitempty"`
+	DependencyFiles        []string                  `json:"dependency_files,omitempty"`
+	CodeFileCandidates     []string                  `json:"code_file_candidates,omitempty"`
+	CloneAttempts          []string                  `json:"clone_attempts,omitempty"`
+	ReproEntryKind         string                    `json:"repro_entry_kind,omitempty"`
+	ReproductionMode       string                    `json:"reproduction_mode"`
+	FullReproductionSwitch bool                      `json:"full_reproduction_switch"`
+	ModeDecision           ReproductionModeDecision  `json:"mode_decision"`
+	HardwareProbe          ReproductionResourceProbe `json:"hardware_probe"`
 }
+
+const reproductionSmokeRunnerName = "scholar_repro_smoke.py"
 
 func executeRepoPrepare(ctx context.Context, runtimeTask *models.Task) error {
 	if runtimeTask == nil {
@@ -46,6 +53,20 @@ func executeRepoPrepare(ctx context.Context, runtimeTask *models.Task) error {
 	}
 
 	selectedCodeFile := choosePreferredCodeFile(codeCandidates)
+	reproEntryKind := ""
+	modeDecision := decideReproductionMode(runtimeTask, workspacePath)
+	if modeDecision.EffectiveMode == reproductionModeFull {
+		reproEntryKind = "repository_full_experiment"
+	} else {
+		if smokeFile, smokeKind, createErr := maybeCreateReproductionSmokeRunner(workspacePath, runtimeTask); createErr != nil {
+			return createErr
+		} else if smokeFile != "" {
+			selectedCodeFile = smokeFile
+			codeCandidates = append([]string{smokeFile}, codeCandidates...)
+			reproEntryKind = smokeKind
+		}
+	}
+
 	generatedCode := ""
 	if selectedCodeFile != "" {
 		raw, readErr := os.ReadFile(selectedCodeFile)
@@ -56,29 +77,227 @@ func executeRepoPrepare(ctx context.Context, runtimeTask *models.Task) error {
 	}
 
 	manifest := repoPrepareManifest{
-		RepoURL:            repoURL,
-		WorkspacePath:      workspacePath,
-		SelectedCodeFile:   selectedCodeFile,
-		DependencyFiles:    toWorkspaceRelativePaths(workspacePath, dependencyFiles),
-		CodeFileCandidates: toWorkspaceRelativePaths(workspacePath, codeCandidates),
-		CloneAttempts:      cloneAttempts,
+		RepoURL:                repoURL,
+		WorkspacePath:          workspacePath,
+		SelectedCodeFile:       selectedCodeFile,
+		DependencyFiles:        toWorkspaceRelativePaths(workspacePath, dependencyFiles),
+		CodeFileCandidates:     toWorkspaceRelativePaths(workspacePath, codeCandidates),
+		CloneAttempts:          cloneAttempts,
+		ReproEntryKind:         reproEntryKind,
+		ReproductionMode:       modeDecision.EffectiveMode,
+		FullReproductionSwitch: modeDecision.EffectiveMode == reproductionModeFull,
+		ModeDecision:           modeDecision,
+		HardwareProbe:          modeDecision.Probe,
 	}
 	manifestJSON, _ := json.Marshal(manifest)
+	modeReport := reproductionModeReport(modeDecision)
 
 	if runtimeTask.Metadata == nil {
 		runtimeTask.Metadata = map[string]any{}
 	}
 	runtimeTask.Metadata["artifact_values"] = map[string]any{
-		"workspace_path": workspacePath,
-		"code_file_path": selectedCodeFile,
-		"generated_code": generatedCode,
-		"repo_manifest":  string(manifestJSON),
+		"workspace_path":           workspacePath,
+		"code_file_path":           selectedCodeFile,
+		"generated_code":           generatedCode,
+		"repo_manifest":            string(manifestJSON),
+		"reproduction_mode_report": modeReport,
 	}
 
 	runtimeTask.Result = chooseNonEmpty(workspacePath, selectedCodeFile, repoURL)
 	runtimeTask.Code = generatedCode
 	runtimeTask.Status = models.StatusCompleted
 	return nil
+}
+
+func reproductionModeReport(decision ReproductionModeDecision) string {
+	raw, _ := json.MarshalIndent(decision, "", "  ")
+	return string(raw)
+}
+
+func maybeCreateReproductionSmokeRunner(workspacePath string, task *models.Task) (string, string, error) {
+	workspacePath = strings.TrimSpace(workspacePath)
+	if workspacePath == "" {
+		return "", "", nil
+	}
+
+	transformerPath := filepath.Join(workspacePath, "src", "architectures", "machine_translation_transformer.py")
+	hasRepoTransformer := false
+	if _, err := os.Stat(transformerPath); err == nil {
+		hasRepoTransformer = true
+	}
+	if !hasRepoTransformer && !shouldCreateGenericAttentionSmokeRunner(workspacePath, task) {
+		return "", "", nil
+	}
+
+	runnerPath := filepath.Join(workspacePath, reproductionSmokeRunnerName)
+	runner := buildAttentionReproductionSmokeRunner(hasRepoTransformer)
+	if err := os.WriteFile(runnerPath, []byte(runner), 0o644); err != nil {
+		return "", "", fmt.Errorf("create reproduction smoke runner: %w", err)
+	}
+	return runnerPath, "bounded_forward_pass", nil
+}
+
+func shouldCreateGenericAttentionSmokeRunner(workspacePath string, task *models.Task) bool {
+	context := strings.ToLower(strings.Join([]string{
+		taskField(task, func(t *models.Task) string { return t.Name }),
+		taskField(task, func(t *models.Task) string { return t.Description }),
+		taskInputValue(task, "repo_url"),
+	}, " "))
+	if strings.Contains(context, "attention is all you need") || strings.Contains(context, "transformer") {
+		return true
+	}
+
+	for _, candidate := range []string{
+		filepath.Join(workspacePath, "README.md"),
+		filepath.Join(workspacePath, "readme.md"),
+	} {
+		raw, err := os.ReadFile(candidate)
+		if err != nil {
+			continue
+		}
+		text := strings.ToLower(string(raw))
+		if strings.Contains(text, "attention is all you need") || strings.Contains(text, "transformer") {
+			return true
+		}
+	}
+	return false
+}
+
+func taskField(task *models.Task, getter func(*models.Task) string) string {
+	if task == nil {
+		return ""
+	}
+	return getter(task)
+}
+
+func buildAttentionReproductionSmokeRunner(useRepoTransformer bool) string {
+	if useRepoTransformer {
+		return `import json
+import os
+import sys
+import time
+
+import torch
+
+sys.path.insert(0, os.path.join(os.getcwd(), "src"))
+from architectures.machine_translation_transformer import MachineTranslationTransformer
+
+
+def main():
+    torch.manual_seed(0)
+    cfg = {
+        "d_model": 64,
+        "n_blocks": 2,
+        "n_heads": 4,
+        "d_ff": 128,
+        "dropout_proba": 0.0,
+        "src_vocab_size": 96,
+        "trg_vocab_size": 96,
+        "batch_size": 2,
+        "src_seq_len": 8,
+        "trg_seq_len": 9,
+    }
+    model = MachineTranslationTransformer(
+        d_model=cfg["d_model"],
+        n_blocks=cfg["n_blocks"],
+        src_vocab_size=cfg["src_vocab_size"],
+        trg_vocab_size=cfg["trg_vocab_size"],
+        n_heads=cfg["n_heads"],
+        d_ff=cfg["d_ff"],
+        dropout_proba=cfg["dropout_proba"],
+    )
+    model.eval()
+    src = torch.randint(1, cfg["src_vocab_size"], (cfg["batch_size"], cfg["src_seq_len"]))
+    trg = torch.randint(1, cfg["trg_vocab_size"], (cfg["batch_size"], cfg["trg_seq_len"]))
+
+    start = time.perf_counter()
+    with torch.no_grad():
+        output = model(src, trg)
+    elapsed_ms = (time.perf_counter() - start) * 1000
+
+    metrics = {
+        "status": "ok",
+        "reproduction_scope": "bounded_forward_pass",
+        "paper": "Attention Is All You Need",
+        "architecture": "Transformer encoder-decoder",
+        "repo_entry": "src/architectures/machine_translation_transformer.py",
+        "model_config": cfg,
+        "output_shape": list(output.shape),
+        "parameter_count": sum(p.numel() for p in model.parameters()),
+        "forward_elapsed_ms": round(elapsed_ms, 3),
+        "output_abs_mean": round(float(output.abs().mean().item()), 6),
+        "notes": [
+            "真实导入仓库 Transformer 模型代码并在 CPU 上执行前向传播。",
+            "自动化 smoke reproduction 不默认跑完整 WMT14 训练，以避免外部登录、GPU 和长时间训练依赖。",
+        ],
+    }
+    print(json.dumps(metrics, ensure_ascii=False, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()
+`
+	}
+
+	return `import json
+import time
+
+import torch
+import torch.nn as nn
+
+
+def main():
+    torch.manual_seed(0)
+    cfg = {
+        "d_model": 64,
+        "n_blocks": 2,
+        "n_heads": 4,
+        "d_ff": 128,
+        "dropout_proba": 0.0,
+        "batch_size": 2,
+        "src_seq_len": 8,
+        "trg_seq_len": 7,
+    }
+    model = nn.Transformer(
+        d_model=cfg["d_model"],
+        nhead=cfg["n_heads"],
+        num_encoder_layers=cfg["n_blocks"],
+        num_decoder_layers=cfg["n_blocks"],
+        dim_feedforward=cfg["d_ff"],
+        dropout=cfg["dropout_proba"],
+        batch_first=True,
+    )
+    model.eval()
+    src = torch.randn(cfg["batch_size"], cfg["src_seq_len"], cfg["d_model"])
+    trg = torch.randn(cfg["batch_size"], cfg["trg_seq_len"], cfg["d_model"])
+
+    start = time.perf_counter()
+    with torch.no_grad():
+        output = model(src, trg)
+    elapsed_ms = (time.perf_counter() - start) * 1000
+
+    metrics = {
+        "status": "ok",
+        "reproduction_scope": "bounded_forward_pass",
+        "paper": "Attention Is All You Need",
+        "architecture": "Transformer encoder-decoder",
+        "repo_entry": "generic_torch_transformer_smoke",
+        "model_config": cfg,
+        "output_shape": list(output.shape),
+        "parameter_count": sum(p.numel() for p in model.parameters()),
+        "forward_elapsed_ms": round(elapsed_ms, 3),
+        "output_abs_mean": round(float(output.abs().mean().item()), 6),
+        "notes": [
+            "真实 clone 论文候选仓库；该仓库未提供可直接导入的 Python 模型源码，因此使用 PyTorch 标准 Transformer 做受控前向复现。",
+            "自动化 smoke reproduction 不默认跑完整 WMT14 训练，以避免外部登录、GPU 和长时间训练依赖。",
+        ],
+    }
+    print(json.dumps(metrics, ensure_ascii=False, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()
+`
 }
 
 func repoPrepareCandidateURLs(task *models.Task, primary string) []string {
@@ -138,6 +357,11 @@ func cloneFirstAvailableRepository(ctx context.Context, candidateURLs []string) 
 	}
 
 	attempts := make([]string, 0, len(candidateURLs)*2)
+	if cachedURL, cachedWorkspace := findCachedRepositoryWorkspace(candidateURLs); cachedWorkspace != "" {
+		attempts = append(attempts, fmt.Sprintf("%s: cache hit %s", cachedURL, cachedWorkspace))
+		return cachedURL, cachedWorkspace, attempts, nil
+	}
+
 	for _, repoURL := range candidateURLs {
 		workspacePath, err := os.MkdirTemp("", "scholar_repo_workspace_")
 		if err != nil {
@@ -152,6 +376,40 @@ func cloneFirstAvailableRepository(ctx context.Context, candidateURLs []string) 
 	}
 
 	return "", "", attempts, fmt.Errorf("clone repo failed after %d candidate(s): %s", len(candidateURLs), strings.Join(attempts, " | "))
+}
+
+func findCachedRepositoryWorkspace(candidateURLs []string) (string, string) {
+	entries, err := os.ReadDir(os.TempDir())
+	if err != nil {
+		return "", ""
+	}
+
+	for _, repoURL := range candidateURLs {
+		normalizedURL := normalizeGitHubRepoURL(repoURL)
+		if normalizedURL == "" {
+			continue
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "scholar_repo_workspace_") {
+				continue
+			}
+			workspacePath := filepath.Join(os.TempDir(), entry.Name())
+			if workspaceMatchesRepoURL(workspacePath, normalizedURL) {
+				return normalizedURL, workspacePath
+			}
+		}
+	}
+	return "", ""
+}
+
+func workspaceMatchesRepoURL(workspacePath string, repoURL string) bool {
+	raw, err := os.ReadFile(filepath.Join(workspacePath, ".git", "config"))
+	if err != nil {
+		return false
+	}
+	config := strings.ToLower(string(raw))
+	repoURL = strings.ToLower(normalizeGitHubRepoURL(repoURL))
+	return repoURL != "" && (strings.Contains(config, repoURL) || strings.Contains(config, repoURL+".git"))
 }
 
 func cloneRepositoryWithRetry(ctx context.Context, repoURL, workspacePath string, attempts *[]string) error {

@@ -34,6 +34,55 @@ const detectBestDisplayMode = (task: Task, state: NodeExecutionState): Execution
   return 'logs';
 };
 
+const looksLikePythonCode = (value: string): boolean => {
+  const text = value.trim();
+  if (!text) return false;
+  return /\b(import|from|def|class|print|if __name__)\b/.test(text);
+};
+
+const PARAM_PREVIEW_LIMIT = 1200;
+
+const previewParameterValue = (key: string, value: unknown): string => {
+  if (value === undefined || value === null) return '';
+  const keyLower = key.toLowerCase();
+  if (typeof value === 'string' && (keyLower.includes('image') || keyLower.includes('base64'))) {
+    return `<base64 image, ${value.length} chars>`;
+  }
+
+  const raw = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+  if (!raw) return '';
+  return raw.length > PARAM_PREVIEW_LIMIT ? `${raw.slice(0, PARAM_PREVIEW_LIMIT)}...[truncated]` : raw;
+};
+
+const formatParameterObject = (title: string, values: Record<string, unknown>): string => {
+  const entries = Object.entries(values).filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '');
+  if (entries.length === 0) return `${title}: 无`;
+  return [
+    `${title}:`,
+    ...entries.map(([key, value]) => `- ${key}: ${previewParameterValue(key, value)}`),
+  ].join('\n');
+};
+
+const formatArtifactSummaries = (title: string, rawArtifacts: unknown): string => {
+  if (!Array.isArray(rawArtifacts) || rawArtifacts.length === 0) return `${title}: 无`;
+  const lines = rawArtifacts.map((item) => {
+    const artifact = item as Record<string, unknown>;
+    const key = String(artifact.key || 'unknown');
+    const type = artifact.type ? ` (${String(artifact.type)})` : '';
+    const producer = artifact.producer_task_id ? ` <- ${String(artifact.producer_task_id)}` : '';
+    return `- ${key}${type}${producer}: ${previewParameterValue(key, artifact.value_preview || '')}`;
+  });
+  return [`${title}:`, ...lines].join('\n');
+};
+
+const buildDirectExecutionOutputs = (result: string, code: string, imageBase64: string): Record<string, unknown> => {
+  const outputs: Record<string, unknown> = {};
+  if (code) outputs.generated_code = code;
+  if (result) outputs.result = result;
+  if (imageBase64) outputs.image_base64 = imageBase64;
+  return outputs;
+};
+
 const executionReducer = (state: ExecutionState, action: ExecutionAction): ExecutionState => {
   switch (action.type) {
     case 'select-task': {
@@ -101,6 +150,25 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
     dispatchExecution({ type: 'patch-task-state', taskId, updater });
   }, []);
 
+  const buildDirectExecutionInputs = useCallback(
+    (task: Task): Record<string, unknown> => {
+      const inputs: Record<string, unknown> = {};
+      for (const dependencyId of task.Dependencies || []) {
+        const upstream = executionState.nodeStates[dependencyId];
+        if (!upstream) continue;
+
+        if (upstream.code && !inputs.generated_code) inputs.generated_code = upstream.code;
+        if (upstream.result) {
+          inputs[`dependency_${dependencyId}_result`] = upstream.result;
+          if (!inputs.generated_code && looksLikePythonCode(upstream.result)) inputs.generated_code = upstream.result;
+        }
+        if (upstream.imageBase64) inputs[`dependency_${dependencyId}_image_base64`] = upstream.imageBase64;
+      }
+      return inputs;
+    },
+    [executionState.nodeStates],
+  );
+
   const appendNodeLog = useCallback(
     (taskId: string, line: string) => {
       patchNodeState(taskId, (prev) => ({
@@ -155,7 +223,7 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
           }
 
           if (event.event_type === PLAN_EVENTS.TASK_READY && event.task_id) {
-            appendNodeLog(event.task_id, '[Plan] ready');
+            appendNodeLog(event.task_id, `[Plan] ready\n${formatArtifactSummaries('[Plan Params] 本次上游传入参数', event.payload?.inputs)}`);
           }
           if (event.event_type === PLAN_EVENTS.TASK_STARTED && event.task_id) {
             appendNodeLog(event.task_id, '[Plan] started');
@@ -165,7 +233,10 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
           }
           if (event.event_type === PLAN_EVENTS.ARTIFACT_CREATED && event.task_id) {
             const keys = Array.isArray(event.payload?.artifact_keys) ? event.payload?.artifact_keys?.join(', ') : '';
-            appendNodeLog(event.task_id, `[Plan] artifacts created${keys ? `: ${keys}` : ''}`);
+            appendNodeLog(
+              event.task_id,
+              `[Plan] artifacts created${keys ? `: ${keys}` : ''}\n${formatArtifactSummaries('[Plan Params] 将传递给下游的参数', event.payload?.artifacts)}`,
+            );
           }
           if (event.event_type === PLAN_EVENTS.TASK_BLOCKED && event.task_id) {
             const upstream = String(event.payload?.upstream_task_id || '');
@@ -224,9 +295,10 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
       });
       dispatchExecution({ type: 'set-display-mode', mode: 'logs' });
 
+      const directInputs = buildDirectExecutionInputs(task);
       const initLog = `[System] 正在唤醒 ${task.AssignedTo}...\n[System] 正在通过 Eino 框架调用 DeepSeek 模型${
         task.AssignedTo === 'librarian_agent' || task.AssignedTo === 'data_agent' ? '生成报告' : '生成代码'
-      }...\n`;
+      }...\n\n${formatParameterObject('[Params] 本次传入参数', directInputs)}\n`;
       patchNodeState(task.ID, () => ({ logs: initLog, result: '', code: '', imageBase64: '' }));
 
       try {
@@ -236,6 +308,7 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
             task_name: task.Name,
             task_type: task.Type,
             assigned_to: task.AssignedTo,
+            inputs: directInputs,
             task_description:
               task.Description +
               (task.AssignedTo === 'coder_agent' || task.AssignedTo === 'sandbox_agent'
@@ -263,8 +336,10 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
                 // keep raw fallback
               }
 
+              const directOutputs = buildDirectExecutionOutputs(finalResult, generatedCode, imageBase64);
+
               patchNodeState(task.ID, (prev) => ({
-                logs: (prev.logs || '') + '\n\n[🎉 Agent 思考与执行完毕]',
+                logs: `${prev.logs || ''}\n\n${formatParameterObject('[Params] 将传递给下游的参数', directOutputs)}\n\n[🎉 Agent 思考与执行完毕]`,
                 result: finalResult,
                 code: generatedCode,
                 imageBase64,
@@ -323,7 +398,7 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
         dispatchExecution({ type: 'set-executing', value: false });
       }
     },
-    [appendChatMessage, executionState.nodeStates, patchNodeState, updateNodeVisualState],
+    [appendChatMessage, buildDirectExecutionInputs, executionState.nodeStates, patchNodeState, updateNodeVisualState],
   );
 
   const handleRunAllTasks = useCallback(

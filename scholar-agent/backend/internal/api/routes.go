@@ -14,6 +14,8 @@ import (
 	"scholar-agent-backend/internal/models"
 	"scholar-agent-backend/internal/planner"
 	"scholar-agent-backend/internal/sandbox"
+	"scholar-agent-backend/internal/scheduler"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,10 +27,12 @@ type RequestPayload struct {
 }
 
 type ExecutePayload struct {
-	TaskID          string `json:"task_id"`
-	TaskName        string `json:"task_name"`
-	TaskDescription string `json:"task_description" binding:"required"`
-	AssignedTo      string `json:"assigned_to"`
+	TaskID          string         `json:"task_id"`
+	TaskName        string         `json:"task_name"`
+	TaskType        string         `json:"task_type"`
+	TaskDescription string         `json:"task_description" binding:"required"`
+	AssignedTo      string         `json:"assigned_to"`
+	Inputs          map[string]any `json:"inputs"`
 }
 
 type ChatPayload struct {
@@ -174,9 +178,11 @@ func SetupRoutes(r *gin.Engine) {
 			task := &models.Task{
 				ID:          payload.TaskID,
 				Name:        payload.TaskName,
+				Type:        payload.TaskType,
 				Description: payload.TaskDescription,
 				AssignedTo:  payload.AssignedTo,
 				Status:      models.StatusPending,
+				Inputs:      payload.Inputs,
 			}
 
 			if task.ID == "" {
@@ -209,8 +215,14 @@ func SetupRoutes(r *gin.Engine) {
 					}
 					logChannel <- fmt.Sprintf("[System] %s 沙箱创建成功 (ID: %s)", typeStr, containerID)
 					ctx = context.WithValue(ctx, "containerID", containerID)
+					if task.Inputs == nil {
+						task.Inputs = map[string]any{}
+					}
+					task.Inputs["runtime_session"] = containerID
+					task.Inputs["prepared_runtime"] = containerID
 				}
 			}
+			logChannel <- formatExecuteParamsLog("[Params] 后端实际传入参数", task.Inputs)
 
 			go func() {
 				var err error
@@ -236,6 +248,9 @@ func SetupRoutes(r *gin.Engine) {
 							logChannel <- "[System] 图表处理完成"
 						}
 					}
+				}
+				if err == nil {
+					logChannel <- formatExecuteParamsLog("[Params] 后端产出并传递给下游的参数", buildExecuteOutputs(task))
 				}
 
 				if sb != nil && containerID != "" {
@@ -274,6 +289,7 @@ func SetupRoutes(r *gin.Engine) {
 								"result":        task.Result,
 								"code":          task.Code,
 								"image_base_64": task.ImageBase64,
+								"outputs":       buildExecuteOutputs(task),
 							})
 						}
 						return false // Close stream
@@ -303,15 +319,26 @@ func RegisterPlanRoute(apiGroup *gin.RouterGroup, p *planner.Planner) {
 			return
 		}
 
-		c.JSON(http.StatusOK, gin.H{
+		response := gin.H{
 			"message": "Plan generated successfully",
 			"plan":    plan,
-		})
+		}
+		if clarification, ok := buildPlanClarification(intentType, payload.Intent); ok {
+			response["clarification"] = clarification
+		}
+		c.JSON(http.StatusOK, response)
 	})
 }
 
 // detectIntentType 根据用户意图文本判断任务类型
 func DetectIntentType(intent string) string {
+	// 论文复现类需要优先于“对比/评估”类判断。
+	// 论文复现需求常包含“与论文指标对比”等词，如果先命中“对比”会被误路由到框架评测。
+	reproKeywords := []string{"复现", "reproduce", "replicate", "论文", "paper", "papers with code", "arxiv", "实现算法"}
+	if containsAny(intent, reproKeywords) {
+		return "Paper_Reproduction"
+	}
+
 	// 框架对比评测类关键词（扩展版）
 	evalKeywords := []string{
 		"对比", "比较", "评估", "选型", "哪个好", "哪个更", "区别", "异同",
@@ -321,12 +348,6 @@ func DetectIntentType(intent string) string {
 	}
 	if containsAny(intent, evalKeywords) {
 		return "Framework_Evaluation"
-	}
-
-	// 论文复现类
-	reproKeywords := []string{"复现", "reproduce", "论文", "paper", "arxiv", "实现算法"}
-	if containsAny(intent, reproKeywords) {
-		return "Paper_Reproduction"
 	}
 
 	// 代码执行类
@@ -351,6 +372,125 @@ func containsAny(s string, keywords []string) bool {
 		}
 	}
 	return false
+}
+
+func buildExecuteOutputs(task *models.Task) map[string]any {
+	outputs := map[string]any{}
+	if task == nil {
+		return outputs
+	}
+	if strings.TrimSpace(task.Result) != "" {
+		outputs["result"] = task.Result
+	}
+	if strings.TrimSpace(task.Code) != "" {
+		outputs["generated_code"] = task.Code
+	}
+	if strings.TrimSpace(task.ImageBase64) != "" {
+		outputs["image_base64"] = task.ImageBase64
+	}
+	return outputs
+}
+
+func formatExecuteParamsLog(title string, values map[string]any) string {
+	if len(values) == 0 {
+		return title + ": 无"
+	}
+
+	keys := make([]string, 0, len(values))
+	for key, value := range values {
+		if value == nil || strings.TrimSpace(fmt.Sprint(value)) == "" {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	if len(keys) == 0 {
+		return title + ": 无"
+	}
+	sort.Strings(keys)
+
+	var builder strings.Builder
+	builder.WriteString(title)
+	builder.WriteString(":\n")
+	for _, key := range keys {
+		builder.WriteString("- ")
+		builder.WriteString(key)
+		builder.WriteString(": ")
+		builder.WriteString(previewExecuteParamValue(key, values[key]))
+		builder.WriteString("\n")
+	}
+	return strings.TrimRight(builder.String(), "\n")
+}
+
+func previewExecuteParamValue(key string, value any) string {
+	text := fmt.Sprint(value)
+	lowerKey := strings.ToLower(key)
+	if strings.Contains(lowerKey, "image") || strings.Contains(lowerKey, "base64") {
+		return fmt.Sprintf("<base64 payload, %d chars>", len(text))
+	}
+	const limit = 1200
+	if len(text) <= limit {
+		return text
+	}
+	return text[:limit] + "...[truncated]"
+}
+
+func buildPlanClarification(intentType string, intent string) (gin.H, bool) {
+	if intentType != "Paper_Reproduction" || !shouldClarifyPaperReproductionMode(intent) {
+		return nil, false
+	}
+
+	fullRequested := containsAny(intent, []string{"full", "complete", "bleu", "wmt", "wmt14", "完整", "全量", "真实复现", "论文指标"})
+	decision := scheduler.DecidePaperReproductionMode("auto", fullRequested, os.TempDir())
+	recommendedMode := "smoke"
+	if decision.FullEligible && fullRequested {
+		recommendedMode = "full"
+	}
+
+	return gin.H{
+		"required":         true,
+		"type":             "paper_reproduction_mode",
+		"recommended_mode": recommendedMode,
+		"question":         buildPaperReproductionModeQuestion(decision),
+		"options": []gin.H{
+			{
+				"id":          "smoke",
+				"label":       "运行最小验证",
+				"description": "快速验证论文复现链路，不下载全量数据、不训练完整模型、不计算论文 BLEU。",
+			},
+			{
+				"id":          "full",
+				"label":       "开启全量复现",
+				"description": "仅在你确认本机或外部计算资源足够时开启，会进入数据下载、训练和 BLEU 评测流程。",
+			},
+		},
+		"mode_decision":  decision,
+		"resource_probe": decision.Probe,
+	}, true
+}
+
+func shouldClarifyPaperReproductionMode(intent string) bool {
+	lower := strings.ToLower(strings.TrimSpace(intent))
+	if lower == "" {
+		return false
+	}
+	if containsAny(lower, []string{"最小实验", "最小验证", "smoke", "quick", "快速验证"}) &&
+		!containsAny(lower, []string{"bleu", "wmt", "wmt14", "完整", "全量", "真实复现"}) {
+		return false
+	}
+	return containsAny(lower, []string{
+		"bleu", "wmt", "wmt14", "full", "complete",
+		"完整复现", "全量复现", "完整实验", "全量实验", "真实复现", "论文指标",
+	})
+}
+
+func buildPaperReproductionModeQuestion(decision scheduler.ReproductionModeDecision) string {
+	probe := decision.Probe
+	status := fmt.Sprintf("检测到这是论文复现场景，可能涉及全量训练/BLEU 评测。本机资源探测：CPU=%d，内存=%.1fGB，可用磁盘=%.1fGB，CUDA GPU=%d。",
+		probe.CPUCount, probe.MemoryGB, probe.DiskFreeGB, probe.GPUCount)
+	if decision.FullEligible {
+		return status + " 当前资源满足 full reproduction 门槛。是否确认开启全量复现模式？"
+	}
+	return status + " 当前资源未满足默认 full reproduction 门槛，建议先运行 smoke 最小验证。你是否确认有足够的本机或外部资源并仍要开启全量复现？"
 }
 
 func collectPaperSearchFields(intentCtx models.IntentContext, rawIntent string) map[string]any {
