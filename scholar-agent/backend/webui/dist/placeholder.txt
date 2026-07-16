@@ -1,0 +1,2 @@
+This file keeps the embedded frontend directory present for Go builds before
+the real frontend bundle is generated.

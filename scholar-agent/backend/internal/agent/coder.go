@@ -522,6 +522,9 @@ func (a *CoderAgent) ExecuteTask(ctx context.Context, task *models.Task, sharedC
 		return a.resolveDependenciesTask(ctx, task)
 	}
 	ctx = a.contextWithTaskPrompt(ctx, task, sharedContext)
+	if shouldRunDirectCodeExecution(task) && a.Sandbox != nil {
+		return a.generateAndExecuteCodeTask(ctx, task)
+	}
 	// sandbox_agent tasks must run through the deterministic sandbox path so that:
 	// - runtime_session / prepared_runtime artifacts are produced consistently
 	// - the scheduler can wire outputs -> inputs between plan nodes
@@ -583,6 +586,38 @@ func (a *CoderAgent) ExecuteTask(ctx context.Context, task *models.Task, sharedC
 	task.Result = output
 	task.Status = models.StatusCompleted
 	return nil
+}
+
+func (a *CoderAgent) generateAndExecuteCodeTask(ctx context.Context, task *models.Task) error {
+	if task == nil {
+		return fmt.Errorf("task is nil")
+	}
+	if a.CodeOnlyChain == nil {
+		task.Status = models.StatusFailed
+		task.Error = "code generation chain is not configured"
+		return fmt.Errorf("%s", task.Error)
+	}
+
+	logToContext(ctx, "[%s] 直接代码执行任务：先生成代码，再复用沙箱运行", a.Name)
+	code, err := a.CodeOnlyChain.Invoke(ctx, task.Description)
+	if err != nil {
+		task.Status = models.StatusFailed
+		task.Error = fmt.Sprintf("代码生成失败: %v", err)
+		return err
+	}
+	code = stripInlinePipInstall(code)
+	if strings.TrimSpace(code) == "" {
+		task.Status = models.StatusFailed
+		task.Error = "code generation returned empty code"
+		return fmt.Errorf("%s", task.Error)
+	}
+
+	task.Code = code
+	if task.Inputs == nil {
+		task.Inputs = map[string]any{}
+	}
+	task.Inputs["generated_code"] = code
+	return a.executeCodeInSandbox(ctx, task)
 }
 
 // mockLLMGenerateCode 模拟大模型根据提示词生成 Python 代码
@@ -1481,6 +1516,17 @@ func shouldUseDeterministicSandboxPath(task *models.Task) bool {
 		return true
 	}
 	return false
+}
+
+func shouldRunDirectCodeExecution(task *models.Task) bool {
+	if task == nil {
+		return false
+	}
+	if strings.TrimSpace(task.AssignedTo) != "coder_agent" {
+		return false
+	}
+	taskType := strings.ToLower(strings.TrimSpace(task.Type))
+	return taskType == "code_execution"
 }
 
 func inferSandboxTaskKind(task *models.Task) string {

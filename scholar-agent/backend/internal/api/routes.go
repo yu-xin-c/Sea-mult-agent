@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -86,6 +87,10 @@ func SetupRoutes(r *gin.Engine) {
 
 		apiGroup.GET("/hello", func(c *gin.Context) {
 			c.String(200, "hello api group")
+		})
+
+		apiGroup.GET("/health", func(c *gin.Context) {
+			c.JSON(http.StatusOK, buildServiceHealth(c.Request.Context(), sandboxURL))
 		})
 
 		apiGroup.POST("/chat", func(c *gin.Context) {
@@ -328,6 +333,53 @@ func RegisterPlanRoute(apiGroup *gin.RouterGroup, p *planner.Planner) {
 		}
 		c.JSON(http.StatusOK, response)
 	})
+}
+
+func buildServiceHealth(ctx context.Context, sandboxURL string) gin.H {
+	health := gin.H{
+		"ok": true,
+		"backend": gin.H{
+			"ok":      true,
+			"message": "backend is reachable",
+		},
+		"sandbox": gin.H{
+			"ok":      false,
+			"url":     sandboxURL,
+			"message": "sandbox health check was not run",
+		},
+	}
+
+	checkCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(checkCtx, http.MethodGet, strings.TrimRight(sandboxURL, "/")+"/api/v1/health", nil)
+	if err != nil {
+		health["ok"] = false
+		health["sandbox"] = gin.H{"ok": false, "url": sandboxURL, "message": err.Error()}
+		return health
+	}
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		health["ok"] = false
+		health["sandbox"] = gin.H{"ok": false, "url": sandboxURL, "message": err.Error()}
+		return health
+	}
+	defer resp.Body.Close()
+
+	var sandboxHealth map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&sandboxHealth); err != nil {
+		health["ok"] = false
+		health["sandbox"] = gin.H{"ok": false, "url": sandboxURL, "message": err.Error()}
+		return health
+	}
+	sandboxHealth["url"] = sandboxURL
+	health["sandbox"] = sandboxHealth
+	if ok, _ := sandboxHealth["ok"].(bool); !ok {
+		health["ok"] = false
+	}
+	return health
 }
 
 // detectIntentType 根据用户意图文本判断任务类型

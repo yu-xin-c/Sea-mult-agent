@@ -111,6 +111,17 @@ type CommandRequest struct {
 
 // --- 处理器 ---
 
+func (s *SandboxService) Health(c *gin.Context) {
+	dockerHealth := s.dkEngine.Health(c.Request.Context())
+	c.JSON(http.StatusOK, gin.H{
+		"ok":                 dockerHealth.Available,
+		"native_docker":      dockerHealth,
+		"fallback_enabled":   s.config.EnableFallback,
+		"opensandbox_url":    s.config.OpenSandboxURL,
+		"effective_strategy": chooseHealthStrategy(dockerHealth.Available, s.config.EnableFallback),
+	})
+}
+
 func (s *SandboxService) CreateSandbox(c *gin.Context) {
 	var req CreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -152,6 +163,16 @@ func (s *SandboxService) CreateSandbox(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, CreateResponse{SandboxID: "os-" + id})
+}
+
+func chooseHealthStrategy(nativeDockerAvailable bool, fallbackEnabled bool) string {
+	if nativeDockerAvailable {
+		return "native_docker"
+	}
+	if fallbackEnabled {
+		return "opensandbox_fallback"
+	}
+	return "unavailable"
 }
 
 func (s *SandboxService) DeleteSandbox(c *gin.Context) {
@@ -373,6 +394,7 @@ func main() {
 	r := gin.Default()
 	api := r.Group("/api/v1")
 	{
+		api.GET("/health", svc.Health)
 		api.POST("/sandboxes", svc.CreateSandbox)
 		api.DELETE("/sandboxes/:id", svc.DeleteSandbox)
 		api.POST("/sandboxes/:id/python", svc.ExecutePython)

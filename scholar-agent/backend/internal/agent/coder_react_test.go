@@ -166,6 +166,18 @@ func TestCoderSystemPromptForTask_IsolatesFrameworkAndPaperModes(t *testing.T) {
 	}
 }
 
+func TestShouldRunDirectCodeExecution_OnlyDirectCoderTasks(t *testing.T) {
+	if !shouldRunDirectCodeExecution(&models.Task{AssignedTo: "coder_agent", Type: "Code_Execution"}) {
+		t.Fatal("expected direct coder Code_Execution task to run generated code")
+	}
+	if shouldRunDirectCodeExecution(&models.Task{AssignedTo: "coder_agent", Type: "generate_code"}) {
+		t.Fatal("generate_code planner tasks must remain code-only")
+	}
+	if shouldRunDirectCodeExecution(&models.Task{AssignedTo: "sandbox_agent", Type: "Code_Execution"}) {
+		t.Fatal("sandbox_agent tasks must keep deterministic sandbox routing")
+	}
+}
+
 func TestDeterministicFrameworkBenchmarkCode_IsolatesBranchDependencies(t *testing.T) {
 	langchainTask := &models.Task{
 		Name:            "生成 LangChain 基准测试代码 / Generate LangChain Benchmark Code",

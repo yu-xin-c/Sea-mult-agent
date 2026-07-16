@@ -1,8 +1,8 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, type MouseEvent as ReactMouseEvent } from 'react';
 import { Background, Controls, ReactFlow, useNodesState, useEdgesState, Panel } from '@xyflow/react';
 import type { Node, Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Send, Bot, FileText, Code, Database, TerminalSquare, Play, X, Eye, FileUp, Maximize2, Languages, Loader2, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
+import { Activity, AlertTriangle, CheckCircle2, Send, Bot, FileText, Code, Database, TerminalSquare, Play, X, Eye, FileUp, Maximize2, Languages, Loader2, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
 import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -70,6 +70,37 @@ interface PlanClarification {
   resource_probe?: ReproductionResourceProbe;
 }
 
+interface ServiceHealth {
+  ok?: boolean;
+  backend?: {
+    ok?: boolean;
+    message?: string;
+  };
+  sandbox?: {
+    ok?: boolean;
+    url?: string;
+    message?: string;
+    effective_strategy?: string;
+    native_docker?: {
+      available?: boolean;
+      command?: string;
+      server_version?: string;
+      error?: string;
+    };
+  };
+}
+
+interface ExecuteResultEvent {
+  result?: string;
+  code?: string;
+  image_base_64?: string;
+}
+
+const getErrorMessage = (error: unknown) => {
+  if (error instanceof Error) return error.message;
+  return String(error);
+};
+
 const formatPlanClarification = (clarification?: PlanClarification) => {
   if (!clarification?.required || clarification.type !== 'paper_reproduction_mode') return '';
 
@@ -123,12 +154,58 @@ const getAgentIcon = (agentName: string) => {
   }
 };
 
+const getAgentLabel = (agentName: string) => {
+  switch (agentName) {
+    case 'librarian_agent': return 'Librarian';
+    case 'coder_agent': return 'Coder';
+    case 'sandbox_agent': return 'Sandbox';
+    case 'data_agent': return 'Data';
+    default: return 'Agent';
+  }
+};
+
+const getAgentTone = (agentName: string) => {
+  switch (agentName) {
+    case 'librarian_agent':
+      return { border: '#60a5fa', soft: '#eff6ff', text: '#1d4ed8' };
+    case 'coder_agent':
+      return { border: '#a78bfa', soft: '#f5f3ff', text: '#6d28d9' };
+    case 'sandbox_agent':
+      return { border: '#fb923c', soft: '#fff7ed', text: '#c2410c' };
+    case 'data_agent':
+      return { border: '#34d399', soft: '#ecfdf5', text: '#047857' };
+    default:
+      return { border: '#94a3b8', soft: '#f8fafc', text: '#475569' };
+  }
+};
+
+const getStatusLabel = (status: string) => {
+  switch (status.toLowerCase()) {
+    case 'completed': return 'Completed';
+    case 'failed': return 'Failed';
+    case 'in_progress': return 'Running';
+    case 'running': return 'Running';
+    default: return 'Pending';
+  }
+};
+
+const suggestedPrompts = [
+  { category: '可视化', text: '帮我画一个正弦函数和余弦函数的对比图' },
+  { category: '复现', text: '复现一下 Transformer 论文的核心架构并跑通测试' },
+  { category: '评测', text: '对比一下 LangChain 和 LlamaIndex 的 RAG 性能' },
+  { category: '论文', text: '分析一下这篇论文的主要创新点和局限性' },
+  { category: '代码', text: '帮我复现 Attention Is All You Need 论文的代码' },
+];
+
 // --- 主应用组件 ---
 export default function App() {
   const [prompt, setPrompt] = useState('');
   const [loading, setLoading] = useState(false);
+  const [serviceHealth, setServiceHealth] = useState<ServiceHealth | null>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const [currentPlan, setCurrentPlan] = useState<Plan | null>(null);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([
     { role: 'system', text: '你好！我是 ScholarAgent 智能科研助理。请问今天有什么我可以帮你的？' }
   ]);
@@ -174,10 +251,38 @@ export default function App() {
 
   const aiTranslationPluginInstance = useAITranslationPlugin(handleAskAI);
 
+  const refreshServiceHealth = useCallback(async () => {
+    setHealthLoading(true);
+    try {
+      const response = await fetch('http://localhost:8080/api/health');
+      if (!response.ok) throw new Error(`health check failed with HTTP ${response.status}`);
+      const health = await response.json() as ServiceHealth;
+      setServiceHealth(health);
+    } catch (error) {
+      setServiceHealth({
+        ok: false,
+        backend: {
+          ok: false,
+          message: getErrorMessage(error),
+        },
+      });
+    } finally {
+      setHealthLoading(false);
+    }
+  }, []);
+
   // 自动滚动日志到底部
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [executionLogs]);
+
+  useEffect(() => {
+    void refreshServiceHealth();
+    const timer = window.setInterval(() => {
+      void refreshServiceHealth();
+    }, 30000);
+    return () => window.clearInterval(timer);
+  }, [refreshServiceHealth]);
 
   // Handle Resize Events
   useEffect(() => {
@@ -240,6 +345,7 @@ export default function App() {
 
     // 智能判断意图：是否包含任务触发关键词（扩展版）
     const isTaskRequest = /对比|比较|评估|选型|rag|复现|跑一下|执行|画|绘图|plot|matplotlib|langchain|llamaindex|llama.index|haystack|框架|配环境|安装依赖|vs\b/.test(userPrompt.toLowerCase());
+    const isPaperTaskRequest = /复现|论文|paper|arxiv|attention is all you need|transformer/.test(userPrompt.toLowerCase());
 
     try {
       if (isTaskRequest) {
@@ -250,7 +356,9 @@ export default function App() {
 
         const generatedPlan = response.data.plan;
         if (!generatedPlan) throw new Error('Backend did not return plan');
-        renderDAG(generatedPlan); // 渲染 DAG 图
+        setCurrentPlan(generatedPlan);
+        setSelectedTask(null);
+        renderDAG(generatedPlan, false); // 渲染 DAG 图
 
         const clarificationText = formatPlanClarification(response.data.clarification);
         const systemMessages: ChatMessage[] = [];
@@ -260,7 +368,7 @@ export default function App() {
         systemMessages.push({
           role: 'system',
           text: `我已分析您的需求，并为您生成了专属的多智能体协作工作流。您可以点击右侧的 DAG 节点查看详情或执行任务。`,
-          actions: ['open_pdf', 'translate_full', 'close_pdf']
+          actions: isPaperTaskRequest ? ['open_pdf', 'translate_full', 'close_pdf'] : undefined
         });
         setChatHistory(prev => [...prev, ...systemMessages]);
       } else {
@@ -285,24 +393,23 @@ export default function App() {
 
   // 触发真实的 Agent 执行 (调用 DeepSeek + 沙箱)
   const handleExecuteTask = async (task: Task): Promise<string> => {
-    return new Promise<string>(async (resolve, reject) => {
-      setIsExecuting(true);
-      setSelectedTask(task); // 自动选中当前正在执行的任务，方便查看日志
-      setViewMode('logs');
-      setExecutionResult('');
-      setExecutionCode('');
-      setExecutionImage('');
+    setIsExecuting(true);
+    setSelectedTask(task); // 自动选中当前正在执行的任务，方便查看日志
+    setViewMode('logs');
+    setExecutionResult('');
+    setExecutionCode('');
+    setExecutionImage('');
 
-      const initLog = `[System] 正在唤醒 ${task.AssignedTo}...\n[System] 正在通过 Eino 框架调用 DeepSeek 模型${task.AssignedTo === 'librarian_agent' || task.AssignedTo === 'data_agent' ? '生成报告' : '生成代码'}...\n`;
-      setExecutionLogs(initLog);
-      setNodeStates(prev => ({
-        ...prev,
-        [task.ID]: { logs: initLog, result: '', code: '', imageBase64: '' }
-      }));
+    const initLog = `[System] 正在唤醒 ${task.AssignedTo}...\n[System] 正在通过 Eino 框架调用 DeepSeek 模型${task.AssignedTo === 'librarian_agent' || task.AssignedTo === 'data_agent' ? '生成报告' : '生成代码'}...\n`;
+    setExecutionLogs(initLog);
+    setNodeStates(prev => ({
+      ...prev,
+      [task.ID]: { logs: initLog, result: '', code: '', imageBase64: '' }
+    }));
 
-      let latestResult = '';
-      let receivedResult = false;
-      try {
+    let latestResult = '';
+    let receivedResult = false;
+    try {
         const response = await fetch('http://localhost:8080/api/execute', {
           method: 'POST',
           headers: {
@@ -330,7 +437,7 @@ export default function App() {
           let readResult;
           try {
             readResult = await reader.read();
-          } catch (e) {
+          } catch {
             throw new Error('网络连接突然断开了 🔌... 可能是大模型正在深度思考，导致连接超时了，建议刷新页面重试～');
           }
 
@@ -369,11 +476,13 @@ export default function App() {
               let generatedCode = '';
               let imageBase64 = '';
               try {
-                const parsed = JSON.parse(eventData);
+                const parsed = JSON.parse(eventData) as ExecuteResultEvent;
                 if (parsed && parsed.result) finalResult = parsed.result;
                 if (parsed && parsed.code) generatedCode = parsed.code;
                 if (parsed && parsed.image_base_64) imageBase64 = parsed.image_base_64;
-              } catch (e) {}
+              } catch {
+                finalResult = eventData;
+              }
 
               const completionMsg = `\n\n[🎉 Agent 思考与执行完毕]`;
               setExecutionLogs(prev => prev + completionMsg);
@@ -432,13 +541,14 @@ export default function App() {
         if (!receivedResult) {
           throw new Error('后端未返回 result 事件，任务结果不完整');
         }
-        resolve(latestResult); // 完成并返回结果，避免读取异步 state 旧值
+        return latestResult; // 完成并返回结果，避免读取异步 state 旧值
 
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error(error);
-        const errorMsg = error.message === 'Failed to fetch'
+        const rawErrorMessage = getErrorMessage(error);
+        const errorMsg = rawErrorMessage === 'Failed to fetch'
           ? '哎呀，与后端失联了 📡！可能是大模型思考太久导致连接超时，或者您的本地端口被占用了，请重试一下～'
-          : error.message;
+          : rawErrorMessage;
         setExecutionLogs(prev => prev + `\n\n[❌ 执行中断] ${errorMsg}`);
 
         setNodeStates(prev => ({
@@ -462,11 +572,10 @@ export default function App() {
           }
           return n;
         }));
-        reject(error);
+        throw error;
       } finally {
         setIsExecuting(false);
       }
-    });
   };
 
   // 一键运行所有任务
@@ -559,10 +668,11 @@ export default function App() {
   };
 
   // 节点点击事件
-  const onNodeClick = (_: any, node: Node) => {
+  const onNodeClick = (_event: ReactMouseEvent | null, node: Node) => {
     const taskData = node.data.task as Task;
     if (taskData) {
       setSelectedTask(taskData);
+      if (currentPlan) renderDAG(currentPlan, true);
 
       // 恢复之前的执行状态
       const savedState = nodeStates[taskData.ID] || { logs: '', result: '', code: '', imageBase64: '' };
@@ -584,50 +694,104 @@ export default function App() {
     }
   };
 
+  const closeTaskPanel = () => {
+    setSelectedTask(null);
+    if (currentPlan) renderDAG(currentPlan, false);
+  };
+
   // 渲染有向无环图 (DAG)
-  const renderDAG = (plan: Plan) => {
+  const renderDAG = (plan: Plan, detailPanelOpen = Boolean(selectedTask && !isReportExpanded && !isPlotExpanded)) => {
     const newNodes: Node[] = [];
     const newEdges: Edge[] = [];
-
-    let yOffset = 50;
-    const taskArray = Object.values(plan.Tasks);
-
-    const sortedTasks = [...taskArray].sort((a, b) => {
-      if (a.Dependencies.includes(b.ID)) return 1;
-      if (b.Dependencies.includes(a.ID)) return -1;
-      return 0;
+    const existingTaskById = new Map<string, Task>();
+    nodes.forEach((node) => {
+      const existingTask = node.data.task as Task | undefined;
+      if (existingTask?.ID) existingTaskById.set(existingTask.ID, existingTask);
     });
 
+    const taskArray = Object.values(plan.Tasks).map((task) => {
+      const existingTask = existingTaskById.get(task.ID);
+      return existingTask ? { ...task, Status: existingTask.Status || task.Status } : task;
+    });
+    const taskMap = new Map(taskArray.map((task) => [task.ID, task]));
+    const levelCache = new Map<string, number>();
+
+    const getTaskLevel = (task: Task): number => {
+      if (levelCache.has(task.ID)) return levelCache.get(task.ID)!;
+      const dependencies = (task.Dependencies || [])
+        .map((depId) => taskMap.get(depId))
+        .filter((dep): dep is Task => Boolean(dep));
+      const level = dependencies.length === 0
+        ? 0
+        : Math.max(...dependencies.map((dependency) => getTaskLevel(dependency))) + 1;
+      levelCache.set(task.ID, level);
+      return level;
+    };
+
+    const levelGroups = new Map<number, Task[]>();
+    taskArray.forEach((task) => {
+      const level = getTaskLevel(task);
+      levelGroups.set(level, [...(levelGroups.get(level) || []), task]);
+    });
+
+    const sortedTasks = [...levelGroups.keys()]
+      .sort((a, b) => a - b)
+      .flatMap((level) => levelGroups.get(level) || []);
+    const useCompactBoardLayout = sortedTasks.length > 5 || levelGroups.size > 4 || detailPanelOpen;
+    const compactColumns = Math.min(detailPanelOpen ? 2 : 3, Math.max(1, sortedTasks.length));
+
     sortedTasks.forEach((task, index) => {
-      const xOffset = 280;
-      const x = 50 + (task.Dependencies.length * xOffset);
-      const y = yOffset + (index * 120);
+      const level = getTaskLevel(task);
+      const laneIndex = (levelGroups.get(level) || []).findIndex((item) => item.ID === task.ID);
+      const compactColumn = index % compactColumns;
+      const compactRow = Math.floor(index / compactColumns);
+      const nodeWidth = detailPanelOpen ? 200 : 232;
+      const x = useCompactBoardLayout
+        ? (detailPanelOpen ? 16 + (compactColumn * 212) : 64 + (compactColumn * 292))
+        : 44 + (level * 276);
+      const y = useCompactBoardLayout
+        ? 132 + (compactRow * (detailPanelOpen ? 164 : 178))
+        : 132 + (Math.max(laneIndex, 0) * 168);
+      const agentTone = getAgentTone(task.AssignedTo);
 
       newNodes.push({
         id: task.ID,
-        position: { x, y: y - (task.Dependencies.length * 100) },
+        position: { x, y },
         data: {
           task: task, // 存储完整 task 数据供点击使用
           label: (
-            <div className="flex flex-col gap-2 p-2 w-56">
-              <div className="flex items-center justify-between border-b pb-2">
+            <div className={`flex ${detailPanelOpen ? 'w-48' : 'w-56'} flex-col gap-2.5 p-2.5`}>
+              <div className="flex items-center justify-between border-b border-slate-100 pb-2">
                 <div className="flex items-center gap-2">
-                  {getAgentIcon(task.AssignedTo)}
-                  <span className="font-semibold text-xs text-gray-700">{task.AssignedTo}</span>
+                  <span className="flex h-7 w-7 items-center justify-center rounded-lg" style={{ backgroundColor: agentTone.soft }}>
+                    {getAgentIcon(task.AssignedTo)}
+                  </span>
+                  <div className="text-left">
+                    <div className="text-xs font-semibold text-slate-700">{getAgentLabel(task.AssignedTo)}</div>
+                    <div className="font-mono text-[10px] text-slate-400">{task.AssignedTo}</div>
+                  </div>
                 </div>
+                <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-semibold text-slate-500">
+                  {getStatusLabel(task.Status)}
+                </span>
               </div>
-              <div className="text-sm text-gray-800 text-left font-medium">{task.Name}</div>
-              <div className="text-xs text-gray-400 capitalize text-left">状态: {task.Status}</div>
+              <div className="text-left text-[13px] font-semibold leading-snug text-slate-800">{task.Name}</div>
+              <div className="flex items-center justify-between text-[11px] text-slate-400">
+                <span>依赖 {task.Dependencies.length}</span>
+                <span>优先级 {index + 1}</span>
+              </div>
             </div>
           )
         },
         style: {
           borderRadius: '8px',
           backgroundColor: 'white',
-          border: '2px solid',
-          borderColor: task.Status === 'pending' ? '#e5e7eb' : '#3b82f6',
-          boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+          border: '1px solid',
+          borderColor: task.Status === 'pending' ? '#e2e8f0' : agentTone.border,
+          boxShadow: '0 12px 28px -22px rgb(15 23 42 / 0.55)',
           cursor: 'pointer',
+          overflow: 'hidden',
+          width: nodeWidth,
         }
       });
 
@@ -637,7 +801,8 @@ export default function App() {
           source: depId,
           target: task.ID,
           animated: true,
-          style: { stroke: '#94a3b8', strokeWidth: 2 }
+          type: 'smoothstep',
+          style: { stroke: '#9aa9bd', strokeWidth: 1.7, strokeDasharray: '6 5' }
         });
       });
     });
@@ -646,23 +811,58 @@ export default function App() {
     setEdges(newEdges);
   };
 
+  const backendOk = serviceHealth?.backend?.ok ?? false;
+  const sandboxOk = serviceHealth?.sandbox?.ok ?? false;
+  const dockerError = serviceHealth?.sandbox?.native_docker?.error || serviceHealth?.sandbox?.message;
+  const statusTone = backendOk && sandboxOk ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : backendOk ? 'bg-amber-50 text-amber-900 border-amber-200' : 'bg-rose-50 text-rose-800 border-rose-200';
+  const statusTitle = backendOk && sandboxOk ? '完整服务已就绪' : backendOk ? '后端可用，沙箱待配置' : '后端服务未连接';
+  const pendingTaskCount = nodes.filter(n => n.data.task && n.data.status !== 'completed').length;
+  const canExecuteTasks = sandboxOk;
+
   return (
-    <div className="flex h-screen bg-gray-100 font-sans overflow-hidden">
+    <div className="flex h-screen bg-slate-100 font-sans text-slate-900 overflow-hidden">
       {/* 左侧面板: 聊天交互与 PDF 阅读区 */}
       <div
         style={{ width: `${leftPanelWidth}%` }}
-        className="flex flex-col bg-white border-r border-gray-200 shadow-xl z-10 flex-shrink-0 transition-all duration-300 relative"
+        className="relative z-10 flex flex-col bg-white/95 border-r border-slate-200 shadow-xl flex-shrink-0 transition-all duration-300"
       >
-        <div className="p-4 border-b border-gray-200 bg-blue-600 text-white flex items-center justify-between">
+        <div className="border-b border-slate-800 bg-slate-950 px-4 py-4 text-white flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Bot className="w-6 h-6" />
-            <h1 className="text-xl font-bold tracking-wide">ScholarAgent</h1>
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-blue-500">
+              <Bot className="w-5 h-5" />
+            </div>
+            <div>
+              <h1 className="text-lg font-bold">ScholarAgent</h1>
+              <div className="text-xs text-slate-300">科研规划 · 沙箱执行 · 结果复盘</div>
+            </div>
           </div>
           {pdfUrl && (
-            <button onClick={() => setPdfUrl(null)} className="text-blue-100 hover:text-white p-1 hover:bg-blue-500 rounded-full transition-colors">
+            <button onClick={() => setPdfUrl(null)} className="text-slate-300 hover:text-white p-1 hover:bg-white/10 rounded-md transition-colors">
               <X className="w-5 h-5" />
             </button>
           )}
+        </div>
+        <div className={`border-b px-4 py-3 text-xs ${statusTone}`}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 gap-2">
+              <div className="pt-0.5">
+                {backendOk && sandboxOk ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+              </div>
+              <div className="min-w-0">
+                <div className="font-semibold">{healthLoading && !serviceHealth ? '正在检测服务状态...' : statusTitle}</div>
+                <div className="mt-1 truncate">
+                  后端：{backendOk ? '正常' : serviceHealth?.backend?.message || '未检测'} · 沙箱：{sandboxOk ? `正常${serviceHealth?.sandbox?.native_docker?.server_version ? ` (Docker ${serviceHealth.sandbox.native_docker.server_version})` : ''}` : dockerError || '未检测'}
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={() => void refreshServiceHealth()}
+              disabled={healthLoading}
+              className="shrink-0 rounded-md border border-current/20 bg-white/45 px-2 py-1 font-medium hover:bg-white/70 disabled:opacity-60"
+            >
+              {healthLoading ? '检测中' : '重新检测'}
+            </button>
+          </div>
         </div>
 
         {pdfUrl ? (
@@ -699,14 +899,14 @@ export default function App() {
         ) : (
           // 聊天视图
           <>
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div className="flex-1 overflow-y-auto bg-slate-50/70 p-4 space-y-4">
               {chatHistory.map((msg, i) => (
                 <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                   <div className={`max-w-[85%] flex flex-col gap-2 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-                    <div className={`rounded-2xl px-4 py-3 shadow-sm ${
+                    <div className={`rounded-lg px-4 py-3 shadow-sm ${
                       msg.role === 'user'
-                        ? 'bg-blue-600 text-white rounded-br-none'
-                        : 'bg-gray-100 text-gray-800 rounded-bl-none'
+                        ? 'bg-blue-600 text-white'
+                        : 'border border-slate-200 bg-white text-slate-800'
                     }`}>
                       {msg.role === 'user' ? (
                         msg.text
@@ -782,7 +982,7 @@ export default function App() {
               ))}
               {loading && (
                 <div className="flex justify-start">
-                  <div className="bg-gray-100 rounded-2xl rounded-bl-none px-4 py-3 text-gray-500 animate-pulse flex items-center gap-2">
+                  <div className="border border-slate-200 bg-white rounded-lg px-4 py-3 text-slate-500 animate-pulse flex items-center gap-2">
                     <Bot className="w-4 h-4" />
                     正在使用 Planner 编排多智能体任务拓扑图...
                   </div>
@@ -790,35 +990,32 @@ export default function App() {
               )}
             </div>
 
-            <div className="p-4 bg-white border-t border-gray-200">
+            <div className="border-t border-slate-200 bg-white p-4">
               {/* 试试：提示词推荐标题与切换开关 */}
               <div className="flex items-center justify-between mb-2 px-1">
                 <button
                   onClick={() => setShowSuggestions(!showSuggestions)}
-                  className="flex items-center gap-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-widest hover:text-blue-500 transition-colors group"
+                  className="group flex items-center gap-1.5 text-xs font-semibold text-slate-500 hover:text-blue-600 transition-colors"
                 >
                   <Sparkles className={`w-3 h-3 ${showSuggestions ? 'text-blue-500' : 'text-gray-400'} group-hover:animate-pulse`} />
-                  试试推荐指令
+                  任务模板
                   {showSuggestions ? <ChevronDown className="w-3 h-3" /> : <ChevronUp className="w-3 h-3" />}
                 </button>
               </div>
 
               {/* 推荐列表内容 */}
               {showSuggestions && (
-                <div className="flex flex-wrap gap-2 mb-4 animate-in slide-in-from-bottom-2 duration-300">
-                  {[
-                    "帮我画一个正弦函数和余弦函数的对比图",
-                    "复现一下 Transformer 论文的核心架构并跑通测试",
-                    "对比一下 LangChain 和 LlamaIndex 的 RAG 性能",
-                    "分析一下这篇论文的主要创新点和局限性",
-                    "帮我复现 Attention Is All You Need 论文的代码"
-                  ].map((text, idx) => (
+                <div className="mb-4 grid grid-cols-1 gap-2 animate-in slide-in-from-bottom-2 duration-300">
+                  {suggestedPrompts.map((item, idx) => (
                     <button
                       key={idx}
-                      onClick={() => setPrompt(text)}
-                      className="text-[11px] bg-blue-50 text-blue-600 border border-blue-100 px-3 py-1.5 rounded-full hover:bg-blue-100 transition-all active:scale-95 shadow-sm hover:shadow-md"
+                      onClick={() => setPrompt(item.text)}
+                      className="group flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-left text-xs text-slate-700 shadow-sm transition-all hover:border-blue-200 hover:bg-blue-50 active:scale-[0.99]"
                     >
-                      {text}
+                      <span className="min-w-0 truncate">{item.text}</span>
+                      <span className="ml-3 shrink-0 rounded-md bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-500 group-hover:text-blue-600">
+                        {item.category}
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -835,13 +1032,13 @@ export default function App() {
                     }
                   }}
                   placeholder="例如：帮我用 LangChain 和 LlamaIndex 做一个 RAG 框架的对比评测..."
-                  className="flex-1 resize-none rounded-xl border border-gray-300 p-3 pr-12 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm bg-gray-50 focus:bg-white transition-all"
+                  className="flex-1 resize-none rounded-lg border border-slate-300 bg-slate-50 p-3 pr-12 shadow-sm transition-all focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   rows={3}
                 />
                 <button
                   onClick={handleSendMessage}
                   disabled={loading || !prompt.trim()}
-                  className="absolute right-2 bottom-2 p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg"
+                  className="absolute right-2 bottom-2 rounded-lg bg-blue-600 p-2 text-white shadow-lg transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <Send className="w-5 h-5" />
                 </button>
@@ -853,22 +1050,37 @@ export default function App() {
 
       {/* 垂直拖拽条 */}
       <div
-        className={`w-1.5 bg-gray-200 hover:bg-blue-400 cursor-col-resize z-20 transition-colors flex items-center justify-center ${isResizing ? 'bg-blue-500' : ''}`}
+        className={`w-1.5 bg-slate-200 hover:bg-blue-400 cursor-col-resize z-20 transition-colors flex items-center justify-center ${isResizing ? 'bg-blue-500' : ''}`}
         onMouseDown={() => setIsResizing(true)}
       >
-        <div className="h-8 w-1 bg-gray-400 rounded-full"></div>
+        <div className="h-8 w-1 rounded-full bg-slate-400"></div>
       </div>
 
       {/* 右侧面板: DAG 可视化区 */}
       <div className="flex-1 relative flex overflow-hidden">
-        <div className="flex-1 h-full relative">
-          <div className="absolute top-4 left-4 z-10 bg-white px-4 py-2 rounded-lg shadow-sm border border-gray-200">
-            <h2 className="font-semibold text-gray-700 flex items-center gap-2">
-              <TerminalSquare className="w-4 h-4" />
-              多智能体执行计划 (DAG)
-            </h2>
-            <p className="text-xs text-gray-500 mt-1">点击节点可查看详情并触发真实执行</p>
+        <div className="flex-1 h-full relative bg-slate-50">
+          <div className="absolute top-4 left-4 z-10 rounded-lg border border-slate-200 bg-white/95 px-4 py-3 shadow-sm">
+            <div className="flex items-center gap-2">
+              <Activity className="h-4 w-4 text-blue-600" />
+              <h2 className="font-semibold text-slate-800">多智能体执行计划</h2>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">点击节点查看详情；环境就绪后可启动真实执行</p>
+            <div className="mt-2 flex gap-2 text-[11px] text-slate-500">
+              <span className="rounded-md bg-slate-100 px-2 py-1">节点 {nodes.length}</span>
+              <span className="rounded-md bg-slate-100 px-2 py-1">待执行 {pendingTaskCount}</span>
+            </div>
           </div>
+          {nodes.length === 0 && (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+              <div className="max-w-sm rounded-lg border border-slate-200 bg-white/90 p-5 text-center shadow-sm">
+                <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-lg bg-blue-50 text-blue-600">
+                  <TerminalSquare className="h-5 w-5" />
+                </div>
+                <div className="font-semibold text-slate-800">等待生成执行图</div>
+                <p className="mt-2 text-sm text-slate-500">从左侧输入研究任务，系统会把需求拆成可检查、可执行的 Agent 节点。</p>
+              </div>
+            </div>
+          )}
 
           <ReactFlow
             nodes={nodes}
@@ -877,18 +1089,20 @@ export default function App() {
             onEdgesChange={onEdgesChange}
             onNodeClick={onNodeClick}
             fitView
-            className="bg-gray-50"
+            fitViewOptions={{ padding: 0.04, maxZoom: 1 }}
+            className="bg-slate-50"
           >
-            <Background color="#ccc" gap={16} />
+            <Background color="#d4dae6" gap={18} />
             <Controls />
             <Panel position="top-right">
               <button
                 onClick={handleRunAllTasks}
-                disabled={isExecuting || nodes.filter(n => n.data.task && n.data.status !== 'completed').length === 0}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-xl shadow-lg flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50 disabled:grayscale"
+                disabled={isExecuting || pendingTaskCount === 0 || !canExecuteTasks}
+                title={!canExecuteTasks ? '沙箱未就绪，暂不能执行节点' : undefined}
+                className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 font-bold text-white shadow-lg transition-all hover:bg-blue-700 active:scale-95 disabled:cursor-not-allowed disabled:bg-slate-500 disabled:opacity-70"
               >
                 <Play className="w-4 h-4 fill-current" />
-                一键运行所有节点
+                {canExecuteTasks ? '一键运行所有节点' : '沙箱未就绪'}
               </button>
             </Panel>
           </ReactFlow>
@@ -897,10 +1111,10 @@ export default function App() {
         {/* 侧边栏拖拽条 */}
         {selectedTask && !isReportExpanded && !isPlotExpanded && (
           <div
-            className={`w-1 bg-gray-200 hover:bg-blue-400 cursor-col-resize z-20 transition-colors flex items-center justify-center ${isResizingSidebar ? 'bg-blue-500' : ''}`}
+            className={`w-1 bg-slate-200 hover:bg-blue-400 cursor-col-resize z-20 transition-colors flex items-center justify-center ${isResizingSidebar ? 'bg-blue-500' : ''}`}
             onMouseDown={() => setIsResizingSidebar(true)}
           >
-            <div className="h-8 w-0.5 bg-gray-400 rounded-full"></div>
+            <div className="h-8 w-0.5 rounded-full bg-slate-400"></div>
           </div>
         )}
 
@@ -908,7 +1122,7 @@ export default function App() {
         {selectedTask && (
           <div
             style={{ width: (isReportExpanded || isPlotExpanded) ? '100%' : `${sidebarWidth}px` }}
-            className={`bg-white border-l border-gray-200 shadow-2xl flex flex-col z-20 transition-all duration-300 ${(isReportExpanded || isPlotExpanded) ? 'absolute inset-0' : 'relative'}`}
+            className={`bg-white border-l border-slate-200 shadow-2xl flex flex-col z-20 transition-all duration-300 ${(isReportExpanded || isPlotExpanded) ? 'absolute inset-0' : 'relative'}`}
           >
             {isPlotExpanded ? (
               // 全屏图表视图
@@ -979,39 +1193,45 @@ export default function App() {
             ) : (
               // 普通侧边栏视图
               <>
-                <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
-                  <h3 className="font-bold text-gray-800 flex items-center gap-2 text-base">
+                <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 p-4">
+                  <h3 className="flex items-center gap-2 text-base font-bold text-slate-800">
                     {getAgentIcon(selectedTask.AssignedTo)}
                     节点执行面板
                   </h3>
-                  <button onClick={() => setSelectedTask(null)} className="text-gray-500 hover:text-gray-700 p-1.5 hover:bg-gray-200 rounded-full transition-all">
+                  <button onClick={closeTaskPanel} className="rounded-md p-1.5 text-slate-500 transition-all hover:bg-slate-200 hover:text-slate-700">
                     <X className="w-5 h-5" />
                   </button>
                 </div>
 
                 <div className="p-5 flex-1 overflow-y-auto flex flex-col gap-5">
-                  <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
-                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">任务名称</label>
-                    <div className="text-base font-bold text-gray-800 leading-tight">{selectedTask.Name}</div>
+                  <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                    <label className="mb-1 block text-[11px] font-bold text-slate-400">任务名称</label>
+                    <div className="text-base font-bold leading-tight text-slate-800">{selectedTask.Name}</div>
                   </div>
 
                   <div className="flex items-center justify-between px-1">
-                    <label className="text-xs font-bold text-gray-500 uppercase tracking-tight">负责 Agent</label>
-                    <div className="text-xs font-black text-blue-700 bg-blue-50 px-3 py-1.5 rounded-full border border-blue-100 shadow-sm font-mono">
-                      {selectedTask.AssignedTo}
+                    <label className="text-xs font-bold text-slate-500">负责 Agent</label>
+                    <div className="rounded-md border border-blue-100 bg-blue-50 px-3 py-1.5 font-mono text-xs font-black text-blue-700 shadow-sm">
+                      {getAgentLabel(selectedTask.AssignedTo)}
                     </div>
                   </div>
 
                   <button
                     onClick={() => handleExecuteTask(selectedTask)}
-                    disabled={isExecuting}
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-4 px-6 rounded-2xl flex items-center justify-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_10px_20px_-10px_rgba(37,99,235,0.5)] active:scale-[0.98] active:shadow-inner"
+                    disabled={isExecuting || !canExecuteTasks}
+                    title={!canExecuteTasks ? '沙箱未就绪，暂不能执行节点' : undefined}
+                    className="flex w-full items-center justify-center gap-3 rounded-lg bg-blue-600 px-6 py-4 font-black text-white shadow-[0_10px_20px_-10px_rgba(37,99,235,0.5)] transition-all hover:bg-blue-700 active:scale-[0.98] active:shadow-inner disabled:cursor-not-allowed disabled:bg-slate-500 disabled:opacity-70"
                   >
                     {isExecuting ? (
                       <span className="animate-pulse flex items-center gap-2">
                         <Loader2 className="w-5 h-5 animate-spin" />
                         正在深度解析...
                       </span>
+                    ) : !canExecuteTasks ? (
+                      <>
+                        <TerminalSquare className="w-5 h-5" />
+                        沙箱未就绪
+                      </>
                     ) : (
                       <>
                         <Play className="w-5 h-5 fill-current" />

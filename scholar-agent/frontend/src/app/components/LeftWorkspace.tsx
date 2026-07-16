@@ -75,7 +75,7 @@ interface LeftWorkspaceChatProps {
   };
 }
 
-function LeftWorkspaceChat(props: LeftWorkspaceChatProps) {
+export function LeftWorkspaceChat(props: LeftWorkspaceChatProps) {
   const { widthPercent, state, chatActions, pdfActions, taskActions } = props;
   return (
     <LeftWorkspaceShell widthPercent={widthPercent} showClosePdf={false} onClosePdf={pdfActions.onClosePdf}>
@@ -94,7 +94,7 @@ interface LeftWorkspacePdfProps {
   aiTranslationPluginInstance: Plugin;
 }
 
-function LeftWorkspacePdf(props: LeftWorkspacePdfProps) {
+export function LeftWorkspacePdf(props: LeftWorkspacePdfProps) {
   const { widthPercent, pdfUrl, isFullTranslating, onClosePdf, onFullTranslation, defaultLayoutPluginInstance, aiTranslationPluginInstance } = props;
   return (
     <LeftWorkspaceShell widthPercent={widthPercent} showClosePdf onClosePdf={onClosePdf}>
@@ -108,8 +108,3 @@ function LeftWorkspacePdf(props: LeftWorkspacePdfProps) {
     </LeftWorkspaceShell>
   );
 }
-
-export const LeftWorkspace = {
-  Chat: LeftWorkspaceChat,
-  Pdf: LeftWorkspacePdf,
-};

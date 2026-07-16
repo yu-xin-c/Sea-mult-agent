@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 )
 
 var containerIDPattern = regexp.MustCompile(`^[a-f0-9]{12,64}$`)
@@ -28,10 +29,79 @@ type streamChunk struct {
 	line   string
 }
 
+type DockerHealth struct {
+	Available           bool   `json:"available"`
+	Command             string `json:"command"`
+	ServerVersion       string `json:"server_version,omitempty"`
+	GPURequest          string `json:"gpu_request,omitempty"`
+	GPURuntimeAvailable bool   `json:"gpu_runtime_available"`
+	Error               string `json:"error,omitempty"`
+}
+
 func NewNativeDockerEngine() *NativeDockerEngine {
 	return &NativeDockerEngine{
 		mountPaths: make(map[string]string),
 	}
+}
+
+func (e *NativeDockerEngine) Health(ctx context.Context) DockerHealth {
+	command := dockerCommand()
+	gpuRequest := dockerGPURequest()
+	checkCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	output, err := exec.CommandContext(checkCtx, command, "version", "--format", "{{.Server.Version}}").CombinedOutput()
+	if err != nil {
+		return DockerHealth{
+			Available:  false,
+			Command:    command,
+			GPURequest: gpuRequest,
+			Error:      fmt.Sprintf("Docker CLI or daemon is unavailable: %v, output: %s", err, strings.TrimSpace(string(output))),
+		}
+	}
+
+	health := DockerHealth{
+		Available:     true,
+		Command:       command,
+		ServerVersion: strings.TrimSpace(string(output)),
+		GPURequest:    gpuRequest,
+	}
+	if gpuRequest == "" {
+		return health
+	}
+
+	runtimes, runtimeErr := exec.CommandContext(checkCtx, command, "info", "--format", "{{json .Runtimes}}").CombinedOutput()
+	health.GPURuntimeAvailable = runtimeErr == nil && strings.Contains(string(runtimes), `"nvidia"`)
+	if !health.GPURuntimeAvailable {
+		health.Available = false
+		health.Error = fmt.Sprintf("GPU sandbox requested (%s), but the NVIDIA Docker runtime is unavailable", gpuRequest)
+	}
+	return health
+}
+
+func dockerGPURequest() string {
+	request := strings.TrimSpace(os.Getenv("SANDBOX_DOCKER_GPUS"))
+	if strings.EqualFold(request, "none") {
+		return ""
+	}
+	return request
+}
+
+func dockerCommand() string {
+	if path, err := exec.LookPath("docker"); err == nil {
+		return path
+	}
+	for _, path := range []string{
+		"/usr/local/bin/docker",
+		"/opt/homebrew/bin/docker",
+		"/Applications/Docker.app/Contents/Resources/bin/docker",
+		"/Volumes/Docker/Docker.app/Contents/Resources/bin/docker",
+	} {
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path
+		}
+	}
+	return "docker"
 }
 
 func (e *NativeDockerEngine) GetType() string {
@@ -40,6 +110,9 @@ func (e *NativeDockerEngine) GetType() string {
 
 func (e *NativeDockerEngine) Create(ctx context.Context, image string, mountPath string) (string, error) {
 	args := []string{"run", "-d", "--rm"}
+	if gpuRequest := dockerGPURequest(); gpuRequest != "" {
+		args = append(args, "--gpus", gpuRequest)
+	}
 	if mountPath != "" {
 		normalizedMountPath, err := normalizeDockerMountPath(mountPath)
 		if err != nil {
@@ -49,7 +122,7 @@ func (e *NativeDockerEngine) Create(ctx context.Context, image string, mountPath
 	}
 	args = append(args, image, "sleep", "infinity")
 	fmt.Printf("[NativeDocker] Executing: docker %s\n", strings.Join(args, " "))
-	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd := exec.CommandContext(ctx, dockerCommand(), args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("Docker run failed: %v, output: %s", err, string(output))
@@ -105,11 +178,11 @@ func (e *NativeDockerEngine) Delete(ctx context.Context, id string) error {
 	e.mu.Lock()
 	delete(e.mountPaths, id)
 	e.mu.Unlock()
-	return exec.CommandContext(ctx, "docker", "rm", "-f", id).Run()
+	return exec.CommandContext(ctx, dockerCommand(), "rm", "-f", id).Run()
 }
 
 func (e *NativeDockerEngine) ExecutePython(ctx context.Context, id string, code string) (*ExecutionResponse, error) {
-	cmd := exec.CommandContext(ctx, "docker", "exec", id, "python3", "-c", code)
+	cmd := exec.CommandContext(ctx, dockerCommand(), "exec", id, "python3", "-c", code)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -150,7 +223,7 @@ func (e *NativeDockerEngine) ExecutePython(ctx context.Context, id string, code 
 }
 
 func (e *NativeDockerEngine) ExecutePythonStream(ctx context.Context, id string, code string, emit func(ExecutionStreamEvent) error) (*ExecutionResponse, error) {
-	cmd := exec.CommandContext(ctx, "docker", "exec", id, "python3", "-c", code)
+	cmd := exec.CommandContext(ctx, dockerCommand(), "exec", id, "python3", "-c", code)
 	response, err := e.runStreamingCommand(ctx, cmd, emit)
 	if err != nil {
 		return nil, err
@@ -179,7 +252,7 @@ func (e *NativeDockerEngine) ExecutePythonStream(ctx context.Context, id string,
 func (e *NativeDockerEngine) ExecuteCommand(ctx context.Context, id string, cmdArr []string) (*ExecutionResponse, error) {
 	args := append([]string{"exec", id}, cmdArr...)
 	fmt.Printf("[NativeDocker] Executing: docker %s\n", strings.Join(args, " "))
-	dockerCmd := exec.CommandContext(ctx, "docker", args...)
+	dockerCmd := exec.CommandContext(ctx, dockerCommand(), args...)
 	var stdout, stderr bytes.Buffer
 	dockerCmd.Stdout = &stdout
 	dockerCmd.Stderr = &stderr
@@ -204,7 +277,7 @@ func (e *NativeDockerEngine) ExecuteCommand(ctx context.Context, id string, cmdA
 func (e *NativeDockerEngine) ExecuteCommandStream(ctx context.Context, id string, cmdArr []string, emit func(ExecutionStreamEvent) error) (*ExecutionResponse, error) {
 	args := append([]string{"exec", id}, cmdArr...)
 	fmt.Printf("[NativeDocker] Executing: docker %s\n", strings.Join(args, " "))
-	dockerCmd := exec.CommandContext(ctx, "docker", args...)
+	dockerCmd := exec.CommandContext(ctx, dockerCommand(), args...)
 	response, err := e.runStreamingCommand(ctx, dockerCmd, emit)
 	if err != nil {
 		return nil, err

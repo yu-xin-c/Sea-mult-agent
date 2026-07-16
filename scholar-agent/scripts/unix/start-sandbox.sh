@@ -6,6 +6,9 @@ ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 GOCACHE_DIR="$ROOT/.gocache"
 DOTENV_FILE="$ROOT/backend.env"
 
+PATH="/usr/local/bin:/opt/homebrew/bin:/Applications/Docker.app/Contents/Resources/bin:/Volumes/Docker/Docker.app/Contents/Resources/bin:$PATH"
+export PATH
+
 find "$ROOT" -maxdepth 1 -type d -name '.gocache_verify*' -exec rm -rf {} + 2>/dev/null || true
 
 if [ -f "$DOTENV_FILE" ]; then

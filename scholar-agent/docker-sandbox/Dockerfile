@@ -1,10 +1,11 @@
-# 使用官方 Go 镜像作为编译环境
+# 使用 Go 构建镜像；GOTOOLCHAIN 会按 go.mod 自动选择项目要求的版本
 FROM golang:1.22-bullseye AS builder
 
-ENV GOTOOLCHAIN=auto
+ENV GOTOOLCHAIN=auto \
+    GOPROXY=https://goproxy.cn,direct
 WORKDIR /app
 COPY go.mod go.sum ./
-RUN go mod tidy
+RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/sandbox main.go
 

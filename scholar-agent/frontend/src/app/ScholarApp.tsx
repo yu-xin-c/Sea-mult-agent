@@ -6,8 +6,9 @@ import 'katex/dist/katex.min.css';
 import '@react-pdf-viewer/core/lib/styles/index.css';
 import '@react-pdf-viewer/default-layout/lib/styles/index.css';
 
-import { LeftWorkspace } from './components/LeftWorkspace';
-import { ScholarRuntimeProvider, useScholarRuntimeContext, type ScholarRuntimeContextValue } from './context/ScholarRuntimeContext';
+import { LeftWorkspaceChat, LeftWorkspacePdf } from './components/LeftWorkspace';
+import { useScholarRuntimeContext, type ScholarRuntimeContextValue } from './context/ScholarRuntimeContext';
+import { ScholarRuntimeProvider } from './context/ScholarRuntimeProvider';
 import { usePdfAssistFlow } from './hooks/usePdfAssistFlow';
 import { useScholarChatFlow } from './hooks/useScholarChatFlow';
 import { useScholarLayoutState } from './hooks/useScholarLayoutState';
@@ -100,7 +101,7 @@ function ScholarWorkspaceContent(props: ScholarWorkspaceContentProps) {
   });
 
   const leftWorkspace = pdfFlow.pdfUrl ? (
-    <LeftWorkspace.Pdf
+    <LeftWorkspacePdf
       widthPercent={layout.leftPanelWidth}
       pdfUrl={pdfFlow.pdfUrl}
       isFullTranslating={pdfFlow.isFullTranslating}
@@ -110,7 +111,7 @@ function ScholarWorkspaceContent(props: ScholarWorkspaceContentProps) {
       aiTranslationPluginInstance={pdfFlow.aiTranslationPluginInstance}
     />
   ) : (
-    <LeftWorkspace.Chat
+    <LeftWorkspaceChat
       widthPercent={layout.leftPanelWidth}
       state={{
         chatHistory: chatFlow.chatHistory,
@@ -176,6 +177,7 @@ export default function ScholarApp() {
     setNodes,
     appendChatMessage: chatFlow.appendChatMessage,
   });
+  const { resetRuntimeState } = runtime;
 
   const pdfFlow = usePdfAssistFlow({
     setPrompt: chatFlow.setPrompt,
@@ -188,8 +190,8 @@ export default function ScholarApp() {
   }, [runtime.selectedTaskState.logs]);
 
   useEffect(() => {
-    runtime.resetRuntimeState();
-  }, [chatFlow.activeSessionId, runtime.resetRuntimeState]);
+    resetRuntimeState();
+  }, [chatFlow.activeSessionId, resetRuntimeState]);
 
   const runtimeContextValue = useMemo<ScholarRuntimeContextValue>(
     () => ({

@@ -15,6 +15,16 @@
 
 ![ArchDi](ArchitectureDiagram.png)
 
+## 🖥️ 界面预览
+
+ScholarAgent 当前主界面由左侧对话/资料区、右侧 DAG 执行图、节点执行面板组成。系统会在启动后自动检测后端与沙箱状态；当 Docker 沙箱不可用时，真实执行按钮会被禁用，避免误触发失败任务。
+
+![ScholarAgent dashboard](scholar-agent/docs/assets/scholar-agent-dashboard.png)
+
+点击任一 DAG 节点后，可在右侧查看 Agent 类型、任务描述、执行日志、代码/报告/图表结果。长链任务会自动切换为紧凑看板布局，打开节点面板后会进一步压缩为适合详情态的两列布局。
+
+![ScholarAgent node execution panel](scholar-agent/docs/assets/scholar-agent-node-panel.png)
+
 ## 📁 项目结构
 
 ```
@@ -156,7 +166,34 @@ docker-compose up --build
 |------|------|
 | 前端界面 | http://localhost:5173 |
 | 后端 API | http://localhost:8080 |
+| 服务健康检查 | http://localhost:8080/api/health |
+| Docker 沙箱服务 | http://localhost:8082 |
 | 意图识别服务 | http://localhost:8000 |
+
+### 真实沙箱复现检查
+
+完整复现链路依赖 Docker。启动后先访问 `/api/health`：
+
+- `backend.ok=true` 表示后端 API 已可用。
+- `sandbox.ok=true` 表示 Docker 沙箱已可用，可以真实执行代码节点。
+- 如果 `sandbox.ok=false` 且提示 Docker CLI/daemon 不可用，需要先安装并启动 Docker，再重新检测。
+
+默认启动的是 CPU 沙箱。GPU 主机需要先安装并配置 NVIDIA Container Toolkit，再显式开启 GPU 透传：
+
+```bash
+SANDBOX_DOCKER_GPUS=all docker-compose up --build
+```
+
+此时健康检查中的 `gpu_request` 应为 `all`，`gpu_runtime_available` 应为 `true`。沙箱镜像仍需自行包含任务所需的 CUDA/PyTorch 依赖；如果没有配置 NVIDIA runtime，健康检查会直接失败，不会悄悄降级到 CPU。
+
+### HAI V100 远端验收
+
+2026-07-16 已在 Ubuntu 20.04、Docker 26.1.3、Tesla V100-SXM2-32GB 环境完成一次全链路 smoke test：
+
+- `docker-compose up --build -d` 成功构建并启动前端、后端和沙箱，前端返回 HTTP 200。
+- `/api/health` 返回 `backend.ok=true`、`sandbox.ok=true`、`gpu_runtime_available=true`。
+- 后端真实调用模型生成 Python 代码，沙箱内成功识别 V100 并执行矩阵乘法，结果为 `[[19, 22], [43, 50]]`。
+- 任务结束后临时容器正常清理；后端运行镜像已内置 CA 根证书，可正常校验 HTTPS 模型接口。
 
 ## 🛠️ 技术栈
 

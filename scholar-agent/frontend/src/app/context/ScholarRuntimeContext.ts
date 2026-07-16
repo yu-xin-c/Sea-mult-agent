@@ -1,4 +1,4 @@
-import { createContext, type PropsWithChildren, useContext } from 'react';
+import { createContext, useContext } from 'react';
 import type { useScholarRuntime } from '../hooks/useScholarRuntime';
 
 type ScholarRuntimeApi = ReturnType<typeof useScholarRuntime>;
@@ -22,15 +22,7 @@ export interface ScholarRuntimeContextValue {
   };
 }
 
-const ScholarRuntimeContext = createContext<ScholarRuntimeContextValue | null>(null);
-
-interface ScholarRuntimeProviderProps extends PropsWithChildren {
-  value: ScholarRuntimeContextValue;
-}
-
-export function ScholarRuntimeProvider({ value, children }: ScholarRuntimeProviderProps) {
-  return <ScholarRuntimeContext.Provider value={value}>{children}</ScholarRuntimeContext.Provider>;
-}
+export const ScholarRuntimeContext = createContext<ScholarRuntimeContextValue | null>(null);
 
 export function useScholarRuntimeContext() {
   const context = useContext(ScholarRuntimeContext);

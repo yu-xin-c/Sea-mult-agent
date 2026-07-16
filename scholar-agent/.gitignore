@@ -17,6 +17,9 @@ logs/
 # Build output
 bin/
 dist/
+!backend/webui/dist/
+backend/webui/dist/*
+!backend/webui/dist/placeholder.txt
 coverage/
 backend/api.exe
 backend/*.exe

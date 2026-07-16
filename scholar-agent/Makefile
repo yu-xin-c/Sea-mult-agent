@@ -42,6 +42,7 @@ sync-frontend-dist:
 	rm -rf backend/webui/dist
 	mkdir -p backend/webui/dist
 	cp -R frontend/dist/. backend/webui/dist/
+	printf '%s\n' 'This file keeps the embedded frontend directory present for Go builds before' 'the real frontend bundle is generated.' > backend/webui/dist/placeholder.txt
 
 package:
 	cd frontend && npm run build
