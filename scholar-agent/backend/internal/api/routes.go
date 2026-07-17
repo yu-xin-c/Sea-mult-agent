@@ -40,14 +40,23 @@ type ChatPayload struct {
 	Message string `json:"message" binding:"required"`
 }
 
-var routePaperArxivIDRe = regexp.MustCompile(`\b\d{4}\.\d{4,5}\b`)
+var (
+	routePaperArxivIDRe  = regexp.MustCompile(`\b\d{4}\.\d{4,5}\b`)
+	routeGitHubRepoURLRe = regexp.MustCompile(`https?://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?`)
+)
 
 // CORSMiddleware allows frontend to communicate with backend
 func CORSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := strings.TrimSpace(c.GetHeader("Origin"))
+		if origin == "" {
+			origin = "*"
+		} else {
+			c.Writer.Header().Set("Vary", "Origin")
+		}
+		c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
 		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, X-User-Id, X-Session-Id")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT")
 
 		if c.Request.Method == "OPTIONS" {
@@ -83,7 +92,7 @@ func SetupRoutes(r *gin.Engine) {
 			c.Status(204)
 		})
 
-		RegisterPlanRoute(apiGroup, p)
+		RegisterPlanRuntimeRoutes(apiGroup, p, librarianAgent, dataAgent, coderAgent)
 
 		apiGroup.GET("/hello", func(c *gin.Context) {
 			c.String(200, "hello api group")
@@ -525,8 +534,12 @@ func shouldClarifyPaperReproductionMode(intent string) bool {
 	if lower == "" {
 		return false
 	}
-	if containsAny(lower, []string{"最小实验", "最小验证", "smoke", "quick", "快速验证"}) &&
-		!containsAny(lower, []string{"bleu", "wmt", "wmt14", "完整", "全量", "真实复现"}) {
+	explicitSmoke := containsAny(lower, []string{"最小实验", "最小验证", "smoke", "quick", "快速验证"})
+	explicitFull := containsAny(lower, []string{
+		"full reproduction", "full run", "enable full", "run wmt",
+		"完整复现", "全量复现", "完整实验", "全量实验", "开启全量", "采用 full",
+	})
+	if explicitSmoke && !explicitFull {
 		return false
 	}
 	return containsAny(lower, []string{

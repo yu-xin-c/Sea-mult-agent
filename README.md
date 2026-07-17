@@ -101,7 +101,7 @@ Sea-mult-agent/
 - **Planner** — 将用户请求分解为多个子任务，构建 DAG（有向无环图）执行计划
 - **Scheduler** — 按照依赖关系拓扑排序，并行执行无依赖的子任务
 - **Executor** — 管理每个子任务的生命周期，支持重试与错误处理
-- **Plan Store** — 内存存储执行计划，支持断点续执行
+- **Plan Store** — 内存存储计划状态、结构化产物和事件历史，支持运行中查询与 SSE 断线回放
 
 ## 🚀 快速开始
 
@@ -130,14 +130,17 @@ cp backend.env.example backend.env
 #### 方式一：使用 Makefile
 
 ```bash
-# 启动所有服务
-make dev
+# 安装依赖并运行测试
+make install
+make test
 
-# 或分别启动
-make backend    # 启动 Go 后端
-make frontend   # 启动前端开发服务器
-make sandbox    # 启动沙箱服务
-make ai         # 启动意图识别服务
+# Docker Compose 启动完整网站服务
+make docker-up
+
+# 或分别启动本地服务
+make run-backend
+make run-frontend
+make run-sandbox
 ```
 
 #### 方式二：使用脚本
@@ -203,17 +206,16 @@ SANDBOX_DEFAULT_IMAGE=your-registry/pytorch-smoke:tag
 
 ### 轻量论文复现与消融
 
-2026-07-17 使用 ScholarAgent 对 **Attention Is All You Need** 运行了受控 smoke 实验：固定随机种子，对注意力头数、缩放项和残差连接进行结构消融。实验不下载 WMT14、不进行完整训练，也不以该结果宣称复现论文 BLEU。
+2026-07-17 使用 ScholarAgent 对 **Attention Is All You Need** 运行了受控 smoke 实验：固定随机种子，对注意力头数、缩放项和残差连接进行结构消融。实验不下载 WMT14、不进行完整训练，也不以该结果宣称复现论文 BLEU。不同记录的执行入口如下，不能混作同一次实验。
 
-| 实验 | 运行范围 | 主要结论 |
+| 实验入口 | 运行范围 | 主要结论 |
 |------|----------|----------|
-| 真实仓库 smoke | 克隆 `harvardnlp/annotated-transformer`，执行 8 节点 DAG | `TestRealPaperReproductionFlow` 在 `73.37s` 内通过，受控前向约 `4.748ms` |
-| V100 GPU 结构消融 | PyTorch CUDA 前向微基准 | 4 头增至 8 头延迟增加 `21.24%`；移除缩放后注意力熵下降 `84.61%` |
-| 多头数 `1/2/4/8` | 标准库 CPU 前向微基准 | 该微型配置中，4 头增至 8 头的平均延迟约增加 `1.79%` |
-| 移除 `1/sqrt(d_k)` 缩放 | 固定输入与权重 | 注意力熵约下降 `0.0048%` |
-| 移除残差连接 | 固定输入与权重 | 输出 L2 约下降 `99.23%` |
+| **ScholarAgent 完整生产 DAG** | `/api/plan` -> 8 节点 Scheduler -> Agent -> Docker Sandbox -> SSE/Artifact | 8/8 节点完成；1→8 heads 延迟 `+23.29%`，no scaling 熵 `-20.33%`，no residual L2 `-92.84%` |
+| Go 真实流集成测试 | `TestRealPaperReproductionFlow` 直接组装 Planner/Scheduler | 在 `73.37s` 内通过，受控前向约 `4.748ms` |
+| ScholarAgent 单节点 API | `/api/execute` 生成标准库 CPU 微基准 | 4→8 heads 延迟约 `+1.79%`，no residual L2 `-99.23%` |
+| **独立 V100 脚本（非 ScholarAgent DAG）** | HAI 基础环境直接运行 PyTorch CUDA 前向 | 4→8 heads 延迟 `+21.24%`，no scaling 熵 `-84.61%` |
 
-完整指标、原始脚本与结构化结果见 [真实仓库 smoke 记录](scholar-agent/docs/experiments/2026-07-17_attention_repo_smoke.md)、[V100 GPU 结构消融](scholar-agent/docs/experiments/2026-07-17_attention_gpu_ablation.md) 和 [CPU 轻量结构消融](scholar-agent/docs/experiments/2026-07-17_attention_light_ablation.md)。这些结果用于验证规划、代码生成、沙箱执行和结果归档链路，不应外推为完整论文训练结果。
+完整指标与执行边界见 [项目原生 DAG 消融](scholar-agent/docs/experiments/2026-07-17_attention_project_native_ablation.md)、[真实仓库集成测试](scholar-agent/docs/experiments/2026-07-17_attention_repo_smoke.md)、[单节点 CPU 消融](scholar-agent/docs/experiments/2026-07-17_attention_light_ablation.md) 和 [独立 V100 GPU 消融](scholar-agent/docs/experiments/2026-07-17_attention_gpu_ablation.md)。这些结果用于验证结构行为或系统执行链，不应外推为完整论文训练结果。
 
 ## 🛠️ 技术栈
 

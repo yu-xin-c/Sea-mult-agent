@@ -51,6 +51,14 @@ export const buildGraphLayout = (planGraph: PlanGraph): { nodes: Node[]; edges: 
     return laneOrder.indexOf(a.assigned_to) - laneOrder.indexOf(b.assigned_to);
   });
 
+  const maxLevel = sortedTasks.reduce((max, task) => Math.max(max, resolveLevel(task)), 0);
+  const tasksPerLevel = sortedTasks.reduce<Record<number, number>>((counts, task) => {
+    const level = resolveLevel(task);
+    counts[level] = (counts[level] || 0) + 1;
+    return counts;
+  }, {});
+  const useCompactLongChain = maxLevel >= 5 && Object.values(tasksPerLevel).every((count) => count === 1);
+
   const levelCounts: Record<string, number> = {};
   sortedTasks.forEach((task) => {
     const level = resolveLevel(task);
@@ -61,12 +69,24 @@ export const buildGraphLayout = (planGraph: PlanGraph): { nodes: Node[]; edges: 
     const legacyTask = graphTaskToTask(task);
     const styleState = getTaskStyleByStatus(task.status);
 
+    let position = {
+      x: 80 + level * 320,
+      y: laneOffsets[laneKey] + stackIndex * 110,
+    };
+    if (useCompactLongChain) {
+      const columns = 3;
+      const row = Math.floor(level / columns);
+      const naturalColumn = level % columns;
+      const column = row % 2 === 0 ? naturalColumn : columns - naturalColumn - 1;
+      position = {
+        x: 40 + column * 280,
+        y: 270 + row * 160,
+      };
+    }
+
     newNodes.push({
       id: task.id,
-      position: {
-        x: 80 + level * 320,
-        y: laneOffsets[laneKey] + stackIndex * 110,
-      },
+      position,
       data: {
         task: legacyTask,
         status: task.status,
@@ -84,6 +104,8 @@ export const buildGraphLayout = (planGraph: PlanGraph): { nodes: Node[]; edges: 
         borderColor: styleState.borderColor,
         boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
         cursor: 'pointer',
+        width: 240,
+        minHeight: 112,
       },
     });
   });

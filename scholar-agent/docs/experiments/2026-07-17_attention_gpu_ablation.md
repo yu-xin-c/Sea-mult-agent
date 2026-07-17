@@ -1,6 +1,6 @@
-# Attention Is All You Need 轻量 GPU 结构消融
+# Attention Is All You Need 独立 V100 GPU 结构消融
 
-本实验在 HAI 的 `Tesla V100-SXM2-32GB` 上运行，使用 PyTorch `2.6.0+cu124` 和 CUDA `12.4`。实验固定随机种子和 Q/K/V/O 投影权重，仅改变注意力头数、缩放项和残差连接。
+本实验通过 HAI 基础环境中的独立 Python 脚本运行，**没有经过 ScholarAgent Planner、Scheduler 或 Docker Sandbox DAG**。硬件为 `Tesla V100-SXM2-32GB`，使用 PyTorch `2.6.0+cu124` 和 CUDA `12.4`。实验固定随机种子和 Q/K/V/O 投影权重，仅改变注意力头数、缩放项和残差连接。
 
 ## 实验设置
 

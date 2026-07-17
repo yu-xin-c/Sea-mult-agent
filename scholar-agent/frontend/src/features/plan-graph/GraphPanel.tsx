@@ -40,8 +40,8 @@ export function GraphPanel(props: GraphPanelProps) {
   } = props;
 
   return (
-    <div className="flex-1 h-full relative">
-      <div className="absolute top-4 left-4 z-10 bg-white px-4 py-2 rounded-lg shadow-sm border border-gray-200 max-w-md">
+    <div className="flex h-full min-w-0 flex-1 flex-col bg-gray-50">
+      <div className="shrink-0 border-b border-gray-200 bg-white px-4 py-3">
         <h2 className="font-semibold text-gray-700 flex items-center gap-2">
           <TerminalSquare className="w-4 h-4" />
           {graphTitle}
@@ -55,7 +55,7 @@ export function GraphPanel(props: GraphPanelProps) {
                 entities: {Object.keys(intentContext.entities || {}).length}
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <div className="rounded-md bg-gray-50 px-2 py-1">frameworks: {stringifyEntity(intentContext.entities?.frameworks)}</div>
               <div className="rounded-md bg-gray-50 px-2 py-1">paper_title: {stringifyEntity(intentContext.entities?.paper_title)}</div>
               <div className="rounded-md bg-gray-50 px-2 py-1">needs_plot: {stringifyEntity(intentContext.entities?.needs_plot)}</div>
@@ -69,28 +69,31 @@ export function GraphPanel(props: GraphPanelProps) {
         )}
       </div>
 
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onNodeClick={onNodeClick}
-        fitView
-        className="bg-gray-50"
-      >
-        <Background color="#ccc" gap={16} />
-        <Controls />
-        <Panel position="top-right">
-          <button
-            onClick={onRunAll}
-            disabled={isExecuting || nodes.filter((n) => n.data.task && n.data.status !== 'completed').length === 0}
-            className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-xl shadow-lg flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50 disabled:grayscale"
-          >
-            <Play className="w-4 h-4 fill-current" />
-            {runAllText}
-          </button>
-        </Panel>
-      </ReactFlow>
+      <div className="relative min-h-0 flex-1">
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onNodeClick={onNodeClick}
+          fitView
+          fitViewOptions={{ padding: 0.08, maxZoom: 1 }}
+          className="bg-gray-50"
+        >
+          <Background color="#ccc" gap={16} />
+          <Controls />
+          <Panel position="top-right">
+            <button
+              onClick={onRunAll}
+              disabled={isExecuting || nodes.filter((n) => n.data.task && n.data.status !== 'completed').length === 0}
+              className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 font-bold text-white shadow-lg transition-all hover:bg-blue-700 active:scale-95 disabled:opacity-50 disabled:grayscale"
+            >
+              <Play className="w-4 h-4 fill-current" />
+              {runAllText}
+            </button>
+          </Panel>
+        </ReactFlow>
+      </div>
     </div>
   );
 }

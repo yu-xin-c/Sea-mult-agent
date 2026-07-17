@@ -56,3 +56,10 @@ func TestTrustedRepoCandidate_PrefersAnnotatedTransformerForAttention(t *testing
 		t.Fatalf("expected annotated-transformer to be trusted for Attention Is All You Need")
 	}
 }
+
+func TestPreferredRepositoryInputIsValidGitHubURL(t *testing.T) {
+	preferred := normalizeGitHubRepoURL("https://github.com/harvardnlp/annotated-transformer.git")
+	if githubURLRe.FindString(preferred) != preferred {
+		t.Fatalf("preferred repository was not accepted: %q", preferred)
+	}
+}

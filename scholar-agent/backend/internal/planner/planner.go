@@ -622,12 +622,20 @@ func buildPaperReproductionNodesV2(intent models.IntentContext) []*models.TaskNo
 func buildPaperReproductionInputs(intent models.IntentContext) map[string]any {
 	raw := strings.ToLower(strings.Join([]string{intent.RawIntent, intent.RewrittenIntent}, " "))
 	requestedMode := "auto"
+	smokeRequested := boolEntity(intent.Entities, "smoke_reproduction") ||
+		boolEntity(intent.Constraints, "smoke_reproduction") ||
+		hasAny(raw, "smoke", "最小实验", "最小验证", "快速验证")
+	explicitFullRequested := hasAny(raw,
+		"full reproduction", "full run", "enable full", "run wmt",
+		"完整复现", "全量复现", "完整实验", "全量实验", "开启全量", "采用 full",
+	)
 	fullRequested := boolEntity(intent.Entities, "full_reproduction") ||
 		boolEntity(intent.Constraints, "full_reproduction") ||
 		hasAny(raw, "full reproduction", "full run", "bleu", "wmt14", "完整复现", "全量复现", "完整实验", "全量实验")
-	if boolEntity(intent.Entities, "smoke_reproduction") ||
-		boolEntity(intent.Constraints, "smoke_reproduction") ||
-		hasAny(raw, "smoke", "最小实验", "快速验证") {
+	if smokeRequested && !explicitFullRequested {
+		fullRequested = false
+	}
+	if smokeRequested {
 		requestedMode = "smoke"
 	}
 	if fullRequested {
@@ -818,6 +826,9 @@ func newRepoDiscoveryNode(deps []string, context string, intent models.IntentCon
 
 func buildRepoDiscoveryInputs(intent models.IntentContext) map[string]any {
 	inputs := map[string]any{}
+	if repoURL := stringEntity(intent.Entities, "preferred_repo_url", ""); repoURL != "" {
+		inputs["preferred_repo_url"] = repoURL
+	}
 	if arxivID := stringEntity(intent.Entities, "paper_arxiv_id", ""); arxivID != "" {
 		inputs["paper_arxiv_id"] = arxivID
 	}

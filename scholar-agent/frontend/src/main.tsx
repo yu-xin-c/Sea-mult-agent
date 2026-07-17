@@ -1,10 +1,16 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
-import App from './App.tsx'
+import { AppErrorBoundary } from './app/AppErrorBoundary.tsx'
+import { AppProviders } from './app/AppProviders.tsx'
+import ScholarApp from './app/ScholarApp.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <AppErrorBoundary>
+      <AppProviders>
+        <ScholarApp />
+      </AppProviders>
+    </AppErrorBoundary>
   </StrictMode>,
 )

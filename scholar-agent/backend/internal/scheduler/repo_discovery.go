@@ -95,6 +95,19 @@ func executeRepoDiscovery(ctx context.Context, runtimeTask *models.Task) error {
 	}
 
 	candidates := make([]repoCandidate, 0, len(items))
+	preferredRepoURL := normalizeGitHubRepoURL(taskInputValue(runtimeTask, "preferred_repo_url"))
+	if preferredRepoURL != "" && githubURLRe.FindString(preferredRepoURL) == preferredRepoURL {
+		candidates = append(candidates, repoCandidate{
+			Title:       "User-preferred repository",
+			RepoName:    strings.TrimPrefix(preferredRepoURL, "https://github.com/"),
+			Description: "Repository explicitly requested in the reproduction intent.",
+			RepoURLs:    []string{preferredRepoURL},
+			Source:      "user_preference",
+			ScoreHint:   1_000_000,
+		})
+	} else {
+		preferredRepoURL = ""
+	}
 	for _, item := range items {
 		pid := strings.TrimSpace(item.Paper.ID)
 		title := strings.TrimSpace(item.Paper.Title)
@@ -134,6 +147,9 @@ func executeRepoDiscovery(ctx context.Context, runtimeTask *models.Task) error {
 		selected = firstTrustedRepo(query, candidates)
 	} else {
 		selected = firstSelectedRepo(candidates)
+	}
+	if preferredRepoURL != "" {
+		selected = preferredRepoURL
 	}
 
 	candidateJSON, _ := json.Marshal(candidates)

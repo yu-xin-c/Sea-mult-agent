@@ -1,10 +1,46 @@
 package api
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"scholar-agent-backend/internal/models"
+
+	"github.com/gin-gonic/gin"
 )
+
+func TestCORSMiddlewareAllowsIdentityHeadersWithCredentials(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(CORSMiddleware())
+	router.OPTIONS("/api/plan", func(c *gin.Context) {
+		c.Status(http.StatusNoContent)
+	})
+
+	request := httptest.NewRequest(http.MethodOptions, "/api/plan", nil)
+	request.Header.Set("Origin", "http://localhost:5173")
+	request.Header.Set("Access-Control-Request-Headers", "content-type,x-user-id,x-session-id")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:5173" {
+		t.Fatalf("allow origin=%q", got)
+	}
+	allowHeaders := response.Header().Get("Access-Control-Allow-Headers")
+	for _, header := range []string{"X-User-Id", "X-Session-Id"} {
+		if !strings.Contains(allowHeaders, header) {
+			t.Fatalf("missing %s in Access-Control-Allow-Headers=%q", header, allowHeaders)
+		}
+	}
+	if got := response.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
+		t.Fatalf("allow credentials=%q", got)
+	}
+}
 
 func TestCollectPaperSearchFields_PrefersStructuredFields(t *testing.T) {
 	intentCtx := models.IntentContext{

@@ -99,6 +99,35 @@ func TestMaybeCreateReproductionSmokeRunner_GenericAttentionRepo(t *testing.T) {
 	}
 }
 
+func TestMaybeCreateReproductionSmokeRunner_AttentionAblation(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("Attention Is All You Need"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	task := &models.Task{
+		Name:        "Prepare attention ablation",
+		Description: "Run an ablation for heads=1/2/4/8, attention scaling, and residual connection.",
+	}
+
+	runnerPath, kind, err := maybeCreateReproductionSmokeRunner(workspace, task)
+	if err != nil {
+		t.Fatalf("maybeCreateReproductionSmokeRunner returned error: %v", err)
+	}
+	if kind != "attention_structure_ablation" {
+		t.Fatalf("unexpected runner kind: %q", kind)
+	}
+	raw, err := os.ReadFile(runnerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, expected := range []string{"heads_1", "heads_8", "no_scaling", "no_residual", "attention_structure_ablation"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("ablation runner missing %q", expected)
+		}
+	}
+}
+
 func TestWorkspaceMatchesRepoURL(t *testing.T) {
 	workspace := t.TempDir()
 	gitDir := filepath.Join(workspace, ".git")

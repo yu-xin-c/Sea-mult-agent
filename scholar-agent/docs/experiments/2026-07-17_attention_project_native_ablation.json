@@ -1,0 +1,108 @@
+{
+  "experiment_id": "attention-project-native-ablation-2026-07-17",
+  "plan_id": "3be879c8-ce9d-472d-af5f-ddb3e7c9acd1",
+  "execution_path": "ScholarAgent Planner -> PlanStore -> Scheduler -> Agents -> Docker Sandbox -> Artifacts/SSE",
+  "plan": {
+    "intent_type": "Paper_Reproduction",
+    "status": "completed",
+    "node_count": 8,
+    "completed_nodes": 8,
+    "failed_nodes": 0,
+    "artifact_count": 15,
+    "event_count": 61,
+    "event_counts": {
+      "plan_started": 1,
+      "task_ready": 7,
+      "task_started": 8,
+      "task_log": 28,
+      "artifact_created": 8,
+      "task_completed": 8,
+      "plan_completed": 1
+    }
+  },
+  "repository": {
+    "requested": "https://github.com/harvardnlp/annotated-transformer",
+    "selected": "https://github.com/harvardnlp/annotated-transformer",
+    "entry_kind": "attention_structure_ablation",
+    "entry_file": "scholar_repro_smoke.py"
+  },
+  "runtime": {
+    "reproduction_mode": "smoke",
+    "device": "cpu",
+    "torch_version": "2.0.1+cpu",
+    "seed": 20260717,
+    "d_model": 64,
+    "batch_size": 2,
+    "sequence_length": 16,
+    "warmup_runs": 8,
+    "timed_runs": 40
+  },
+  "results": [
+    {
+      "name": "heads_1",
+      "heads": 1,
+      "use_scaling": true,
+      "use_residual": true,
+      "latency_median_ms": 0.261365,
+      "attention_entropy": 2.725055,
+      "output_l2": 43.983147,
+      "parameter_count": 16384
+    },
+    {
+      "name": "heads_2",
+      "heads": 2,
+      "use_scaling": true,
+      "use_residual": true,
+      "latency_median_ms": 0.294604,
+      "attention_entropy": 2.721438,
+      "output_l2": 43.998783,
+      "parameter_count": 16384
+    },
+    {
+      "name": "heads_4",
+      "heads": 4,
+      "use_scaling": true,
+      "use_residual": true,
+      "latency_median_ms": 0.303809,
+      "attention_entropy": 2.72576,
+      "output_l2": 44.000565,
+      "parameter_count": 16384
+    },
+    {
+      "name": "heads_8",
+      "heads": 8,
+      "use_scaling": true,
+      "use_residual": true,
+      "latency_median_ms": 0.322235,
+      "attention_entropy": 2.726724,
+      "output_l2": 43.989876,
+      "parameter_count": 16384
+    },
+    {
+      "name": "no_scaling",
+      "heads": 4,
+      "use_scaling": false,
+      "use_residual": true,
+      "latency_median_ms": 0.2726,
+      "attention_entropy": 2.171573,
+      "output_l2": 44.311558,
+      "parameter_count": 16384
+    },
+    {
+      "name": "no_residual",
+      "heads": 4,
+      "use_scaling": true,
+      "use_residual": false,
+      "latency_median_ms": 0.283523,
+      "attention_entropy": 2.72576,
+      "output_l2": 3.151376,
+      "parameter_count": 16384
+    }
+  ],
+  "comparisons_percent": {
+    "heads_1_to_8_latency": 23.28927,
+    "no_scaling_attention_entropy_vs_heads_4": -20.331467,
+    "no_residual_output_l2_vs_heads_4": -92.837874
+  },
+  "scope_limit": "Structural smoke ablation only; no WMT14 training and no BLEU reproduction."
+}

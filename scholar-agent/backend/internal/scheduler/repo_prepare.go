@@ -130,11 +130,163 @@ func maybeCreateReproductionSmokeRunner(workspacePath string, task *models.Task)
 	}
 
 	runnerPath := filepath.Join(workspacePath, reproductionSmokeRunnerName)
+	runnerKind := "bounded_forward_pass"
 	runner := buildAttentionReproductionSmokeRunner(hasRepoTransformer)
+	if shouldCreateAttentionAblationRunner(task) {
+		runner = buildAttentionAblationSmokeRunner()
+		runnerKind = "attention_structure_ablation"
+	}
 	if err := os.WriteFile(runnerPath, []byte(runner), 0o644); err != nil {
 		return "", "", fmt.Errorf("create reproduction smoke runner: %w", err)
 	}
-	return runnerPath, "bounded_forward_pass", nil
+	return runnerPath, runnerKind, nil
+}
+
+func shouldCreateAttentionAblationRunner(task *models.Task) bool {
+	context := strings.ToLower(strings.Join([]string{
+		taskField(task, func(t *models.Task) string { return t.Name }),
+		taskField(task, func(t *models.Task) string { return t.Description }),
+	}, " "))
+	requestsAblation := strings.Contains(context, "ablation") || strings.Contains(context, "消融")
+	requestsAttentionVariants := strings.Contains(context, "heads=") ||
+		strings.Contains(context, "attention scaling") ||
+		strings.Contains(context, "residual") ||
+		strings.Contains(context, "注意力头") ||
+		strings.Contains(context, "缩放") ||
+		strings.Contains(context, "残差")
+	return requestsAblation && requestsAttentionVariants
+}
+
+func buildAttentionAblationSmokeRunner() string {
+	return `import json
+import math
+import statistics
+import time
+
+import torch
+import torch.nn as nn
+
+
+SEED = 20260717
+DMODEL = 64
+BATCH_SIZE = 2
+SEQ_LEN = 16
+WARMUP_RUNS = 8
+TIMED_RUNS = 40
+
+
+class AblationAttention(nn.Module):
+    def __init__(self, heads, use_scaling=True, use_residual=True):
+        super().__init__()
+        if DMODEL % heads != 0:
+            raise ValueError("d_model must be divisible by heads")
+        self.heads = heads
+        self.head_dim = DMODEL // heads
+        self.use_scaling = use_scaling
+        self.use_residual = use_residual
+        self.qkv = nn.Linear(DMODEL, DMODEL * 3, bias=False)
+        self.output = nn.Linear(DMODEL, DMODEL, bias=False)
+
+    def forward(self, x):
+        batch, length, _ = x.shape
+        qkv = self.qkv(x).reshape(batch, length, 3, self.heads, self.head_dim)
+        q, k, v = qkv.unbind(dim=2)
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+        scores = torch.matmul(q, k.transpose(-2, -1))
+        if self.use_scaling:
+            scores = scores / math.sqrt(self.head_dim)
+        weights = torch.softmax(scores, dim=-1)
+        attended = torch.matmul(weights, v).transpose(1, 2).contiguous().reshape(batch, length, DMODEL)
+        output = self.output(attended)
+        if self.use_residual:
+            output = output + x
+        entropy = -(weights * weights.clamp_min(1e-12).log()).sum(dim=-1).mean()
+        return output, entropy
+
+
+def run_variant(name, heads, use_scaling, use_residual, shared_state, inputs):
+    model = AblationAttention(heads, use_scaling, use_residual)
+    model.load_state_dict(shared_state)
+    model.eval()
+    with torch.no_grad():
+        for _ in range(WARMUP_RUNS):
+            model(inputs)
+        elapsed = []
+        output = None
+        entropy = None
+        for _ in range(TIMED_RUNS):
+            start = time.perf_counter()
+            output, entropy = model(inputs)
+            elapsed.append((time.perf_counter() - start) * 1000.0)
+    return {
+        "name": name,
+        "heads": heads,
+        "use_scaling": use_scaling,
+        "use_residual": use_residual,
+        "latency_median_ms": round(statistics.median(elapsed), 6),
+        "attention_entropy": round(float(entropy.item()), 6),
+        "output_l2": round(float(output.norm().item()), 6),
+        "parameter_count": sum(p.numel() for p in model.parameters()),
+    }
+
+
+def percent_change(value, baseline):
+    if baseline == 0:
+        return None
+    return round((value - baseline) / baseline * 100.0, 6)
+
+
+def main():
+    torch.manual_seed(SEED)
+    torch.set_num_threads(1)
+    inputs = torch.randn(BATCH_SIZE, SEQ_LEN, DMODEL)
+    reference = AblationAttention(4, True, True)
+    shared_state = reference.state_dict()
+    variants = [
+        ("heads_1", 1, True, True),
+        ("heads_2", 2, True, True),
+        ("heads_4", 4, True, True),
+        ("heads_8", 8, True, True),
+        ("no_scaling", 4, False, True),
+        ("no_residual", 4, True, False),
+    ]
+    results = [run_variant(name, heads, scaling, residual, shared_state, inputs) for name, heads, scaling, residual in variants]
+    by_name = {item["name"]: item for item in results}
+    baseline = by_name["heads_4"]
+    metrics = {
+        "status": "ok",
+        "reproduction_scope": "attention_structure_ablation",
+        "paper": "Attention Is All You Need",
+        "repo_entry": "scholar_agent_generated_attention_ablation",
+        "device": "cpu",
+        "torch_version": torch.__version__,
+        "seed": SEED,
+        "config": {
+            "d_model": DMODEL,
+            "batch_size": BATCH_SIZE,
+            "sequence_length": SEQ_LEN,
+            "warmup_runs": WARMUP_RUNS,
+            "timed_runs": TIMED_RUNS,
+        },
+        "results": results,
+        "comparisons_percent": {
+            "heads_1_to_8_latency": percent_change(by_name["heads_8"]["latency_median_ms"], by_name["heads_1"]["latency_median_ms"]),
+            "no_scaling_attention_entropy_vs_heads_4": percent_change(by_name["no_scaling"]["attention_entropy"], baseline["attention_entropy"]),
+            "no_residual_output_l2_vs_heads_4": percent_change(by_name["no_residual"]["output_l2"], baseline["output_l2"]),
+        },
+        "notes": [
+            "The repository is cloned and scanned by ScholarAgent before this bounded harness is generated.",
+            "This is a structural smoke ablation, not WMT14 training or paper BLEU reproduction.",
+        ],
+    }
+    print(json.dumps(metrics, ensure_ascii=True, sort_keys=True))
+
+
+if __name__ == "__main__":
+    main()
+`
 }
 
 func shouldCreateGenericAttentionSmokeRunner(workspacePath string, task *models.Task) bool {

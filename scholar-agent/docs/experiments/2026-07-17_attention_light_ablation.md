@@ -1,6 +1,6 @@
 # Attention Is All You Need 轻量结构消融
 
-本实验由 ScholarAgent 生成代码，并通过 HAI V100 主机上的 Docker 沙箱执行。实验固定 `random.seed(42)`、`seq_len=12`、`d_model=48`，每个配置重复 5 次。
+本实验由 ScholarAgent 的单节点 `/api/execute` 路径生成代码，并通过 HAI V100 主机上的 Docker 沙箱执行；它不是完整 Planner/Scheduler DAG。实验固定 `random.seed(42)`、`seq_len=12`、`d_model=48`，每个配置重复 5 次。
 
 ## 实验边界
 
