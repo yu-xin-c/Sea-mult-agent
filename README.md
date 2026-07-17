@@ -1,246 +1,272 @@
-# 🌊 Sea-Mult-Agent
+<div align="center">
 
-**Sea-Mult-Agent** 是一个面向学术研究场景的多智能体协作系统（Scholar-Agent），旨在通过多个专业化 AI Agent 的协同工作，帮助研究者完成从文献检索、数据分析到代码执行的完整科研工作流。
+# Sea-Mult-Agent
 
-## ✨ 核心特性
+**ScholarAgent: 从论文理解到沙箱实验的多智能体科研执行系统**
 
-- **多智能体协作** — 内置 Librarian（文献助手）、Coder（代码助手）、Data（数据助手）等多个专业化 Agent，各司其职、协同完成复杂任务
-- **意图识别与路由** — 基于规则 + LLM 的双层意图分类引擎，精准识别用户意图并自动路由到对应 Agent
-- **任务规划与调度** — Planner 将复杂任务分解为 DAG 执行图，Scheduler 按依赖关系并行调度执行
-- **沙箱代码执行** — 基于 Docker / OpenSandbox 的隔离执行环境，安全运行用户代码
-- **实时交互界面** — React + TypeScript 前端，支持对话、PDF 阅读、执行图可视化等多面板协作
-- **SSE 实时推送** — 后端事件总线 + SSE 流式推送，Agent 执行过程实时可见
+[![Go](https://img.shields.io/badge/Go-1.26.1-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=111827)](https://react.dev/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Status](https://img.shields.io/badge/status-research%20prototype-orange)](#project-status)
 
-## 🏗️ 系统架构
+[快速开始](#quick-start) · [系统架构](#architecture) · [API](#api) · [实验记录](#reproduction) · [贡献指南](scholar-agent/docs/CONTRIBUTING.md)
 
-![ArchDi](ArchitectureDiagram.png)
+</div>
 
-## 🖥️ 界面预览
+Sea-Mult-Agent 面向论文阅读、代码仓库发现、环境准备、受控实验和结果分析等科研工作流。用户提交研究目标后，Planner 会生成 DAG，Scheduler 按依赖调度 Librarian、Coder、Sandbox 和 Data 等角色，并通过 SSE 将日志、状态和结构化产物实时推送到前端。
 
-ScholarAgent 当前主界面由左侧对话/资料区、右侧 DAG 执行图、节点执行面板组成。执行图仅突出主控制链和必要的数据依赖，自动合并重复连线，并通过节点编号、状态和 Agent 类型建立清晰的阅读顺序。
+> [!NOTE]
+> 本项目目前是可完整运行的研究原型，不是已经完成安全加固的多租户生产服务。默认 Plan Store 位于内存中，Docker 沙箱具有较高宿主机权限，部署前请阅读[项目状态与安全说明](#project-status)。
 
 ![ScholarAgent dashboard](scholar-agent/docs/assets/scholar-agent-dashboard.png)
 
-点击任一 DAG 节点后，可在右侧查看 Agent 类型、任务描述、执行日志、代码/报告/图表结果。长链任务会自动切换为紧凑的蛇形布局；移动端使用两列流程，并可在“对话 / 流程”标签页之间切换。
+## Why Sea-Mult-Agent
 
-![ScholarAgent node execution panel](scholar-agent/docs/assets/scholar-agent-node-panel.png)
+| 能力 | 当前实现 |
+|---|---|
+| **面向科研的任务规划** | 将论文复现、代码执行、框架对比等目标拆解为可执行 DAG |
+| **专业 Agent 路由** | 根据任务类型路由到 Librarian、Coder、Sandbox、Data 或 Chat 角色 |
+| **真实隔离执行** | 通过独立 Go 沙箱服务调用原生 Docker，支持持久工作区与产物回传 |
+| **仓库优先的论文复现** | 发现或使用指定 GitHub 仓库，准备依赖并运行受控 smoke 实验 |
+| **实时可观测执行** | SSE 推送计划、节点、日志和 Artifact 事件，前端同步展示执行状态 |
+| **研究工作台** | 集成对话、PDF 阅读、DAG 看板、节点日志、代码、报告与图表视图 |
 
-## 📁 项目结构
+## Quick Start
 
-```
-Sea-mult-agent/
-├── README.md
-└── scholar-agent/
-    ├── backend/                  # Go 后端服务
-    │   ├── cmd/
-    │   │   ├── api/main.go       # API 服务器入口
-    │   │   └── app/main.go       # 应用入口
-    │   ├── internal/
-    │   │   ├── agent/            # 多 Agent 实现（Librarian, Coder, Data, Chat）
-    │   │   ├── api/              # HTTP 路由与中间件
-    │   │   ├── events/           # 事件总线
-    │   │   ├── Intent/           # 意图分类器（规则 + LLM + Redis）
-    │   │   ├── models/           # 数据模型（Task, Graph, Intent, Event, Artifact）
-    │   │   ├── planner/          # 任务规划器
-    │   │   ├── sandbox/          # 沙箱接口
-    │   │   ├── sandboxserver/    # 沙箱服务器（Docker / OpenSandbox）
-    │   │   ├── scheduler/        # DAG 调度器与执行器
-    │   │   ├── store/            # 计划存储
-    │   │   └── tools/            # Agent 工具（ask_user_question 等）
-    │   └── webui/                # 前端静态资源嵌入
-    ├── frontend/                 # React + TypeScript 前端
-    │   └── src/
-    │       ├── app/              # 应用主体（ScholarApp, Context, Hooks）
-    │       ├── features/         # 功能模块
-    │       │   ├── chat/         # 对话面板
-    │       │   ├── execution/    # 执行侧边栏
-    │       │   ├── pdf-viewer/   # PDF 阅读器
-    │       │   ├── plan-graph/   # DAG 执行图可视化
-    │       │   └── shared/       # 共享组件
-    │       ├── services/         # API 服务层
-    │       ├── contracts/        # 类型契约
-    │       └── hooks/            # 通用 Hooks
-    ├── ai-services/              # Python AI 微服务
-    │   └── intent_recognition/   # 意图识别服务
-    ├── docker-sandbox/           # 独立沙箱服务
-    ├── docs/                     # 项目文档
-    │   ├── local_startup_guide.md
-    │   ├── user_manual.md
-    │   ├── CONTRIBUTING.md
-    │   ├── intent/               # 意图识别文档与基准测试
-    │   ├── plan/                 # 规划模块设计文档
-    │   ├── papers_with_code/     # 论文与代码发现文档
-    │   └── archive/              # 归档设计文档
-    ├── scripts/                  # 启动脚本（Unix / Windows）
-    ├── docker-compose.yml
-    ├── Makefile
-    └── backend.env.example
-```
+### Prerequisites
 
-## 🤖 Agent 体系
+- Docker Engine 20.10+ 与 Docker Compose v2
+- Git
+- 一个 OpenAI-compatible LLM API Key
+- 本地开发时需要 Go（支持 `GOTOOLCHAIN=auto`）与 Node.js 20+
 
-| Agent | 职责 | 说明 |
-|-------|------|------|
-| **Librarian** | 文献检索与管理 | 搜索学术论文、管理文献库、提取论文关键信息 |
-| **Coder** | 代码生成与执行 | 编写和运行代码、数据分析脚本、可视化图表 |
-| **Data** | 数据处理与分析 | 数据清洗、统计分析、结果解读 |
-| **Chat** | 通用对话 | 日常问答、任务协调、用户引导 |
-
-## 🧠 意图识别
-
-系统采用**规则优先 + LLM 兜底**的双层意图分类架构：
-
-1. **规则层** — 基于关键词匹配的快速分类，覆盖常见意图模式
-2. **LLM 层** — 调用大语言模型进行语义理解，处理规则无法覆盖的复杂意图
-3. **Redis 缓存** — 缓存历史分类结果，加速重复意图的识别
-
-支持的意图类型包括：文献搜索、代码执行、数据分析、PDF 阅读、通用问答等。
-
-## 📋 任务规划与调度
-
-- **Planner** — 将用户请求分解为多个子任务，构建 DAG（有向无环图）执行计划
-- **Scheduler** — 按照依赖关系拓扑排序，并行执行无依赖的子任务
-- **Executor** — 管理每个子任务的生命周期，支持重试与错误处理
-- **Plan Store** — 内存存储计划状态、结构化产物和事件历史，支持运行中查询与 SSE 断线回放
-
-## 🚀 快速开始
-
-### 前置要求
-
-- **Go** 1.22+
-- **Node.js** 18+ & npm
-- **Python** 3.10+
-- **Docker** & Docker Compose（用于沙箱和容器化部署）
-- **Redis**（意图识别缓存，可选）
-
-### 环境配置
+### Start with Docker Compose
 
 ```bash
-# 1. 克隆仓库
 git clone https://github.com/yu-xin-c/Sea-mult-agent.git
 cd Sea-mult-agent/scholar-agent
 
-# 2. 配置后端环境变量
 cp backend.env.example backend.env
-# 编辑 backend.env，填入必要的 API Key 等配置
+# 编辑 backend.env，至少填写 OPENAI_API_KEY
+
+docker compose up --build -d
 ```
 
-### 本地开发启动
-
-#### 方式一：使用 Makefile
-
-```bash
-# 安装依赖并运行测试
-make install
-make test
-
-# Docker Compose 启动完整网站服务
-make docker-up
-
-# 或分别启动本地服务
-make run-backend
-make run-frontend
-make run-sandbox
-```
-
-#### 方式二：使用脚本
-
-```bash
-# Unix
-./scripts/unix/start-backend.sh
-./scripts/unix/start-frontend.sh
-./scripts/unix/start-sandbox.sh
-
-# Windows
-scripts\windows\start-backend.ps1
-scripts\windows\start-frontend.ps1
-scripts\windows\start-sandbox.ps1
-```
-
-#### 方式三：Docker Compose
-
-```bash
-docker-compose up --build
-```
-
-### 访问服务
+启动后访问：
 
 | 服务 | 地址 |
-|------|------|
-| 前端界面 | http://localhost:5173 |
-| 后端 API | http://localhost:8080 |
-| 服务健康检查 | http://localhost:8080/api/health |
-| Docker 沙箱服务 | http://localhost:8082 |
-| 意图识别服务 | http://localhost:8000 |
+|---|---|
+| Web UI | http://localhost:5173 |
+| Backend API | http://localhost:8080 |
+| Health Check | http://localhost:8080/api/health |
+| Sandbox API | http://localhost:8082 |
 
-### 真实沙箱复现检查
-
-完整复现链路依赖 Docker。启动后先访问 `/api/health`：
-
-- `backend.ok=true` 表示后端 API 已可用。
-- `sandbox.ok=true` 表示 Docker 沙箱已可用，可以真实执行代码节点。
-- 如果 `sandbox.ok=false` 且提示 Docker CLI/daemon 不可用，需要先安装并启动 Docker，再重新检测。
-
-默认启动的是 CPU 沙箱。GPU 主机需要先安装并配置 NVIDIA Container Toolkit，再显式开启 GPU 透传：
+确认后端与沙箱均已就绪：
 
 ```bash
-SANDBOX_DOCKER_GPUS=all docker-compose up --build
+curl -s http://localhost:8080/api/health
 ```
 
-此时健康检查中的 `gpu_request` 应为 `all`，`gpu_runtime_available` 应为 `true`。沙箱镜像仍需自行包含任务所需的 CUDA/PyTorch 依赖；如果没有配置 NVIDIA runtime，健康检查会直接失败，不会悄悄降级到 CPU。
-
-需要反复运行论文 smoke test 时，可在 `backend.env` 中设置 `SANDBOX_DEFAULT_IMAGE`，使用预装依赖的运行时镜像，避免每次任务重新下载大型框架：
+期望响应中同时出现 `backend.ok=true` 与 `sandbox.ok=true`。查看日志或停止服务：
 
 ```bash
-SANDBOX_DEFAULT_IMAGE=your-registry/pytorch-smoke:tag
+docker compose logs -f
+docker compose down
 ```
 
-### HAI V100 远端验收
+### Try a Reproduction Plan
 
-2026-07-16 已在 Ubuntu 20.04、Docker 26.1.3、Tesla V100-SXM2-32GB 环境完成一次全链路 smoke test：
+在 Web UI 中输入：
 
-- `docker-compose up --build -d` 成功构建并启动前端、后端和沙箱，前端返回 HTTP 200。
-- `/api/health` 返回 `backend.ok=true`、`sandbox.ok=true`、`gpu_runtime_available=true`。
-- 后端真实调用模型生成 Python 代码，沙箱内成功识别 V100 并执行矩阵乘法，结果为 `[[19, 22], [43, 50]]`。
-- 任务结束后临时容器正常清理；后端运行镜像已内置 CA 根证书，可正常校验 HTTPS 模型接口。
+```text
+请使用 https://github.com/harvardnlp/annotated-transformer 复现
+Attention Is All You Need，使用 smoke 模式运行轻量注意力消融，
+不要执行 WMT14 完整训练。
+```
 
-### 轻量论文复现与消融
+系统会生成并执行如下主链：
 
-2026-07-17 使用 ScholarAgent 对 **Attention Is All You Need** 运行了受控 smoke 实验：固定随机种子，对注意力头数、缩放项和残差连接进行结构消融。实验不下载 WMT14、不进行完整训练，也不以该结果宣称复现论文 BLEU。不同记录的执行入口如下，不能混作同一次实验。
+```text
+解析论文 -> 检索仓库 -> 准备工作区 -> 解析依赖
+        -> 准备运行时 -> 安装依赖 -> 执行实验 -> 对比论文声明
+```
 
-| 实验入口 | 运行范围 | 主要结论 |
-|------|----------|----------|
-| **ScholarAgent 完整生产 DAG** | `/api/plan` -> 8 节点 Scheduler -> Agent -> Docker Sandbox -> SSE/Artifact | 8/8 节点完成；1→8 heads 延迟 `+23.29%`，no scaling 熵 `-20.33%`，no residual L2 `-92.84%` |
-| Go 真实流集成测试 | `TestRealPaperReproductionFlow` 直接组装 Planner/Scheduler | 在 `73.37s` 内通过，受控前向约 `4.748ms` |
-| ScholarAgent 单节点 API | `/api/execute` 生成标准库 CPU 微基准 | 4→8 heads 延迟约 `+1.79%`，no residual L2 `-99.23%` |
-| **独立 V100 脚本（非 ScholarAgent DAG）** | HAI 基础环境直接运行 PyTorch CUDA 前向 | 4→8 heads 延迟 `+21.24%`，no scaling 熵 `-84.61%` |
+## Interface
 
-完整指标与执行边界见 [项目原生 DAG 消融](scholar-agent/docs/experiments/2026-07-17_attention_project_native_ablation.md)、[真实仓库集成测试](scholar-agent/docs/experiments/2026-07-17_attention_repo_smoke.md)、[单节点 CPU 消融](scholar-agent/docs/experiments/2026-07-17_attention_light_ablation.md) 和 [独立 V100 GPU 消融](scholar-agent/docs/experiments/2026-07-17_attention_gpu_ablation.md)。这些结果用于验证结构行为或系统执行链，不应外推为完整论文训练结果。
+执行图仅突出主控制链和必要的数据依赖，重复连线会自动合并。节点编号、Agent 类型和状态共同建立阅读顺序；长链使用紧凑蛇形布局，移动端可在“对话 / 流程”视图间切换。
 
-## 🛠️ 技术栈
+点击节点后可以查看任务描述、实时日志、生成代码、报告、指标和图表。
 
-| 层级 | 技术 |
-|------|------|
-| **前端** | React 19, TypeScript, Vite, CSS |
-| **后端** | Go 1.22, Gin, SSE |
-| **AI 服务** | Python, FastAPI |
-| **沙箱** | Docker, OpenSandbox |
-| **缓存** | Redis |
-| **部署** | Docker Compose, Makefile |
+![ScholarAgent node execution panel](scholar-agent/docs/assets/scholar-agent-node-panel.png)
 
-## 📖 文档
+## Architecture
 
-- [本地启动指南](scholar-agent/docs/local_startup_guide.md) — 详细的本地开发环境搭建
-- [用户手册](scholar-agent/docs/user_manual.md) — 功能使用说明
-- [项目结构说明](scholar-agent/docs/project_structure_frontend_backend.md) — 前后端架构详解
-- [贡献指南](scholar-agent/docs/CONTRIBUTING.md) — 如何参与项目开发
-- [意图识别文档](scholar-agent/docs/intent/) — 意图分类设计与基准测试
-- [规划模块文档](scholar-agent/docs/plan/) — 任务规划与调度设计
+```text
+User / Researcher
+       |
+       v
+React Workbench -- REST --> Go API / Intent Router
+       ^                         |
+       | SSE                     v
+       +---------------- Plan Store <--> Planner / Scheduler
+                                      |
+                         +------------+------------+
+                         |            |            |
+                    Librarian       Coder        Data
+                         |            |
+                         |       Docker Sandbox
+                         +------------+------------+
+                                      |
+                           Logs / Metrics / Artifacts
+```
 
-## 🤝 贡献
+![Sea-Mult-Agent architecture](ArchitectureDiagram.png)
 
-欢迎贡献！请阅读 [贡献指南](scholar-agent/docs/CONTRIBUTING.md) 了解详情。
+### Core Components
 
-## 📄 许可证
+| 组件 | 目录 | 职责 |
+|---|---|---|
+| Frontend | `scholar-agent/frontend` | React 工作台、DAG 可视化、PDF 与执行结果展示 |
+| Backend | `scholar-agent/backend` | Gin API、意图识别、Planner、Scheduler、Agent 与 SSE |
+| Docker Sandbox | `scholar-agent/docker-sandbox` | 容器创建、命令执行、文件与运行时生命周期管理 |
+| Python AI Service | `scholar-agent/ai-services` | 可选的 Python 意图识别服务，不在默认 Compose 中启动 |
+| Documentation | `scholar-agent/docs` | 启动、架构、规划、实验和用户文档 |
 
-本项目采用 MIT 许可证，详见 [LICENSE](LICENSE) 文件。
+### Agent Roles
+
+| Role | Responsibility |
+|---|---|
+| **Librarian** | 论文解析、资料检索、方法与声明提取 |
+| **Coder** | 仓库发现、代码准备、依赖分析和修复 |
+| **Sandbox** | 运行时准备、依赖安装与隔离实验执行 |
+| **Data** | 指标汇总、论文声明对比、报告与图表生成 |
+| **Chat** | 通用问答与轻量任务入口 |
+
+## API
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/health` | 检查后端、沙箱与 GPU runtime 状态 |
+| `POST` | `/api/plan` | 根据用户意图创建并保存 DAG |
+| `GET` | `/api/plans/:id` | 查询计划、节点状态和产物 |
+| `POST` | `/api/plans/:id/execute` | 启动整张计划图 |
+| `GET` | `/api/plans/:id/events` | 获取计划事件历史 |
+| `GET` | `/api/plans/:id/stream` | 订阅计划级 SSE 事件流 |
+| `POST` | `/api/execute` | 直接执行单个 Agent 任务并流式返回结果 |
+| `POST` | `/api/chat` | 通用对话接口 |
+| `GET` | `/api/pdf-proxy?url=...` | 代理读取远端 PDF |
+
+## Configuration
+
+复制 `scholar-agent/backend.env.example` 为 `backend.env` 后配置：
+
+| Variable | Required | Default / Purpose |
+|---|---:|---|
+| `OPENAI_API_KEY` | Yes | OpenAI-compatible API 密钥 |
+| `OPENAI_BASE_URL` | No | 默认示例为 DashScope compatible endpoint |
+| `OPENAI_MODEL_NAME` | No | 默认示例为 `qwen3-coder-plus` |
+| `SANDBOX_URL` | No | 本地默认 `http://localhost:8082`；Compose 会覆盖为服务地址 |
+| `SANDBOX_DEFAULT_IMAGE` | No | 论文 smoke test 使用的预装运行时镜像 |
+| `REDIS_ADDR` | No | 启用会话记忆；未设置时使用 No-op memory store |
+| `REDIS_USERNAME` / `REDIS_PASSWORD` / `REDIS_DB` | No | 可选 Redis 认证与数据库配置 |
+
+GPU 透传需要宿主机安装 NVIDIA Container Toolkit，并在 Compose 环境中设置：
+
+```bash
+SANDBOX_DOCKER_GPUS=all docker compose up --build -d
+```
+
+这只启用 GPU 设备透传；`SANDBOX_DEFAULT_IMAGE` 仍需指向包含 CUDA 与所需框架的镜像。
+
+## Development
+
+```bash
+cd scholar-agent
+
+make install       # 安装前端依赖并整理 Go modules
+make lint          # 前端 ESLint
+make test          # 后端与沙箱 Go tests
+make build         # 构建前端、后端与沙箱
+make package       # 构建带嵌入式前端的单文件服务
+```
+
+分别启动本地服务时，请在三个终端中运行：
+
+```bash
+make run-sandbox
+make run-backend
+make run-frontend
+```
+
+Windows 用户可使用 `scholar-agent/scripts/windows/` 中的 PowerShell 脚本。更完整的环境说明见[本地启动指南](scholar-agent/docs/local_startup_guide.md)。
+
+## Reproduction
+
+项目包含可审计的轻量论文复现记录，用于验证 ScholarAgent 的执行链和结构行为，不替代论文完整训练结果。
+
+| Record | Execution Boundary | Result |
+|---|---|---|
+| [项目原生 DAG 消融](scholar-agent/docs/experiments/2026-07-17_attention_project_native_ablation.md) | `/api/plan` -> Scheduler -> Agent -> Docker -> SSE/Artifact | 8/8 节点完成，15 个产物，61 个事件 |
+| [真实仓库 smoke test](scholar-agent/docs/experiments/2026-07-17_attention_repo_smoke.md) | 指定论文仓库的受控集成测试 | 验证仓库发现、准备与执行链 |
+| [单节点 CPU 消融](scholar-agent/docs/experiments/2026-07-17_attention_light_ablation.md) | ScholarAgent `/api/execute` | 标准库 CPU 微基准 |
+| [独立 V100 消融](scholar-agent/docs/experiments/2026-07-17_attention_gpu_ablation.md) | 项目外独立 PyTorch CUDA 脚本 | 非 ScholarAgent DAG，单独记录 |
+
+上述 smoke 实验不下载 WMT14、不复现 BLEU，也不应外推为完整论文训练结论。
+
+## Project Layout
+
+```text
+Sea-mult-agent/
+├── README.md
+├── LICENSE
+├── ArchitectureDiagram.png
+├── docker-core/                 # 早期/底层 Docker 执行组件
+└── scholar-agent/
+    ├── backend/                 # Go API 与多 Agent 编排核心
+    ├── frontend/                # React + TypeScript 工作台
+    ├── docker-sandbox/          # 独立 Go Docker 沙箱服务
+    ├── ai-services/             # 可选 Python 服务
+    ├── docs/                    # 文档与实验记录
+    ├── scripts/                 # Unix / Windows 启动脚本
+    ├── backend.env.example
+    ├── docker-compose.yml
+    └── Makefile
+```
+
+## Documentation
+
+- [本地启动指南](scholar-agent/docs/local_startup_guide.md)
+- [用户手册](scholar-agent/docs/user_manual.md)
+- [前后端项目结构](scholar-agent/docs/project_structure_frontend_backend.md)
+- [规划与调度设计](scholar-agent/docs/plan/)
+- [论文仓库发现](scholar-agent/docs/papers_with_code/)
+- [意图识别与评测](scholar-agent/docs/intent/)
+- [贡献指南](scholar-agent/docs/CONTRIBUTING.md)
+
+<a id="project-status"></a>
+## Project Status
+
+- **Research prototype**：接口和数据结构仍可能调整，不承诺向后兼容。
+- **In-memory Plan Store**：计划和事件支持运行中查询与 SSE 回放，但服务重启后不会保留，也不支持持久化断点恢复。
+- **Authentication**：当前用户 ID 与游客会话用于产品流程演示，不是生产级身份认证或租户隔离。
+- **Sandbox privilege**：默认沙箱服务挂载 `/var/run/docker.sock`，等同于较高宿主机权限；请勿在不可信公网环境中直接开放执行接口。
+- **GPU runtime**：GPU 透传已在 V100 主机验证，但默认运行时镜像为 CPU/通用 Python 镜像。
+- **Full reproduction**：当前重点是轻量 smoke 与结构消融，不包含大规模数据集训练。
+
+## Contributing
+
+Issue、文档改进、测试和小范围 PR 都欢迎提交。重大功能或架构调整请先创建 Issue 讨论，并在提交前运行：
+
+```bash
+cd scholar-agent
+make lint
+make test
+make build
+```
+
+详细约定见[贡献指南](scholar-agent/docs/CONTRIBUTING.md)。
+
+## License
+
+Sea-Mult-Agent 使用 [MIT License](LICENSE)。
