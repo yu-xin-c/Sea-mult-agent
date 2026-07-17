@@ -1,6 +1,7 @@
-import { type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef } from 'react';
+import { type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useEdgesState, useNodesState } from '@xyflow/react';
 import type { Edge, Node, OnEdgesChange, OnNodesChange } from '@xyflow/react';
+import { GitBranch, MessageSquareText } from 'lucide-react';
 import '@xyflow/react/dist/style.css';
 import 'katex/dist/katex.min.css';
 import '@react-pdf-viewer/core/lib/styles/index.css';
@@ -24,23 +25,48 @@ interface ScholarAppShellProps {
   layout: ReturnType<typeof useScholarLayoutState>;
   leftWorkspace: ReactNode;
   graphExecutionViewModel: ReturnType<typeof useGraphExecutionViewModel>;
+  mobilePane: 'chat' | 'graph';
+  onMobilePaneChange: (pane: 'chat' | 'graph') => void;
 }
 
 function ScholarAppShell(props: ScholarAppShellProps) {
-  const { layout, leftWorkspace, graphExecutionViewModel } = props;
+  const { layout, leftWorkspace, graphExecutionViewModel, mobilePane, onMobilePaneChange } = props;
+  const graphNodeCount = graphExecutionViewModel.graphPanelProps.nodes.length;
 
   return (
-    <div className="flex h-screen bg-gray-100 font-sans overflow-hidden">
+    <div
+      className="scholar-app-shell flex h-screen overflow-hidden bg-gray-100 font-sans"
+      data-mobile-pane={mobilePane}
+    >
+      <div className="scholar-mobile-tabbar">
+        <button
+          type="button"
+          onClick={() => onMobilePaneChange('chat')}
+          className={mobilePane === 'chat' ? 'is-active' : ''}
+        >
+          <MessageSquareText className="h-4 w-4" />
+          对话
+        </button>
+        <button
+          type="button"
+          onClick={() => onMobilePaneChange('graph')}
+          className={mobilePane === 'graph' ? 'is-active' : ''}
+        >
+          <GitBranch className="h-4 w-4" />
+          流程{graphNodeCount > 0 ? ` ${graphNodeCount}` : ''}
+        </button>
+      </div>
+
       {leftWorkspace}
 
       <div
-        className={`w-1.5 bg-gray-200 hover:bg-blue-400 cursor-col-resize z-20 transition-colors flex items-center justify-center ${layout.isResizing ? 'bg-blue-500' : ''}`}
+        className={`scholar-left-resize-handle flex w-1.5 cursor-col-resize items-center justify-center bg-gray-200 transition-colors hover:bg-blue-400 ${layout.isResizing ? 'bg-blue-500' : ''}`}
         onMouseDown={layout.startResizingLeftPanel}
       >
         <div className="h-8 w-1 bg-gray-400 rounded-full" />
       </div>
 
-      <div className="flex-1 relative flex overflow-hidden">
+      <div className="scholar-graph-workspace relative flex min-w-0 flex-1 overflow-hidden">
         <GraphPanel {...graphExecutionViewModel.graphPanelProps} />
 
         {graphExecutionViewModel.showExecutionResizeHandle && (
@@ -84,10 +110,12 @@ interface ScholarWorkspaceContentProps {
     handleSwitchSession: (sessionId: string) => void;
   };
   pdfFlow: ReturnType<typeof usePdfAssistFlow>;
+  mobilePane: 'chat' | 'graph';
+  onMobilePaneChange: (pane: 'chat' | 'graph') => void;
 }
 
 function ScholarWorkspaceContent(props: ScholarWorkspaceContentProps) {
-  const { nodes, edges, onNodesChange, onEdgesChange, logsEndRef, layout, chatFlow, pdfFlow } = props;
+  const { nodes, edges, onNodesChange, onEdgesChange, logsEndRef, layout, chatFlow, pdfFlow, mobilePane, onMobilePaneChange } = props;
   const runtime = useScholarRuntimeContext();
   const graphExecutionViewModel = useGraphExecutionViewModel({
     nodes,
@@ -144,12 +172,21 @@ function ScholarWorkspaceContent(props: ScholarWorkspaceContentProps) {
     />
   );
 
-  return <ScholarAppShell layout={layout} leftWorkspace={leftWorkspace} graphExecutionViewModel={graphExecutionViewModel} />;
+  return (
+    <ScholarAppShell
+      layout={layout}
+      leftWorkspace={leftWorkspace}
+      graphExecutionViewModel={graphExecutionViewModel}
+      mobilePane={mobilePane}
+      onMobilePaneChange={onMobilePaneChange}
+    />
+  );
 }
 
 export default function ScholarApp() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const [mobilePane, setMobilePane] = useState<'chat' | 'graph'>('chat');
   const logsEndRef = useRef<HTMLDivElement>(null);
   const layout = useScholarLayoutState();
 
@@ -158,12 +195,14 @@ export default function ScholarApp() {
       if (!planGraph) {
         setNodes([]);
         setEdges([]);
+        setMobilePane('chat');
         return;
       }
 
       const graphLayout = buildGraphLayout(planGraph);
       setNodes(graphLayout.nodes);
       setEdges(graphLayout.edges);
+      setMobilePane('graph');
     },
     [setEdges, setNodes],
   );
@@ -243,6 +282,8 @@ export default function ScholarApp() {
           handleSwitchSession: chatFlow.handleSwitchSession,
         }}
         pdfFlow={pdfFlow}
+        mobilePane={mobilePane}
+        onMobilePaneChange={setMobilePane}
       />
     </ScholarRuntimeProvider>
   );

@@ -34,3 +34,103 @@ code {
 *::-webkit-scrollbar-track {
   background: transparent;
 }
+
+.scholar-task-node {
+  text-align: initial;
+}
+
+.scholar-task-node .react-flow__handle {
+  width: 7px;
+  height: 7px;
+  border: 2px solid #94a3b8;
+  background: #ffffff;
+}
+
+.react-flow__controls {
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgb(15 23 42 / 0.08);
+}
+
+.scholar-mobile-tabbar {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .scholar-app-shell {
+    position: relative;
+    flex-direction: column;
+  }
+
+  .scholar-mobile-tabbar {
+    display: flex;
+    flex: 0 0 48px;
+    align-items: center;
+    gap: 4px;
+    padding: 6px;
+    border-bottom: 1px solid #e2e8f0;
+    background: #ffffff;
+  }
+
+  .scholar-mobile-tabbar button {
+    display: flex;
+    height: 36px;
+    flex: 1;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #64748b;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .scholar-mobile-tabbar button.is-active {
+    background: #eff6ff;
+    color: #2563eb;
+  }
+
+  .scholar-left-workspace {
+    width: 100% !important;
+    height: calc(100vh - 48px);
+    min-height: 0;
+    border-right: 0;
+    box-shadow: none;
+  }
+
+  .scholar-left-resize-handle {
+    display: none;
+  }
+
+  .scholar-graph-workspace {
+    width: 100%;
+    height: calc(100vh - 48px);
+    min-height: 0;
+  }
+
+  .scholar-app-shell[data-mobile-pane='chat'] .scholar-graph-workspace,
+  .scholar-app-shell[data-mobile-pane='graph'] .scholar-left-workspace {
+    position: absolute;
+    top: 48px;
+    bottom: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  .scholar-app-shell[data-mobile-pane='chat'] .scholar-graph-workspace {
+    left: 100%;
+  }
+
+  .scholar-app-shell[data-mobile-pane='graph'] .scholar-left-workspace {
+    left: -100%;
+  }
+
+  .scholar-execution-sidebar {
+    position: absolute !important;
+    inset: 0;
+    width: 100% !important;
+  }
+}

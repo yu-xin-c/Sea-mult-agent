@@ -22,8 +22,8 @@ export function ChatComposer(props: ChatComposerProps) {
   const { prompt, loading, isLoggedIn, showSuggestions, setPrompt, setShowSuggestions, onSendMessage } = props;
 
   return (
-    <div className="p-4 bg-white border-t border-gray-200">
-      <div className="flex items-center justify-between mb-2 px-1">
+    <div className="border-t border-gray-200 bg-white p-4">
+      <div className="mb-2 flex items-center justify-between px-1">
         <button
           onClick={() => setShowSuggestions(!showSuggestions)}
           className="flex items-center gap-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-widest hover:text-blue-500 transition-colors group"
@@ -35,7 +35,7 @@ export function ChatComposer(props: ChatComposerProps) {
       </div>
 
       {showSuggestions && (
-        <div className="flex flex-wrap gap-2 mb-4 animate-in slide-in-from-bottom-2 duration-300">
+        <div className="mb-4 flex flex-wrap gap-2 animate-in slide-in-from-bottom-2 duration-300">
           {suggestions.map((text) => (
             <button
               key={text}

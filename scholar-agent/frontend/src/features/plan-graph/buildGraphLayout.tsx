@@ -1,7 +1,48 @@
-import type { Edge, Node } from '@xyflow/react';
+import { MarkerType, Position, type Edge, type Node } from '@xyflow/react';
 import type { GraphTask, PlanGraph, Task } from '../../contracts/api';
 import { getTaskStyleByStatus } from '../shared/agentVisuals';
 import { createTaskNodeLabel } from './nodeLabelFactory';
+
+const NODE_WIDTH = 216;
+const NODE_HEIGHT = 92;
+
+const getCompactColumnCount = () => (typeof window !== 'undefined' && window.innerWidth < 640 ? 2 : 3);
+
+const pairKey = (from: string, to: string) => `${from}->${to}`;
+
+const selectVisibleEdges = (planGraph: PlanGraph) => {
+  const controlEdges = planGraph.edges.filter((edge) => edge.type === 'control');
+  const controlPairs = new Set(controlEdges.map((edge) => pairKey(edge.from, edge.to)));
+  const adjacency = controlEdges.reduce<Record<string, string[]>>((result, edge) => {
+    result[edge.from] = [...(result[edge.from] ?? []), edge.to];
+    return result;
+  }, {});
+
+  const hasControlPath = (from: string, to: string) => {
+    const queue = [...(adjacency[from] ?? [])];
+    const visited = new Set<string>();
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (!current || visited.has(current)) continue;
+      if (current === to) return true;
+      visited.add(current);
+      queue.push(...(adjacency[current] ?? []));
+    }
+    return false;
+  };
+
+  const dataEdges = planGraph.edges.filter(
+    (edge) =>
+      edge.type === 'data' &&
+      !controlPairs.has(pairKey(edge.from, edge.to)) &&
+      !hasControlPath(edge.from, edge.to),
+  );
+
+  return [...controlEdges, ...dataEdges].filter(
+    (edge, index, edges) =>
+      edges.findIndex((candidate) => pairKey(candidate.from, candidate.to) === pairKey(edge.from, edge.to)) === index,
+  );
+};
 
 export const graphTaskToTask = (task: GraphTask): Task => ({
   ID: task.id,
@@ -19,13 +60,6 @@ export const buildGraphLayout = (planGraph: PlanGraph): { nodes: Node[]; edges: 
 
   const levelMap: Record<string, number> = {};
   const laneOrder = ['librarian_agent', 'coder_agent', 'sandbox_agent', 'data_agent', 'general_agent'];
-  const laneOffsets: Record<string, number> = {
-    librarian_agent: 40,
-    coder_agent: 180,
-    sandbox_agent: 320,
-    data_agent: 460,
-    general_agent: 600,
-  };
   const tasksById = Object.fromEntries(planGraph.nodes.map((task) => [task.id, task]));
 
   const resolveLevel = (task: GraphTask): number => {
@@ -58,70 +92,91 @@ export const buildGraphLayout = (planGraph: PlanGraph): { nodes: Node[]; edges: 
     return counts;
   }, {});
   const useCompactLongChain = maxLevel >= 5 && Object.values(tasksPerLevel).every((count) => count === 1);
+  const maxTasksInLevel = Math.max(...Object.values(tasksPerLevel), 1);
+  const compactColumns = getCompactColumnCount();
 
-  const levelCounts: Record<string, number> = {};
-  sortedTasks.forEach((task) => {
+  const levelCounts: Record<number, number> = {};
+  sortedTasks.forEach((task, taskIndex) => {
     const level = resolveLevel(task);
-    const laneKey = task.assigned_to in laneOffsets ? task.assigned_to : 'general_agent';
-    const bucketKey = `${laneKey}-${level}`;
-    const stackIndex = levelCounts[bucketKey] || 0;
-    levelCounts[bucketKey] = stackIndex + 1;
+    const stackIndex = levelCounts[level] || 0;
+    levelCounts[level] = stackIndex + 1;
     const legacyTask = graphTaskToTask(task);
     const styleState = getTaskStyleByStatus(task.status);
 
     let position = {
-      x: 80 + level * 320,
-      y: laneOffsets[laneKey] + stackIndex * 110,
+      x: 48 + level * 276,
+      y: 48 + (stackIndex + (maxTasksInLevel - tasksPerLevel[level]) / 2) * 132,
     };
+    let sourcePosition = Position.Right;
+    let targetPosition = Position.Left;
+
     if (useCompactLongChain) {
-      const columns = 3;
-      const row = Math.floor(level / columns);
-      const naturalColumn = level % columns;
-      const column = row % 2 === 0 ? naturalColumn : columns - naturalColumn - 1;
+      const row = Math.floor(level / compactColumns);
+      const naturalColumn = level % compactColumns;
+      const column = row % 2 === 0 ? naturalColumn : compactColumns - naturalColumn - 1;
+      const startsNewRow = naturalColumn === 0 && row > 0;
+      const endsRow = naturalColumn === compactColumns - 1 && level < maxLevel;
+
       position = {
-        x: 40 + column * 280,
-        y: 270 + row * 160,
+        x: 48 + column * 268,
+        y: 48 + row * 148,
       };
+      targetPosition = startsNewRow ? Position.Top : row % 2 === 0 ? Position.Left : Position.Right;
+      sourcePosition = endsRow ? Position.Bottom : row % 2 === 0 ? Position.Right : Position.Left;
     }
 
     newNodes.push({
       id: task.id,
       position,
+      sourcePosition,
+      targetPosition,
+      className: 'scholar-task-node',
       data: {
         task: legacyTask,
         status: task.status,
+        step: taskIndex + 1,
         label: createTaskNodeLabel({
           assignedTo: task.assigned_to,
           taskName: task.name,
           status: task.status,
-          level,
+          step: taskIndex + 1,
         }),
       },
       style: {
         borderRadius: '8px',
         backgroundColor: styleState.backgroundColor,
-        border: '2px solid',
+        border: '1px solid',
         borderColor: styleState.borderColor,
-        boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+        boxShadow: '0 4px 14px rgb(15 23 42 / 0.07)',
         cursor: 'pointer',
-        width: 240,
-        minHeight: 112,
+        overflow: 'hidden',
+        padding: 0,
+        width: NODE_WIDTH,
+        minHeight: NODE_HEIGHT,
       },
     });
   });
 
-  planGraph.edges.forEach((edge) => {
+  selectVisibleEdges(planGraph).forEach((edge) => {
+    const targetStatus = tasksById[edge.to]?.status;
+    const isDataEdge = edge.type === 'data';
     newEdges.push({
       id: edge.id,
       source: edge.from,
       target: edge.to,
-      animated: edge.type === 'control',
+      type: 'smoothstep',
+      animated: targetStatus === 'in_progress',
       style: {
-        stroke: edge.type === 'data' ? '#c084fc' : '#94a3b8',
-        strokeWidth: edge.type === 'data' ? 1.5 : 2.5,
-        strokeDasharray: edge.type === 'data' ? '6 4' : undefined,
+        stroke: isDataEdge ? '#8b5cf6' : '#94a3b8',
+        strokeWidth: isDataEdge ? 1.5 : 2,
+        strokeDasharray: isDataEdge ? '5 5' : undefined,
       },
-      label: edge.type === 'data' ? 'data' : undefined,
+      markerEnd: {
+        type: MarkerType.ArrowClosed,
+        color: isDataEdge ? '#8b5cf6' : '#94a3b8',
+        width: 16,
+        height: 16,
+      },
     });
   });
 

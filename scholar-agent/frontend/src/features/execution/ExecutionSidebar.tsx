@@ -53,7 +53,7 @@ export function ExecutionSidebar(props: ExecutionSidebarProps) {
   return (
     <div
       style={{ width }}
-      className={`bg-white border-l border-gray-200 shadow-2xl flex flex-col z-20 transition-all duration-300 ${
+      className={`scholar-execution-sidebar z-20 flex flex-col border-l border-gray-200 bg-white shadow-2xl transition-all duration-300 ${
         isExpanded ? 'absolute inset-0' : 'relative'
       }`}
     >

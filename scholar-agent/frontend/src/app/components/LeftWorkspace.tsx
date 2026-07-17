@@ -19,7 +19,7 @@ function LeftWorkspaceShell(props: LeftWorkspaceShellProps) {
   return (
     <div
       style={{ width: `${widthPercent}%` }}
-      className="flex flex-col bg-white border-r border-gray-200 shadow-xl z-10 flex-shrink-0 transition-all duration-300 relative"
+      className="scholar-left-workspace relative z-10 flex flex-shrink-0 flex-col overflow-hidden border-r border-gray-200 bg-white shadow-xl transition-all duration-300"
     >
       <div className="p-4 border-b border-gray-200 bg-blue-600 text-white flex items-center justify-between">
         <div className="flex items-center gap-3">

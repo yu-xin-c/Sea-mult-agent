@@ -197,6 +197,7 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
                 assignedTo: updatedTask.AssignedTo,
                 taskName: updatedTask.Name,
                 status,
+                step: typeof n.data.step === 'number' ? n.data.step : undefined,
               }),
             },
             style: {
