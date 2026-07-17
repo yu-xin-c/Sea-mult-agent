@@ -186,6 +186,12 @@ SANDBOX_DOCKER_GPUS=all docker-compose up --build
 
 此时健康检查中的 `gpu_request` 应为 `all`，`gpu_runtime_available` 应为 `true`。沙箱镜像仍需自行包含任务所需的 CUDA/PyTorch 依赖；如果没有配置 NVIDIA runtime，健康检查会直接失败，不会悄悄降级到 CPU。
 
+需要反复运行论文 smoke test 时，可在 `backend.env` 中设置 `SANDBOX_DEFAULT_IMAGE`，使用预装依赖的运行时镜像，避免每次任务重新下载大型框架：
+
+```bash
+SANDBOX_DEFAULT_IMAGE=your-registry/pytorch-smoke:tag
+```
+
 ### HAI V100 远端验收
 
 2026-07-16 已在 Ubuntu 20.04、Docker 26.1.3、Tesla V100-SXM2-32GB 环境完成一次全链路 smoke test：
@@ -194,6 +200,19 @@ SANDBOX_DOCKER_GPUS=all docker-compose up --build
 - `/api/health` 返回 `backend.ok=true`、`sandbox.ok=true`、`gpu_runtime_available=true`。
 - 后端真实调用模型生成 Python 代码，沙箱内成功识别 V100 并执行矩阵乘法，结果为 `[[19, 22], [43, 50]]`。
 - 任务结束后临时容器正常清理；后端运行镜像已内置 CA 根证书，可正常校验 HTTPS 模型接口。
+
+### 轻量论文复现与消融
+
+2026-07-17 使用 ScholarAgent 对 **Attention Is All You Need** 运行了受控 smoke 实验：固定随机种子，对注意力头数、缩放项和残差连接进行结构消融。实验不下载 WMT14、不进行完整训练，也不以该结果宣称复现论文 BLEU。
+
+| 实验 | 运行范围 | 主要结论 |
+|------|----------|----------|
+| 真实仓库 smoke | 克隆 `harvardnlp/annotated-transformer`，执行 8 节点 DAG | `TestRealPaperReproductionFlow` 在 `73.37s` 内通过，受控前向约 `4.748ms` |
+| 多头数 `1/2/4/8` | 标准库 CPU 前向微基准 | 该微型配置中，4 头增至 8 头的平均延迟约增加 `1.79%` |
+| 移除 `1/sqrt(d_k)` 缩放 | 固定输入与权重 | 注意力熵约下降 `0.0048%` |
+| 移除残差连接 | 固定输入与权重 | 输出 L2 约下降 `99.23%` |
+
+完整指标、原始脚本与结构化结果见 [真实仓库 smoke 记录](scholar-agent/docs/experiments/2026-07-17_attention_repo_smoke.md) 和 [轻量结构消融记录](scholar-agent/docs/experiments/2026-07-17_attention_light_ablation.md)。这些结果用于验证规划、代码生成、沙箱执行和结果归档链路，不应外推为完整论文训练结果。
 
 ## 🛠️ 技术栈
 

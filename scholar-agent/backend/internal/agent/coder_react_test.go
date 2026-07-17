@@ -256,6 +256,18 @@ func TestNormalizeDependenciesForPython39_HandlesLegacyPaperRequirements(t *test
 	}
 }
 
+func TestConfiguredSandboxImage(t *testing.T) {
+	t.Setenv("SANDBOX_DEFAULT_IMAGE", "research/pytorch-smoke:2.0.1-cpu")
+	if got := configuredSandboxImage(); got != "research/pytorch-smoke:2.0.1-cpu" {
+		t.Fatalf("unexpected configured sandbox image: %q", got)
+	}
+
+	t.Setenv("SANDBOX_DEFAULT_IMAGE", "  ")
+	if got := configuredSandboxImage(); got != defaultSandboxImage {
+		t.Fatalf("expected default sandbox image, got %q", got)
+	}
+}
+
 func TestDetectPythonDependencies_FiltersExpandedStdlibSet(t *testing.T) {
 	code := `
 from __future__ import division

@@ -184,7 +184,7 @@ func (a *CoderAgent) initRealEinoChain() {
 		if !ok || containerID == "" {
 			logToContext(ctx, "[Warning] 无法获取长生命周期容器 ID，降级为单次执行模式")
 			// 创建临时沙箱执行
-			tempID, err := a.Sandbox.CreatePersistentSandbox(ctx, "temp", defaultSandboxImage, "")
+			tempID, err := a.Sandbox.CreatePersistentSandbox(ctx, "temp", configuredSandboxImage(), "")
 			if err != nil {
 				return "", fmt.Errorf("创建临时沙箱失败: %w", err)
 			}
@@ -297,7 +297,7 @@ func (a *CoderAgent) initMockEinoChain() {
 			return code, nil
 		}
 		// 临时执行环境
-		tempID, _ := a.Sandbox.CreatePersistentSandbox(ctx, "mock", defaultSandboxImage, "")
+		tempID, _ := a.Sandbox.CreatePersistentSandbox(ctx, "mock", configuredSandboxImage(), "")
 		defer a.Sandbox.CleanupSandbox(context.Background(), tempID)
 
 		// 同样写入文件执行，提高成功率
@@ -660,7 +660,7 @@ func (a *CoderAgent) prepareRuntime(ctx context.Context, task *models.Task) erro
 	}
 
 	mountPath := strings.TrimSpace(extractTaskInputLike(task, "workspace_path"))
-	sandboxID, err := a.Sandbox.CreatePersistentSandbox(ctx, task.ID, defaultSandboxImage, mountPath)
+	sandboxID, err := a.Sandbox.CreatePersistentSandbox(ctx, task.ID, configuredSandboxImage(), mountPath)
 	if err != nil {
 		task.Status = models.StatusFailed
 		task.Error = fmt.Sprintf("failed to create runtime sandbox: %v", err)
@@ -1304,7 +1304,7 @@ func (a *CoderAgent) executeCodeInSandbox(ctx context.Context, task *models.Task
 		}
 		image := sandboxID
 		if strings.TrimSpace(image) == "" {
-			image = defaultSandboxImage
+			image = configuredSandboxImage()
 		}
 		logToContext(ctx, "[%s] Running %s in sandbox image %s", a.Name, task.Name, image)
 		var err error
@@ -1887,6 +1887,13 @@ func filterStandardLibraryDependencies(items []string) []string {
 		filtered = append(filtered, item)
 	}
 	return filtered
+}
+
+func configuredSandboxImage() string {
+	if image := strings.TrimSpace(os.Getenv("SANDBOX_DEFAULT_IMAGE")); image != "" {
+		return image
+	}
+	return defaultSandboxImage
 }
 
 func (a *CoderAgent) validatePythonSyntaxInSandbox(ctx context.Context, sandboxID string, code string) error {

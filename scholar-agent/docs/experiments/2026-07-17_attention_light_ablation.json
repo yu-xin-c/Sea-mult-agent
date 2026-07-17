@@ -1,0 +1,118 @@
+{
+  "experiment": "Attention Is All You Need lightweight structural ablation",
+  "scope": "smoke",
+  "environment": {
+    "compute_device": "cpu",
+    "gpu_visible": true,
+    "gpu_name": "Tesla V100-SXM2-32GB",
+    "seed": 42,
+    "seq_len": 12,
+    "d_model": 48,
+    "repetitions": 5
+  },
+  "baseline": {
+    "heads": 4,
+    "scaling": true,
+    "residual": true,
+    "elapsed_ms": 28.34425400069449,
+    "l2": 12.038024899566194,
+    "attention_entropy": 3.5849468596139618
+  },
+  "configs": [
+    {
+      "heads": 1,
+      "scaling": true,
+      "residual": true,
+      "elapsed_ms": 27.17493399977684,
+      "output_l2": 12.038065343234917,
+      "attention_entropy": 3.584948076689949,
+      "change_vs_baseline": {
+        "elapsed_ms_pct": -4.125421684723119,
+        "output_l2_pct": 0.00033596598329691966,
+        "attention_entropy_pct": 0.00003394962421379821
+      }
+    },
+    {
+      "heads": 2,
+      "scaling": true,
+      "residual": true,
+      "elapsed_ms": 27.49710780044552,
+      "output_l2": 12.038054344516322,
+      "attention_entropy": 3.5849476063969368,
+      "change_vs_baseline": {
+        "elapsed_ms_pct": -2.9887757858372805,
+        "output_l2_pct": 0.0002445995117435873,
+        "attention_entropy_pct": 0.000020831075166745618
+      }
+    },
+    {
+      "heads": 4,
+      "scaling": true,
+      "residual": true,
+      "elapsed_ms": 27.924751600949094,
+      "output_l2": 12.038024899566194,
+      "attention_entropy": 3.5849468596139618,
+      "change_vs_baseline": {
+        "elapsed_ms_pct": -1.4800262505942778,
+        "output_l2_pct": 0.0,
+        "attention_entropy_pct": 0.0
+      }
+    },
+    {
+      "heads": 8,
+      "scaling": true,
+      "residual": true,
+      "elapsed_ms": 28.852417395683005,
+      "output_l2": 12.038023081870499,
+      "attention_entropy": 3.5849462947228004,
+      "change_vs_baseline": {
+        "elapsed_ms_pct": 1.792826845878757,
+        "output_l2_pct": -0.00001509961734137734,
+        "attention_entropy_pct": -0.000015757309202177522
+      }
+    },
+    {
+      "heads": 4,
+      "scaling": false,
+      "residual": true,
+      "elapsed_ms": 29.019558397703804,
+      "output_l2": 12.037955977162484,
+      "attention_entropy": 3.584774683620546,
+      "change_vs_baseline": {
+        "elapsed_ms_pct": 2.3825089804542636,
+        "output_l2_pct": -0.0005725391356523634,
+        "attention_entropy_pct": -0.0048027488316644724
+      }
+    },
+    {
+      "heads": 4,
+      "scaling": true,
+      "residual": false,
+      "elapsed_ms": 28.03069960209541,
+      "output_l2": 0.0926161141663157,
+      "attention_entropy": 3.5849468596139618,
+      "change_vs_baseline": {
+        "elapsed_ms_pct": -1.1062362007883433,
+        "output_l2_pct": -99.23063696130374,
+        "attention_entropy_pct": 0.0
+      }
+    },
+    {
+      "heads": 4,
+      "scaling": false,
+      "residual": false,
+      "elapsed_ms": 28.46159859909676,
+      "output_l2": 0.09265153116592367,
+      "attention_entropy": 3.584774683620546,
+      "change_vs_baseline": {
+        "elapsed_ms_pct": 0.4139978367375413,
+        "output_l2_pct": -99.23034275191387,
+        "attention_entropy_pct": -0.0048027488316644724
+      }
+    }
+  ],
+  "limitations": [
+    "Standard-library implementation executed on CPU inside a GPU-visible sandbox.",
+    "This is a structural forward-pass smoke test, not WMT14 training or BLEU reproduction."
+  ]
+}

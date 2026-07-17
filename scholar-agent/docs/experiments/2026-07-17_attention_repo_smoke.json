@@ -1,0 +1,39 @@
+{
+  "experiment": "Attention Is All You Need repository smoke reproduction",
+  "date": "2026-07-17",
+  "status": "passed",
+  "test": "TestRealPaperReproductionFlow",
+  "dag_elapsed_seconds": 73.37,
+  "repository": "https://github.com/harvardnlp/annotated-transformer",
+  "reproduction_mode": "smoke",
+  "runtime": {
+    "python_image": "scholar-python-pytorch-smoke:2.0.1-cpu",
+    "torch_version": "2.0.1+cpu",
+    "compute_device": "cpu",
+    "gpu_runtime_available": true
+  },
+  "metrics": {
+    "status": "ok",
+    "reproduction_scope": "bounded_forward_pass",
+    "architecture": "Transformer encoder-decoder",
+    "model_config": {
+      "batch_size": 2,
+      "d_ff": 128,
+      "d_model": 64,
+      "dropout_proba": 0.0,
+      "n_blocks": 2,
+      "n_heads": 4,
+      "src_seq_len": 8,
+      "trg_seq_len": 7
+    },
+    "parameter_count": 167680,
+    "output_shape": [2, 7, 64],
+    "output_abs_mean": 0.795336,
+    "forward_elapsed_ms": 4.748
+  },
+  "limitations": [
+    "The repository was cloned and scanned, but the bounded runner used torch.nn.Transformer instead of the repository training pipeline.",
+    "No WMT14 download, model training, or BLEU evaluation was performed.",
+    "The bounded runner used CPU PyTorch although the Docker sandbox GPU runtime was available."
+  ]
+}

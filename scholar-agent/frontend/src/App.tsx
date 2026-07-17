@@ -9,6 +9,7 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
+import { API_BASE_URL } from './config/env';
 
 // PDF Viewer Imports
 import { Viewer, Worker } from '@react-pdf-viewer/core';
@@ -254,7 +255,7 @@ export default function App() {
   const refreshServiceHealth = useCallback(async () => {
     setHealthLoading(true);
     try {
-      const response = await fetch('http://localhost:8080/api/health');
+      const response = await fetch(`${API_BASE_URL}/api/health`);
       if (!response.ok) throw new Error(`health check failed with HTTP ${response.status}`);
       const health = await response.json() as ServiceHealth;
       setServiceHealth(health);
@@ -350,7 +351,7 @@ export default function App() {
     try {
       if (isTaskRequest) {
         // 1. 任务编排逻辑 (Plan)
-        const response = await axios.post('http://localhost:8080/api/plan', {
+        const response = await axios.post(`${API_BASE_URL}/api/plan`, {
           intent: userPrompt
         });
 
@@ -373,7 +374,7 @@ export default function App() {
         setChatHistory(prev => [...prev, ...systemMessages]);
       } else {
         // 2. 简单问答逻辑 (Chat)
-        const response = await axios.post('http://localhost:8080/api/chat', {
+        const response = await axios.post(`${API_BASE_URL}/api/chat`, {
           message: userPrompt
         });
 
@@ -410,7 +411,7 @@ export default function App() {
     let latestResult = '';
     let receivedResult = false;
     try {
-        const response = await fetch('http://localhost:8080/api/execute', {
+        const response = await fetch(`${API_BASE_URL}/api/execute`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -924,7 +925,7 @@ export default function App() {
                       <div className="flex gap-2 mt-1 animate-in fade-in slide-in-from-top-1 duration-300">
                         {msg.actions.includes('open_pdf') && (
                           <button
-                            onClick={() => setPdfUrl('http://localhost:8080/api/pdf-proxy?url=https%3A%2F%2Farxiv.org%2Fpdf%2F1706.03762.pdf')}
+                            onClick={() => setPdfUrl(`${API_BASE_URL}/api/pdf-proxy?url=https%3A%2F%2Farxiv.org%2Fpdf%2F1706.03762.pdf`)}
                             className="flex items-center gap-1 text-xs bg-white text-blue-600 border border-blue-200 px-3 py-1.5 rounded-full hover:bg-blue-50 shadow-sm transition-all active:scale-95"
                           >
                             <FileText className="w-3 h-3" />
