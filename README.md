@@ -17,11 +17,11 @@
 
 ## 🖥️ 界面预览
 
-ScholarAgent 当前主界面由左侧对话/资料区、右侧 DAG 执行图、节点执行面板组成。系统会在启动后自动检测后端与沙箱状态；当 Docker 沙箱不可用时，真实执行按钮会被禁用，避免误触发失败任务。
+ScholarAgent 当前主界面由左侧对话/资料区、右侧 DAG 执行图、节点执行面板组成。执行图仅突出主控制链和必要的数据依赖，自动合并重复连线，并通过节点编号、状态和 Agent 类型建立清晰的阅读顺序。
 
 ![ScholarAgent dashboard](scholar-agent/docs/assets/scholar-agent-dashboard.png)
 
-点击任一 DAG 节点后，可在右侧查看 Agent 类型、任务描述、执行日志、代码/报告/图表结果。长链任务会自动切换为紧凑看板布局，打开节点面板后会进一步压缩为适合详情态的两列布局。
+点击任一 DAG 节点后，可在右侧查看 Agent 类型、任务描述、执行日志、代码/报告/图表结果。长链任务会自动切换为紧凑的蛇形布局；移动端使用两列流程，并可在“对话 / 流程”标签页之间切换。
 
 ![ScholarAgent node execution panel](scholar-agent/docs/assets/scholar-agent-node-panel.png)
 
