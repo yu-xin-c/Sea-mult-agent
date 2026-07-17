@@ -208,11 +208,12 @@ SANDBOX_DEFAULT_IMAGE=your-registry/pytorch-smoke:tag
 | 实验 | 运行范围 | 主要结论 |
 |------|----------|----------|
 | 真实仓库 smoke | 克隆 `harvardnlp/annotated-transformer`，执行 8 节点 DAG | `TestRealPaperReproductionFlow` 在 `73.37s` 内通过，受控前向约 `4.748ms` |
+| V100 GPU 结构消融 | PyTorch CUDA 前向微基准 | 4 头增至 8 头延迟增加 `21.24%`；移除缩放后注意力熵下降 `84.61%` |
 | 多头数 `1/2/4/8` | 标准库 CPU 前向微基准 | 该微型配置中，4 头增至 8 头的平均延迟约增加 `1.79%` |
 | 移除 `1/sqrt(d_k)` 缩放 | 固定输入与权重 | 注意力熵约下降 `0.0048%` |
 | 移除残差连接 | 固定输入与权重 | 输出 L2 约下降 `99.23%` |
 
-完整指标、原始脚本与结构化结果见 [真实仓库 smoke 记录](scholar-agent/docs/experiments/2026-07-17_attention_repo_smoke.md) 和 [轻量结构消融记录](scholar-agent/docs/experiments/2026-07-17_attention_light_ablation.md)。这些结果用于验证规划、代码生成、沙箱执行和结果归档链路，不应外推为完整论文训练结果。
+完整指标、原始脚本与结构化结果见 [真实仓库 smoke 记录](scholar-agent/docs/experiments/2026-07-17_attention_repo_smoke.md)、[V100 GPU 结构消融](scholar-agent/docs/experiments/2026-07-17_attention_gpu_ablation.md) 和 [CPU 轻量结构消融](scholar-agent/docs/experiments/2026-07-17_attention_light_ablation.md)。这些结果用于验证规划、代码生成、沙箱执行和结果归档链路，不应外推为完整论文训练结果。
 
 ## 🛠️ 技术栈
 

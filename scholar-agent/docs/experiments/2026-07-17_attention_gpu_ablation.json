@@ -1,0 +1,184 @@
+{
+  "experiment": "Attention Is All You Need lightweight GPU structural ablation",
+  "scope": "forward_pass_smoke",
+  "environment": {
+    "torch_version": "2.6.0+cu124",
+    "cuda_version": "12.4",
+    "gpu_name": "Tesla V100-SXM2-32GB",
+    "seed": 42,
+    "batch_size": 16,
+    "seq_len": 128,
+    "d_model": 256,
+    "warmup_steps": 5,
+    "repetitions": 5,
+    "steps_per_repeat": 20
+  },
+  "baseline": {
+    "heads": 4,
+    "scaling": true,
+    "residual": true,
+    "elapsed_ms_median": 0.3206144094467163,
+    "elapsed_ms_samples": [
+      0.33408000469207766,
+      0.3220479965209961,
+      0.32046079635620117,
+      0.3206144094467163,
+      0.31994879245758057
+    ],
+    "output_l2": 731.78857421875,
+    "attention_entropy": 6.3005828857421875,
+    "change_vs_baseline": {
+      "elapsed_ms_pct": 0.0,
+      "output_l2_pct": 0.0,
+      "attention_entropy_pct": 0.0
+    }
+  },
+  "configs": [
+    {
+      "heads": 1,
+      "scaling": true,
+      "residual": true,
+      "elapsed_ms_median": 0.24499199390411378,
+      "elapsed_ms_samples": [
+        0.2507263898849487,
+        0.25026559829711914,
+        0.24412159919738768,
+        0.24442880153656005,
+        0.24499199390411378
+      ],
+      "output_l2": 732.0684814453125,
+      "attention_entropy": 6.3026628494262695,
+      "change_vs_baseline": {
+        "elapsed_ms_pct": -23.586717662847406,
+        "output_l2_pct": 0.03824973994180301,
+        "attention_entropy_pct": 0.03301224222903019
+      }
+    },
+    {
+      "heads": 2,
+      "scaling": true,
+      "residual": true,
+      "elapsed_ms_median": 0.30259199142456056,
+      "elapsed_ms_samples": [
+        0.30300159454345704,
+        0.3042304039001465,
+        0.3008512020111084,
+        0.30259199142456056,
+        0.30008320808410643
+      ],
+      "output_l2": 731.9885864257812,
+      "attention_entropy": 6.299598693847656,
+      "change_vs_baseline": {
+        "elapsed_ms_pct": -5.621212737523873,
+        "output_l2_pct": 0.027331966373591032,
+        "attention_entropy_pct": -0.015620648317450322
+      }
+    },
+    {
+      "heads": 4,
+      "scaling": true,
+      "residual": true,
+      "elapsed_ms_median": 0.3206144094467163,
+      "elapsed_ms_samples": [
+        0.33408000469207766,
+        0.3220479965209961,
+        0.32046079635620117,
+        0.3206144094467163,
+        0.31994879245758057
+      ],
+      "output_l2": 731.78857421875,
+      "attention_entropy": 6.3005828857421875,
+      "change_vs_baseline": {
+        "elapsed_ms_pct": 0.0,
+        "output_l2_pct": 0.0,
+        "attention_entropy_pct": 0.0
+      }
+    },
+    {
+      "heads": 8,
+      "scaling": true,
+      "residual": true,
+      "elapsed_ms_median": 0.38871040344238283,
+      "elapsed_ms_samples": [
+        0.4019199848175049,
+        0.3901439905166626,
+        0.3886080026626587,
+        0.38871040344238283,
+        0.3886080026626587
+      ],
+      "output_l2": 731.7637939453125,
+      "attention_entropy": 6.298700332641602,
+      "change_vs_baseline": {
+        "elapsed_ms_pct": 21.23921819770348,
+        "output_l2_pct": -0.0033862613206218977,
+        "attention_entropy_pct": -0.029879030793262536
+      }
+    },
+    {
+      "heads": 4,
+      "scaling": false,
+      "residual": true,
+      "elapsed_ms_median": 0.2910720109939575,
+      "elapsed_ms_samples": [
+        0.29091839790344237,
+        0.2910720109939575,
+        0.29035520553588867,
+        0.29127678871154783,
+        0.2919424057006836
+      ],
+      "output_l2": 943.5482177734375,
+      "attention_entropy": 0.9697014689445496,
+      "change_vs_baseline": {
+        "elapsed_ms_pct": -9.214307773546441,
+        "output_l2_pct": 28.937271093739053,
+        "attention_entropy_pct": -84.60933715928218
+      }
+    },
+    {
+      "heads": 4,
+      "scaling": true,
+      "residual": false,
+      "elapsed_ms_median": 0.29137918949127195,
+      "elapsed_ms_samples": [
+        0.2915328025817871,
+        0.2894848108291626,
+        0.2915328025817871,
+        0.2899456024169922,
+        0.29137918949127195
+      ],
+      "output_l2": 112.2665023803711,
+      "attention_entropy": 6.3005828857421875,
+      "change_vs_baseline": {
+        "elapsed_ms_pct": -9.118498449865536,
+        "output_l2_pct": -84.6586150241242,
+        "attention_entropy_pct": 0.0
+      }
+    },
+    {
+      "heads": 4,
+      "scaling": false,
+      "residual": false,
+      "elapsed_ms_median": 0.28124160766601564,
+      "elapsed_ms_samples": [
+        0.2811392068862915,
+        0.2820607900619507,
+        0.280678391456604,
+        0.28124160766601564,
+        0.28175361156463624
+      ],
+      "output_l2": 606.5908813476562,
+      "attention_entropy": 0.9697014689445496,
+      "change_vs_baseline": {
+        "elapsed_ms_pct": -12.280421784113276,
+        "output_l2_pct": -17.10845144101266,
+        "attention_entropy_pct": -84.60933715928218
+      }
+    }
+  ],
+  "wall_time_seconds": 0.3877298831939697,
+  "limitations": [
+    "Synthetic fixed input and weights; no model training or dataset download.",
+    "This is not a WMT14 or BLEU reproduction.",
+    "Latency is a single-V100 microbenchmark and should not be generalized to training throughput."
+  ]
+}
