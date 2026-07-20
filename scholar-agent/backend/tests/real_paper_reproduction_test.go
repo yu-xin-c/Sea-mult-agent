@@ -29,18 +29,21 @@ func TestRealPaperReproductionFlow(t *testing.T) {
 	defer cancel()
 
 	intent := models.IntentContext{
-		RawIntent:       "请复现论文《Attention Is All You Need》，通过 Papers with Code 找到真实开源实现，准备环境运行一个最小实验，并和论文指标对比",
-		RewrittenIntent: "复现 Attention Is All You Need：通过 Papers with Code 找到真实开源实现，准备环境运行最小实验，并与论文指标对比。",
+		RawIntent:       "请使用 https://github.com/harvardnlp/annotated-transformer 复现 Attention Is All You Need，使用 smoke 模式运行轻量注意力消融，不要执行 WMT14 完整训练。",
+		RewrittenIntent: "使用 harvardnlp/annotated-transformer 以 smoke 模式复现 Attention Is All You Need，并运行轻量注意力消融。",
 		IntentType:      "Paper_Reproduction",
 		Entities: map[string]any{
 			"paper_title":        "Attention Is All You Need",
 			"paper_search_query": "Attention Is All You Need",
 			"paper_method_name":  "Transformer",
+			"preferred_repo_url": "https://github.com/harvardnlp/annotated-transformer",
+			"smoke_reproduction": true,
 			"needs_benchmark":    true,
 			"needs_report":       true,
 		},
 		Constraints: map[string]any{
-			"source": "Papers with Code",
+			"source":            "explicit_repository",
+			"reproduction_mode": "smoke",
 		},
 		Confidence: 0.95,
 		Source:     "test",
@@ -101,6 +104,16 @@ func TestRealPaperReproductionFlow(t *testing.T) {
 	}
 	if _, ok := finalPlan.Artifacts["comparison_report"]; !ok {
 		t.Fatal("expected comparison_report artifact")
+	}
+	repoArtifact := finalPlan.Artifacts["repo_url"]
+	if got := strings.TrimSuffix(strings.TrimSpace(repoArtifact.Value), ".git"); got != "https://github.com/harvardnlp/annotated-transformer" {
+		t.Fatalf("selected repository=%q", got)
+	}
+	if strings.TrimSpace(finalPlan.Artifacts["run_metrics"].Value) == "" {
+		t.Fatal("run_metrics artifact is empty")
+	}
+	if strings.TrimSpace(finalPlan.Artifacts["comparison_report"].Value) == "" {
+		t.Fatal("comparison_report artifact is empty")
 	}
 }
 

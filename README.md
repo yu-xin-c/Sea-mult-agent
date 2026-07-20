@@ -14,6 +14,8 @@
 
 </div>
 
+![Sea-Mult-Agent architecture](ArchitectureDiagram.png)
+
 Sea-Mult-Agent 面向论文阅读、代码仓库发现、环境准备、受控实验和结果分析等科研工作流。用户提交研究目标后，Planner 会生成 DAG，Scheduler 按依赖调度 Librarian、Coder、Sandbox 和 Data 等角色，并通过 SSE 将日志、状态和结构化产物实时推送到前端。
 
 > [!NOTE]
@@ -121,8 +123,6 @@ React Workbench -- REST --> Go API / Intent Router
                            Logs / Metrics / Artifacts
 ```
 
-![Sea-Mult-Agent architecture](ArchitectureDiagram.png)
-
 ### Core Components
 
 | 组件 | 目录 | 职责 |
@@ -186,7 +186,7 @@ cd scholar-agent
 
 make install       # 安装前端依赖并整理 Go modules
 make lint          # 前端 ESLint
-make test          # 后端与沙箱 Go tests
+make test          # 后端、沙箱与离线示例测试
 make build         # 构建前端、后端与沙箱
 make package       # 构建带嵌入式前端的单文件服务
 ```
@@ -204,6 +204,9 @@ Windows 用户可使用 `scholar-agent/scripts/windows/` 中的 PowerShell 脚�
 ## Reproduction
 
 项目包含可审计的轻量论文复现记录，用于验证 ScholarAgent 的执行链和结构行为，不替代论文完整训练结果。
+
+从 [`examples/paper-reproduction`](scholar-agent/examples/paper-reproduction/) 开始，可以通过 Web API
+重跑同一条项目原生链路，并自动验收 DAG 状态、仓库选择、关键 Artifact 和事件历史。
 
 | Record | Execution Boundary | Result |
 |---|---|---|
@@ -227,6 +230,7 @@ Sea-mult-agent/
     ├── frontend/                # React + TypeScript 工作台
     ├── docker-sandbox/          # 独立 Go Docker 沙箱服务
     ├── ai-services/             # 可选 Python 服务
+    ├── examples/                # 可运行示例与验收脚本
     ├── docs/                    # 文档与实验记录
     ├── scripts/                 # Unix / Windows 启动脚本
     ├── backend.env.example
@@ -238,6 +242,7 @@ Sea-mult-agent/
 
 - [本地启动指南](scholar-agent/docs/local_startup_guide.md)
 - [用户手册](scholar-agent/docs/user_manual.md)
+- [可运行示例](scholar-agent/examples/)
 - [前后端项目结构](scholar-agent/docs/project_structure_frontend_backend.md)
 - [规划与调度设计](scholar-agent/docs/plan/)
 - [论文仓库发现](scholar-agent/docs/papers_with_code/)
