@@ -60,7 +60,7 @@ export const buildGraphLayout = (planGraph: PlanGraph): { nodes: Node[]; edges: 
   const newEdges: Edge[] = [];
 
   const levelMap: Record<string, number> = {};
-  const laneOrder = ['librarian_agent', 'coder_agent', 'benchmark_adapter_agent', 'sandbox_agent', 'data_agent', 'general_agent'];
+  const laneOrder = ['librarian_agent', 'coder_agent', 'research_coding_agent', 'sandbox_agent', 'data_agent', 'general_agent'];
   const tasksById = Object.fromEntries(planGraph.nodes.map((task) => [task.id, task]));
 
   const resolveLevel = (task: GraphTask): number => {

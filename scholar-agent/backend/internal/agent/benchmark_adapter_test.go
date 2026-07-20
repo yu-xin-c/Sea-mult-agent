@@ -87,8 +87,8 @@ func TestBenchmarkAdapterGenerationUsesBoundedPlanAndScopedFiles(t *testing.T) {
 		"metrics": []string{"accuracy"}, "dependencies": []string{}, "reason": "uses repository prediction function",
 		"adapter_code": benchmarkTestAdapterCode("generated"),
 	})
-	agent := &BenchmarkAdapterAgent{
-		Name:      "benchmark_adapter_agent",
+	agent := &ResearchCodingAgent{
+		Name:      "research_coding_agent",
 		ChatModel: newSequentialBenchmarkModel(t, planJSON, string(generationPayload)),
 	}
 	task := &models.Task{

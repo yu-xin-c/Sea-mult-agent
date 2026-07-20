@@ -22,36 +22,36 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-func (a *BenchmarkAdapterAgent) executeAdapterPreflight(ctx context.Context, task *models.Task) error {
+func (a *ResearchCodingAgent) executeAdapterPreflight(ctx context.Context, task *models.Task) error {
 	if a == nil || a.Sandbox == nil {
-		return failBenchmarkTask(task, fmt.Errorf("benchmark sandbox is not configured"))
+		return failResearchCodingTask(task, fmt.Errorf("benchmark sandbox is not configured"))
 	}
 	workspacePath, err := benchmarkWorkspace(task)
 	if err != nil {
-		return failBenchmarkTask(task, err)
+		return failResearchCodingTask(task, err)
 	}
 	manifest, manifestJSON, err := benchmarkDatasetManifestFromTask(task)
 	if err != nil {
-		return failBenchmarkTask(task, err)
+		return failResearchCodingTask(task, err)
 	}
 	spec, _, err := benchmarkAdapterSpecFromTask(task)
 	if err != nil {
-		return failBenchmarkTask(task, err)
+		return failResearchCodingTask(task, err)
 	}
 	code := strings.TrimSpace(extractTaskInputLike(task, "benchmark_generated_code"))
 	if code == "" {
-		return failBenchmarkTask(task, fmt.Errorf("benchmark generated code input is required"))
+		return failResearchCodingTask(task, fmt.Errorf("benchmark generated code input is required"))
 	}
 	if err := validateBenchmarkAdapterCode(code); err != nil {
-		return failBenchmarkTask(task, err)
+		return failResearchCodingTask(task, err)
 	}
 	runtimeSession, err := benchmarkRuntimeSession(task)
 	if err != nil {
-		return failBenchmarkTask(task, err)
+		return failResearchCodingTask(task, err)
 	}
 	datasetRelative, err := locateMaterializedBenchmarkDataset(workspacePath, manifest.Name)
 	if err != nil {
-		return failBenchmarkTask(task, err)
+		return failResearchCodingTask(task, err)
 	}
 	maxAttempts := boundedTaskInt(task, "benchmark_max_preflight_attempts", 3, 1, 3)
 	attempts := make([]models.BenchmarkAttempt, 0, maxAttempts)
@@ -62,7 +62,7 @@ func (a *BenchmarkAdapterAgent) executeAdapterPreflight(ctx context.Context, tas
 		spec.RepairAttempts = attempt - 1
 		specJSONBytes, _ := json.Marshal(spec)
 		if _, _, err := writeBenchmarkAdapterFiles(workspacePath, code, specJSONBytes); err != nil {
-			return failBenchmarkTask(task, err)
+			return failResearchCodingTask(task, err)
 		}
 
 		report, runErr := a.runBenchmarkHarness(ctx, runtimeSession, workspacePath, datasetRelative, manifest, "preflight", 8)
@@ -78,7 +78,7 @@ func (a *BenchmarkAdapterAgent) executeAdapterPreflight(ctx context.Context, tas
 		entry.Repaired = attempt > 1
 		attempts = append(attempts, entry)
 		if strings.Contains(runErr.Error(), "repository files changed outside .scholar") {
-			return failBenchmarkTask(task, runErr)
+			return failResearchCodingTask(task, runErr)
 		}
 		if attempt == maxAttempts || a.ChatModel == nil {
 			break
@@ -95,7 +95,7 @@ func (a *BenchmarkAdapterAgent) executeAdapterPreflight(ctx context.Context, tas
 		report := models.BenchmarkHarnessReport{Status: "failed", Mode: "preflight", Attempts: attempts, Reason: "adapter did not pass bounded preflight"}
 		payload, _ := json.Marshal(report)
 		task.Result = string(payload)
-		return failBenchmarkTask(task, fmt.Errorf("benchmark adapter preflight failed after %d attempt(s)", len(attempts)))
+		return failResearchCodingTask(task, fmt.Errorf("benchmark adapter preflight failed after %d attempt(s)", len(attempts)))
 	}
 
 	validated.Attempts = attempts
@@ -107,13 +107,13 @@ func (a *BenchmarkAdapterAgent) executeAdapterPreflight(ctx context.Context, tas
 	validatedSpec, _ := json.Marshal(spec)
 	adapterPath, _, err := writeBenchmarkAdapterFiles(workspacePath, code, validatedSpec)
 	if err != nil {
-		return failBenchmarkTask(task, err)
+		return failResearchCodingTask(task, err)
 	}
 
 	task.Code = code
 	task.Result = string(validatedPayload)
 	task.Status = models.StatusCompleted
-	setBenchmarkArtifacts(task, map[string]string{
+	setResearchCodingArtifacts(task, map[string]string{
 		"validated_benchmark_adapter_spec":   string(validatedSpec),
 		"validated_benchmark_generated_code": code,
 		"validated_benchmark_code_file_path": adapterPath,
@@ -122,40 +122,40 @@ func (a *BenchmarkAdapterAgent) executeAdapterPreflight(ctx context.Context, tas
 	return nil
 }
 
-func (a *BenchmarkAdapterAgent) executeBenchmark(ctx context.Context, task *models.Task) error {
+func (a *ResearchCodingAgent) executeBenchmark(ctx context.Context, task *models.Task) error {
 	if a == nil || a.Sandbox == nil {
-		return failBenchmarkTask(task, fmt.Errorf("benchmark sandbox is not configured"))
+		return failResearchCodingTask(task, fmt.Errorf("benchmark sandbox is not configured"))
 	}
 	workspacePath, err := benchmarkWorkspace(task)
 	if err != nil {
-		return failBenchmarkTask(task, err)
+		return failResearchCodingTask(task, err)
 	}
 	manifest, _, err := benchmarkDatasetManifestFromTask(task)
 	if err != nil {
-		return failBenchmarkTask(task, err)
+		return failResearchCodingTask(task, err)
 	}
 	spec, _, err := benchmarkAdapterSpecFromTask(task)
 	if err != nil {
-		return failBenchmarkTask(task, err)
+		return failResearchCodingTask(task, err)
 	}
 	if spec.Status != "preflight_passed" {
-		return failBenchmarkTask(task, fmt.Errorf("benchmark adapter has not passed preflight"))
+		return failResearchCodingTask(task, fmt.Errorf("benchmark adapter has not passed preflight"))
 	}
 	code := strings.TrimSpace(extractTaskInputLike(task, "validated_benchmark_generated_code"))
 	if err := validateBenchmarkAdapterCode(code); err != nil {
-		return failBenchmarkTask(task, err)
+		return failResearchCodingTask(task, err)
 	}
 	codeHash := sha256.Sum256([]byte(code))
 	if hex.EncodeToString(codeHash[:]) != spec.AdapterCodeSHA256 {
-		return failBenchmarkTask(task, fmt.Errorf("validated adapter code hash mismatch"))
+		return failResearchCodingTask(task, fmt.Errorf("validated adapter code hash mismatch"))
 	}
 	runtimeSession, err := benchmarkRuntimeSession(task)
 	if err != nil {
-		return failBenchmarkTask(task, err)
+		return failResearchCodingTask(task, err)
 	}
 	datasetRelative, err := locateMaterializedBenchmarkDataset(workspacePath, manifest.Name)
 	if err != nil {
-		return failBenchmarkTask(task, err)
+		return failResearchCodingTask(task, err)
 	}
 	limit := boundedTaskInt(task, "benchmark_max_samples", benchmarkMinInt(manifest.RowCount, 1000), 1, 100000)
 	if limit > manifest.RowCount {
@@ -163,19 +163,19 @@ func (a *BenchmarkAdapterAgent) executeBenchmark(ctx context.Context, task *mode
 	}
 	report, err := a.runBenchmarkHarness(ctx, runtimeSession, workspacePath, datasetRelative, manifest, "run", limit)
 	if err != nil {
-		return failBenchmarkTask(task, fmt.Errorf("benchmark execution failed: %w", err))
+		return failResearchCodingTask(task, fmt.Errorf("benchmark execution failed: %w", err))
 	}
 	payload, _ := json.Marshal(report)
 	metricsPayload, _ := json.Marshal(report.Metrics)
 	runManifestPath, _ := benchmarkPathInWorkspace(workspacePath, benchmarkAdapterDirectory+"/run/run_manifest.json")
 	runManifest, err := readRegularBenchmarkFile(runManifestPath, "run_manifest.json", 1024*1024)
 	if err != nil {
-		return failBenchmarkTask(task, err)
+		return failResearchCodingTask(task, err)
 	}
 
 	task.Result = string(payload)
 	task.Status = models.StatusCompleted
-	setBenchmarkArtifacts(task, map[string]string{
+	setResearchCodingArtifacts(task, map[string]string{
 		"benchmark_run_metrics":      string(metricsPayload),
 		"benchmark_run_manifest":     string(runManifest),
 		"benchmark_predictions_path": report.PredictionsPath,
@@ -184,27 +184,27 @@ func (a *BenchmarkAdapterAgent) executeBenchmark(ctx context.Context, task *mode
 	return nil
 }
 
-func (a *BenchmarkAdapterAgent) executeBenchmarkValidation(ctx context.Context, task *models.Task) error {
+func (a *ResearchCodingAgent) executeBenchmarkValidation(ctx context.Context, task *models.Task) error {
 	manifest, _, err := benchmarkDatasetManifestFromTask(task)
 	if err != nil {
-		return failBenchmarkTask(task, err)
+		return failResearchCodingTask(task, err)
 	}
 	metricsRaw := strings.TrimSpace(extractTaskInputLike(task, "benchmark_run_metrics"))
 	runManifestRaw := strings.TrimSpace(extractTaskInputLike(task, "benchmark_run_manifest"))
 	metrics, err := decodeBenchmarkMetrics([]byte(metricsRaw))
 	if err != nil {
-		return failBenchmarkTask(task, fmt.Errorf("invalid benchmark metrics: %w", err))
+		return failResearchCodingTask(task, fmt.Errorf("invalid benchmark metrics: %w", err))
 	}
 	var runManifest models.BenchmarkRunManifest
 	if err := json.Unmarshal([]byte(runManifestRaw), &runManifest); err != nil {
-		return failBenchmarkTask(task, fmt.Errorf("invalid benchmark run manifest: %w", err))
+		return failResearchCodingTask(task, fmt.Errorf("invalid benchmark run manifest: %w", err))
 	}
 	if runManifest.Status != "ok" || runManifest.DatasetSHA256 != manifest.SHA256 || runManifest.SampleCount <= 0 || runManifest.SampleCount > manifest.RowCount {
-		return failBenchmarkTask(task, fmt.Errorf("benchmark run manifest does not match the dataset contract"))
+		return failResearchCodingTask(task, fmt.Errorf("benchmark run manifest does not match the dataset contract"))
 	}
 	for name, value := range metrics {
 		if math.IsNaN(value) || math.IsInf(value, 0) || math.Abs(value) > 1e12 {
-			return failBenchmarkTask(task, fmt.Errorf("metric %s is outside the accepted numeric range", name))
+			return failResearchCodingTask(task, fmt.Errorf("metric %s is outside the accepted numeric range", name))
 		}
 	}
 	report := map[string]any{
@@ -222,7 +222,7 @@ func (a *BenchmarkAdapterAgent) executeBenchmarkValidation(ctx context.Context, 
 	metricsPayload, _ := json.Marshal(metrics)
 	task.Result = string(reportPayload)
 	task.Status = models.StatusCompleted
-	setBenchmarkArtifacts(task, map[string]string{
+	setResearchCodingArtifacts(task, map[string]string{
 		"benchmark_metrics":           string(metricsPayload),
 		"benchmark_validation_report": string(reportPayload),
 	})
@@ -230,7 +230,7 @@ func (a *BenchmarkAdapterAgent) executeBenchmarkValidation(ctx context.Context, 
 	return nil
 }
 
-func (a *BenchmarkAdapterAgent) runBenchmarkHarness(ctx context.Context, sandboxID, workspacePath, datasetRelative string, manifest models.DatasetManifest, mode string, limit int) (models.BenchmarkHarnessReport, error) {
+func (a *ResearchCodingAgent) runBenchmarkHarness(ctx context.Context, sandboxID, workspacePath, datasetRelative string, manifest models.DatasetManifest, mode string, limit int) (models.BenchmarkHarnessReport, error) {
 	outputRelative := benchmarkAdapterDirectory + "/" + mode
 	outputPath, err := benchmarkPathInWorkspace(workspacePath, outputRelative)
 	if err != nil {
@@ -307,7 +307,7 @@ func (a *BenchmarkAdapterAgent) runBenchmarkHarness(ctx context.Context, sandbox
 	return validateBenchmarkOutputDirectory(workspacePath, outputRelative, manifest, limit, mode)
 }
 
-func (a *BenchmarkAdapterAgent) repairBenchmarkAdapter(ctx context.Context, manifestJSON, specJSON, code, failure string) (string, string, error) {
+func (a *ResearchCodingAgent) repairBenchmarkAdapter(ctx context.Context, manifestJSON, specJSON, code, failure string) (string, string, error) {
 	message, err := a.ChatModel.Generate(ctx, []*schema.Message{
 		{Role: schema.System, Content: prompts.BenchmarkAdapterSystemPrompt},
 		{Role: schema.User, Content: prompts.BenchmarkAdapterRepairUserPrompt(manifestJSON, specJSON, code, truncateBenchmarkText(failure, 12000))},

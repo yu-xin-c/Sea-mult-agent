@@ -29,7 +29,7 @@ type ExecutionAction =
   | { type: 'reset' };
 
 const initialNodeExecutionState: NodeExecutionState = { logs: '', result: '', code: '', imageBase64: '' };
-const reportAgents = new Set(['librarian_agent', 'data_agent', 'benchmark_adapter_agent']);
+const reportAgents = new Set(['librarian_agent', 'data_agent', 'research_coding_agent']);
 const isReportAgent = (assignedTo: string) => reportAgents.has(assignedTo);
 
 const updateNodeStatus = (node: Node, status: string): Node => {

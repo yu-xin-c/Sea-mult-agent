@@ -33,7 +33,8 @@ Sea-Mult-Agent 面向论文阅读、代码仓库发现、环境准备、受控�
 | **仓库优先的论文复现** | 发现或使用指定 GitHub 仓库，准备依赖并运行受控 smoke 实验 |
 | **预算受限的消融设计** | ToT 评估参数、模块、数据规模、随机种子和运行成本候选，只执行预算内的高价值组合 |
 | **研究材料上传** | 在工作台附加论文、配置、笔记和小型数据文件，按用户隔离并传入复现流程 |
-| **自有数据仓库评测** | Benchmark Adapter 子 Agent 为指定公开仓库生成受限适配器，经 8 条预检、ReAct 修复和指标重算后运行用户数据 |
+| **科研仓库 Coding Agent** | 对论文代码做受限调试、补丁回滚和重跑，也能为自有数据生成仓库 Benchmark 适配器 |
+| **自有数据仓库评测** | Research Coding Agent 生成受限适配器，经 8 条预检、ReAct 修复和指标重算后运行用户数据 |
 | **实时可观测执行** | SSE 推送计划、节点、日志和 Artifact 事件，前端同步展示执行状态 |
 | **可靠执行与治理** | 任务租约、迟到结果隔离、取消/重试、持久化恢复、预算和人工审批 |
 | **研究工作台** | 集成对话、PDF 阅读、DAG 看板、节点日志、代码、报告与图表视图 |
@@ -107,7 +108,7 @@ Attention Is All You Need，使用 smoke 模式运行轻量注意力消融，
 输入列是 review，标签列是 label，最多运行 500 条样本。
 ```
 
-系统会分析数据契约、克隆仓库、生成独立适配器，并在正式运行前用最多 8 条样本预检。分类和回归指标会根据逐样本预测由 Go harness 重算。完整契约和限制见[自定义数据 Benchmark Adapter Agent](scholar-agent/docs/custom_benchmark_adapter_agent.md)。
+系统会分析数据契约、克隆仓库、生成独立适配器，并在正式运行前用最多 8 条样本预检。分类和回归指标会根据逐样本预测由 Go harness 重算。论文代码运行失败时，同一 Agent 还能在有限源码上下文中生成最小补丁并重跑。完整契约和限制见[Research Coding Agent](scholar-agent/docs/research_coding_agent.md)。
 
 ## Interface
 
@@ -130,7 +131,7 @@ React Workbench -- REST --> Go API / Intent Router
                                       |
                          +---------+---------+---------+
                          |         |         |         |
-                    Librarian    Coder   BenchmarkAdapter   Data
+                    Librarian    Coder   ResearchCoding   Data
                          |         |         |
                          +---------+----+----+
                                         |
@@ -157,7 +158,7 @@ React Workbench -- REST --> Go API / Intent Router
 | **Coder** | 仓库发现、代码准备、依赖分析和修复 |
 | **Sandbox** | 运行时准备、依赖安装与隔离实验执行 |
 | **Data** | 指标汇总、论文声明对比、报告与图表生成 |
-| **Benchmark Adapter** | 自有数据分析、仓库入口适配、受限预检修复和评测证据校验 |
+| **Research Coding** | 论文仓库代码调试、受限补丁与重跑，以及自有数据 Benchmark 适配和证据校验 |
 | **Chat** | 通用问答与轻量任务入口 |
 
 ## API
@@ -268,6 +269,7 @@ Sea-mult-agent/
 
 ## Documentation
 
+- [项目架构](scholar-agent/docs/project_architecture.md)
 - [本地启动指南](scholar-agent/docs/local_startup_guide.md)
 - [用户手册](scholar-agent/docs/user_manual.md)
 - [可运行示例](scholar-agent/examples/)
@@ -275,7 +277,7 @@ Sea-mult-agent/
 - [规划与调度设计](scholar-agent/docs/plan/)
 - [Agent Runtime P0/P1](scholar-agent/docs/agent_runtime_p0_p1.md)
 - [受限 ToT 消融与文件上传](scholar-agent/docs/tot_ablation_and_uploads.md)
-- [自定义数据 Benchmark Adapter Agent](scholar-agent/docs/custom_benchmark_adapter_agent.md)
+- [Research Coding Agent](scholar-agent/docs/research_coding_agent.md)
 - [论文仓库发现](scholar-agent/docs/papers_with_code/)
 - [意图识别与评测](scholar-agent/docs/intent/)
 - [贡献指南](scholar-agent/docs/CONTRIBUTING.md)

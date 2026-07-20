@@ -138,7 +138,7 @@ func TestCollectPaperSearchFields_ExtractsQuotedTitle(t *testing.T) {
 }
 
 func TestDirectBenchmarkTasksReuseDAGRuntime(t *testing.T) {
-	if shouldAllocateDirectSandbox(&models.Task{AssignedTo: "benchmark_adapter_agent", Type: "dataset_profile"}) {
+	if shouldAllocateDirectSandbox(&models.Task{AssignedTo: "research_coding_agent", Type: "dataset_profile"}) {
 		t.Fatal("dataset profile should not allocate an unrelated direct sandbox")
 	}
 	if !shouldAllocateDirectSandbox(&models.Task{AssignedTo: "sandbox_agent", Type: "execute_code"}) {

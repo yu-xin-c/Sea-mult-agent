@@ -14,9 +14,7 @@ import (
 
 	"scholar-agent-backend/internal/models"
 	"scholar-agent-backend/internal/prompts"
-	"scholar-agent-backend/internal/sandbox"
 
-	openaiModel "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/schema"
 )
 
@@ -28,18 +26,6 @@ const (
 	benchmarkMaxContextPerFile = 12 * 1024
 	benchmarkMaxContextBytes   = 80 * 1024
 )
-
-type benchmarkSandbox interface {
-	ExecCommandStream(ctx context.Context, sandboxID string, cmd []string, onChunk func(stream string, line string)) (*sandbox.PythonRunResponse, error)
-}
-
-// BenchmarkAdapterAgent is a bounded coding harness for adapting cloned repositories
-// to user-provided datasets. It owns generation, preflight repair, execution, and validation.
-type BenchmarkAdapterAgent struct {
-	Name      string
-	ChatModel *openaiModel.ChatModel
-	Sandbox   benchmarkSandbox
-}
 
 type benchmarkAdapterGenerationResponse struct {
 	Status       string   `json:"status"`
@@ -57,54 +43,24 @@ type benchmarkAdapterRepairResponse struct {
 	Reason      string `json:"reason"`
 }
 
-func NewBenchmarkAdapterAgent(coder *CoderAgent) *BenchmarkAdapterAgent {
-	agent := &BenchmarkAdapterAgent{Name: "benchmark_adapter_agent"}
-	if coder != nil {
-		agent.ChatModel = coder.ChatModel
-		agent.Sandbox = coder.Sandbox
-	}
-	return agent
-}
-
-func (a *BenchmarkAdapterAgent) ExecuteTask(ctx context.Context, task *models.Task, _ map[string]interface{}) error {
-	if task == nil {
-		return fmt.Errorf("task is nil")
-	}
-	logToContext(ctx, "[%s] executing %s", a.Name, task.Type)
-	switch task.Type {
-	case "dataset_profile":
-		return a.executeDatasetProfile(ctx, task)
-	case "benchmark_adapter_generate":
-		return a.executeAdapterGeneration(ctx, task)
-	case "benchmark_adapter_preflight":
-		return a.executeAdapterPreflight(ctx, task)
-	case "benchmark_execute":
-		return a.executeBenchmark(ctx, task)
-	case "benchmark_validate":
-		return a.executeBenchmarkValidation(ctx, task)
-	default:
-		return failBenchmarkTask(task, fmt.Errorf("unsupported benchmark adapter task type %q", task.Type))
-	}
-}
-
-func (a *BenchmarkAdapterAgent) executeAdapterGeneration(ctx context.Context, task *models.Task) error {
+func (a *ResearchCodingAgent) executeAdapterGeneration(ctx context.Context, task *models.Task) error {
 	if a == nil || a.ChatModel == nil {
-		return failBenchmarkTask(task, fmt.Errorf("benchmark adapter model is not configured"))
+		return failResearchCodingTask(task, fmt.Errorf("benchmark adapter model is not configured"))
 	}
 	workspacePath, err := benchmarkWorkspace(task)
 	if err != nil {
-		return failBenchmarkTask(task, err)
+		return failResearchCodingTask(task, err)
 	}
 	manifest, manifestJSON, err := benchmarkDatasetManifestFromTask(task)
 	if err != nil {
-		return failBenchmarkTask(task, err)
+		return failResearchCodingTask(task, err)
 	}
 	if manifest.RequiresConfirmation {
-		return failBenchmarkTask(task, fmt.Errorf("dataset column mapping is ambiguous; provide input and label columns explicitly"))
+		return failResearchCodingTask(task, fmt.Errorf("dataset column mapping is ambiguous; provide input and label columns explicitly"))
 	}
 	repositoryContext, err := collectBenchmarkRepositoryContext(workspacePath, benchmarkTaskString(task, "repo_manifest"))
 	if err != nil {
-		return failBenchmarkTask(task, err)
+		return failResearchCodingTask(task, err)
 	}
 
 	planMessage, err := a.ChatModel.Generate(ctx, []*schema.Message{
@@ -112,14 +68,14 @@ func (a *BenchmarkAdapterAgent) executeAdapterGeneration(ctx context.Context, ta
 		{Role: schema.User, Content: prompts.BenchmarkAdapterPlanUserPrompt(repositoryContext, manifestJSON, task.Description)},
 	})
 	if err != nil {
-		return failBenchmarkTask(task, fmt.Errorf("adapter strategy selection failed: %w", err))
+		return failResearchCodingTask(task, fmt.Errorf("adapter strategy selection failed: %w", err))
 	}
 	plan, err := parseBenchmarkAdapterPlan(planMessage.Content)
 	if err != nil {
-		return failBenchmarkTask(task, err)
+		return failResearchCodingTask(task, err)
 	}
 	if plan.Status != "ready" {
-		return failBenchmarkTask(task, fmt.Errorf("repository adapter unsupported: %s", plan.Reason))
+		return failResearchCodingTask(task, fmt.Errorf("repository adapter unsupported: %s", plan.Reason))
 	}
 	planJSON, _ := json.Marshal(plan)
 
@@ -128,17 +84,17 @@ func (a *BenchmarkAdapterAgent) executeAdapterGeneration(ctx context.Context, ta
 		{Role: schema.User, Content: prompts.BenchmarkAdapterGenerationUserPrompt(repositoryContext, manifestJSON, string(planJSON), task.Description)},
 	})
 	if err != nil {
-		return failBenchmarkTask(task, fmt.Errorf("adapter code generation failed: %w", err))
+		return failResearchCodingTask(task, fmt.Errorf("adapter code generation failed: %w", err))
 	}
 	generation, err := parseBenchmarkAdapterGeneration(generationMessage.Content)
 	if err != nil {
-		return failBenchmarkTask(task, err)
+		return failResearchCodingTask(task, err)
 	}
 	if generation.Status != "ready" {
-		return failBenchmarkTask(task, fmt.Errorf("repository adapter unsupported: %s", generation.Reason))
+		return failResearchCodingTask(task, fmt.Errorf("repository adapter unsupported: %s", generation.Reason))
 	}
 	if err := validateBenchmarkAdapterCode(generation.AdapterCode); err != nil {
-		return failBenchmarkTask(task, err)
+		return failResearchCodingTask(task, err)
 	}
 
 	codeHash := sha256.Sum256([]byte(generation.AdapterCode))
@@ -168,7 +124,7 @@ func (a *BenchmarkAdapterAgent) executeAdapterGeneration(ctx context.Context, ta
 	specJSON, _ := json.Marshal(spec)
 	adapterPath, specPath, err := writeBenchmarkAdapterFiles(workspacePath, generation.AdapterCode, specJSON)
 	if err != nil {
-		return failBenchmarkTask(task, err)
+		return failResearchCodingTask(task, err)
 	}
 	relAdapter, _ := filepath.Rel(workspacePath, adapterPath)
 	relSpec, _ := filepath.Rel(workspacePath, specPath)
@@ -177,7 +133,7 @@ func (a *BenchmarkAdapterAgent) executeAdapterGeneration(ctx context.Context, ta
 	task.Code = generation.AdapterCode
 	task.Result = report
 	task.Status = models.StatusCompleted
-	setBenchmarkArtifacts(task, map[string]string{
+	setResearchCodingArtifacts(task, map[string]string{
 		"benchmark_adapter_plan":      string(planJSON),
 		"benchmark_adapter_spec":      string(specJSON),
 		"benchmark_generated_code":    generation.AdapterCode,
@@ -517,21 +473,6 @@ func truncateBenchmarkText(value string, limit int) string {
 		return value
 	}
 	return value[:limit] + "..."
-}
-
-func setBenchmarkArtifacts(task *models.Task, values map[string]string) {
-	if task.Metadata == nil {
-		task.Metadata = map[string]any{}
-	}
-	task.Metadata["artifact_values"] = values
-}
-
-func failBenchmarkTask(task *models.Task, err error) error {
-	if task != nil {
-		task.Status = models.StatusFailed
-		task.Error = err.Error()
-	}
-	return err
 }
 
 func benchmarkMinInt(left, right int) int {

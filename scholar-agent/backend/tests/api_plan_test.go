@@ -112,7 +112,7 @@ func TestPlanRoute_PaperReproductionExample(t *testing.T) {
 		t.Fatalf("expected 6 paper reproduction tasks, got %d", len(response.Plan.Tasks))
 	}
 
-	var librarianCount, coderCount, sandboxCount, dataCount int
+	var librarianCount, coderCount, sandboxCount, dataCount, researchCodingCount int
 	var sawPaperParse, sawRepository, sawPaperCompare bool
 	for _, task := range response.Plan.Tasks {
 		switch task.AssignedTo {
@@ -124,6 +124,8 @@ func TestPlanRoute_PaperReproductionExample(t *testing.T) {
 			sandboxCount++
 		case "data_agent":
 			dataCount++
+		case "research_coding_agent":
+			researchCodingCount++
 		}
 		name := strings.ToLower(task.Name)
 		sawPaperParse = sawPaperParse || strings.Contains(name, "parse paper") || strings.Contains(task.Name, "解析论文")
@@ -131,8 +133,8 @@ func TestPlanRoute_PaperReproductionExample(t *testing.T) {
 		sawPaperCompare = sawPaperCompare || strings.Contains(name, "compare results with paper") || strings.Contains(task.Name, "论文进行对比")
 	}
 
-	if librarianCount != 1 || coderCount != 2 || sandboxCount != 2 || dataCount != 1 {
-		t.Fatalf("unexpected task distribution: librarian=%d coder=%d sandbox=%d data=%d", librarianCount, coderCount, sandboxCount, dataCount)
+	if librarianCount != 1 || coderCount != 1 || sandboxCount != 2 || dataCount != 1 || researchCodingCount != 1 {
+		t.Fatalf("unexpected task distribution: librarian=%d coder=%d sandbox=%d data=%d research_coding=%d", librarianCount, coderCount, sandboxCount, dataCount, researchCodingCount)
 	}
 	if !sawPaperParse || !sawRepository || !sawPaperCompare {
 		t.Fatalf("paper reproduction plan missing canonical steps: parse=%t repository=%t compare=%t", sawPaperParse, sawRepository, sawPaperCompare)

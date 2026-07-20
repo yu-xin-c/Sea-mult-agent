@@ -40,20 +40,20 @@ func (e *DefaultTaskExecutor) ExecuteTask(ctx context.Context, plan *models.Plan
 
 // RoutedTaskExecutor dispatches plan nodes to the existing specialized agents.
 type RoutedTaskExecutor struct {
-	Librarian        AgentRunner
-	Data             AgentRunner
-	Coder            AgentRunner
-	BenchmarkAdapter AgentRunner
+	Librarian      AgentRunner
+	Data           AgentRunner
+	Coder          AgentRunner
+	ResearchCoding AgentRunner
 }
 
-func NewRoutedTaskExecutor(librarian, data, coder AgentRunner, benchmarkAdapter ...AgentRunner) *RoutedTaskExecutor {
+func NewRoutedTaskExecutor(librarian, data, coder AgentRunner, researchCoding ...AgentRunner) *RoutedTaskExecutor {
 	executor := &RoutedTaskExecutor{
 		Librarian: librarian,
 		Data:      data,
 		Coder:     coder,
 	}
-	if len(benchmarkAdapter) > 0 {
-		executor.BenchmarkAdapter = benchmarkAdapter[0]
+	if len(researchCoding) > 0 {
+		executor.ResearchCoding = researchCoding[0]
 	}
 	return executor
 }
@@ -175,9 +175,9 @@ func (e *RoutedTaskExecutor) resolveRunner(assignedTo string) (AgentRunner, erro
 		if e.Coder != nil {
 			return e.Coder, nil
 		}
-	case "benchmark_adapter_agent":
-		if e.BenchmarkAdapter != nil {
-			return e.BenchmarkAdapter, nil
+	case "research_coding_agent":
+		if e.ResearchCoding != nil {
+			return e.ResearchCoding, nil
 		}
 	}
 	return nil, fmt.Errorf("no agent runner configured for %s", assignedTo)

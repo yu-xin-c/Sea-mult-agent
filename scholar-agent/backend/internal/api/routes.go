@@ -98,7 +98,7 @@ func SetupRoutes(r *gin.Engine) {
 	}
 	sb := sandbox.NewSandboxClient(sandboxURL)
 	coderAgent := agent.NewCoderAgent(sb)
-	benchmarkAdapterAgent := agent.NewBenchmarkAdapterAgent(coderAgent)
+	researchCodingAgent := agent.NewResearchCodingAgent(coderAgent)
 	librarianAgent := agent.NewLibrarianAgent()
 	dataAgent := agent.NewDataAgent()
 	chatAgent := agent.NewChatAgent(coderAgent)
@@ -111,7 +111,7 @@ func SetupRoutes(r *gin.Engine) {
 			c.Status(204)
 		})
 
-		RegisterPlanRuntimeRoutes(apiGroup, p, librarianAgent, dataAgent, coderAgent, benchmarkAdapterAgent)
+		RegisterPlanRuntimeRoutes(apiGroup, p, librarianAgent, dataAgent, coderAgent, researchCodingAgent)
 		RegisterUploadRoutes(apiGroup)
 
 		apiGroup.GET("/hello", func(c *gin.Context) {
@@ -291,8 +291,8 @@ func SetupRoutes(r *gin.Engine) {
 					err = dataAgent.ExecuteTask(ctx, task, nil)
 				case "coder_agent", "sandbox_agent":
 					err = coderAgent.ExecuteTask(ctx, task, nil)
-				case "benchmark_adapter_agent":
-					err = benchmarkAdapterAgent.ExecuteTask(ctx, task, nil)
+				case "research_coding_agent":
+					err = researchCodingAgent.ExecuteTask(ctx, task, nil)
 				default:
 					err = coderAgent.ExecuteTask(ctx, task, nil)
 				}
@@ -368,7 +368,7 @@ func shouldAllocateDirectSandbox(task *models.Task) bool {
 	}
 	// Benchmark tasks use the prepared_runtime produced by their DAG. Creating a
 	// second direct-execution sandbox would mount the wrong workspace.
-	return task.AssignedTo != "benchmark_adapter_agent"
+	return task.AssignedTo != "research_coding_agent"
 }
 
 func RegisterPlanRoute(apiGroup *gin.RouterGroup, p *planner.Planner) {

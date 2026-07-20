@@ -4,7 +4,7 @@
     "intent": "使用指定 GitHub 仓库复现 Attention Is All You Need，运行 smoke 实验并对比论文声明",
     "expected_intent_type": "Paper_Reproduction",
     "min_nodes": 8,
-    "required_task_types": ["paper_parse", "repo_prepare", "prepare_runtime", "execute_code", "paper_compare"]
+    "required_task_types": ["paper_parse", "repo_prepare", "prepare_runtime", "paper_code_execute", "paper_compare"]
   },
   {
     "name": "framework evaluation",

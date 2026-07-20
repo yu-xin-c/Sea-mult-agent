@@ -1,12 +1,48 @@
-# 自定义数据 Benchmark Adapter Agent
+# Research Coding Agent
 
-## 目标
+## 目标与职责
 
-`benchmark_adapter_agent` 是一个受限的小型 coding agent。用户上传本地数据并指定公开 GitHub 仓库后，它读取仓库中有限的说明、配置和评测入口，生成一个独立适配器，在已有 Docker 沙箱里做小样本预检，再运行正式评测。
+`research_coding_agent` 是一个面向科研仓库的受限 Coding Sub-Agent，负责两类需要真实阅读、修改和验证代码的工作：
 
-它解决的是“把这个仓库接到我的数据上跑一次”的工程适配问题。它不会修改目标仓库源码，也不会把一次成功运行解释成论文结论已经复现。
+1. 论文仓库代码运行失败或结果差异明显时，定位有限源码上下文，生成最小补丁并在同一沙箱中重跑。
+2. 用户上传自有数据后，为指定公开仓库生成独立 Benchmark 适配器，完成预检、修复、正式评测和证据校验。
 
-## 最短用法
+底层 `CoderAgent` 继续提供通用代码生成、依赖解析和沙箱能力；Research Coding Agent 负责仓库级诊断、受控写入、重跑和证据闭环。它不会把一次代码运行成功解释成论文结论已经复现。
+
+## 论文代码调试
+
+论文复现的 baseline 节点使用 `paper_code_execute`，由 Research Coding Agent 负责执行。若入口运行失败，系统会：
+
+1. 收集入口文件、traceback 命中的仓库文件和 `repo_manifest` 中有限的 Python 候选。
+2. 最多向模型请求 2 轮最小修复，每轮最多修改 3 个已存在且已提供给模型的 Python 文件。
+3. 在同一个 `prepared_runtime` 中重跑，总运行次数最多 3 次。
+4. 每次运行前后检查仓库源码指纹，拒绝执行期间发生的未授权源码修改。
+5. 成功时记录补丁路径、原因和前后 SHA-256；修复预算耗尽时恢复所有原文件。
+
+如果用户明确要求排查“结果与论文不一致”，Planner 会增加 `fix_and_rerun` 节点。该节点消费 `comparison_report`、原始指标和前一次调试报告，只有证据支持代码缺陷时才生成补丁；缺少数据、checkpoint、凭证、算力或科学口径不一致时返回 `no_change` 或 `unsupported`，不会通过伪造指标来“修好”结果。
+
+论文调试相关 Artifact：
+
+| Artifact | 内容 |
+|---|---|
+| `run_metrics` | baseline 的真实 stdout/stderr 结果 |
+| `paper_debug_report` | baseline 运行次数、诊断、源码指纹和修复状态 |
+| `paper_patch_manifest` | baseline 阶段补丁路径、原因和前后哈希 |
+| `rerun_metrics` | 结果差异修复后的重跑结果；未修改时保留原指标 |
+| `rerun_report` / `gap_debug_report` | 结果差异诊断和重跑报告 |
+| `gap_patch_manifest` | 结果差异阶段应用的补丁证据 |
+
+### 调试边界
+
+- 只修改临时克隆工作区中的现有 Python 文件，不修改原始远端仓库。
+- 不允许补丁引入 `pip install`、shell 安装、mock/fake 论文方法、硬编码指标或凭证。
+- 单文件最多 96 KiB，模型源码上下文最多 8 个文件、总计 256 KiB。
+- 失败时恢复 Agent 首次修改前的内容；工作区内保留结构化失败报告。
+- 代码修复只能证明该执行错误被消除，不能证明论文方法、数据和指标已经完整复现。
+
+## 自有数据 Benchmark
+
+### 最短用法
 
 1. 在聊天输入框上传 `CSV`、`TSV`、`JSON` 或 `JSONL` 数据。
 2. 在同一条指令中提供公开 GitHub 仓库，并尽量写明输入列和标签列。
@@ -26,7 +62,7 @@
 输入列是 prompt，最多运行 100 条。
 ```
 
-## 执行链
+### 执行链
 
 系统为这类请求生成固定的 11 节点 DAG：
 
@@ -47,21 +83,21 @@
 
 | 步骤 | Agent | Task type |
 |---|---|---|
-| 数据分析 | Benchmark Adapter | `dataset_profile` |
+| 数据分析 | Research Coding | `dataset_profile` |
 | 仓库获取 | Coder | `repo_discovery` |
 | 工作区准备 | Coder | `repo_prepare` |
-| 适配器生成 | Benchmark Adapter | `benchmark_adapter_generate` |
+| 适配器生成 | Research Coding | `benchmark_adapter_generate` |
 | 依赖解析 | Coder | `resolve_dependencies` |
 | 运行时准备 | Sandbox | `prepare_runtime` |
 | 依赖安装 | Sandbox | `install_dependencies` |
-| 预检与修复 | Benchmark Adapter | `benchmark_adapter_preflight` |
-| 正式评测 | Benchmark Adapter | `benchmark_execute` |
-| 证据校验 | Benchmark Adapter | `benchmark_validate` |
+| 预检与修复 | Research Coding | `benchmark_adapter_preflight` |
+| 正式评测 | Research Coding | `benchmark_execute` |
+| 证据校验 | Research Coding | `benchmark_validate` |
 | 汇总报告 | Data | `framework_report` |
 
 用户明确提供仓库 URL 时，仓库发现节点直接采用该 URL，跳过论文检索；仓库是否可克隆由后续工作区节点实际验证。
 
-## 数据契约
+### 数据契约
 
 `dataset_profile` 不依赖模型，使用 Go 代码读取数据并生成 `dataset_manifest`：
 
@@ -89,7 +125,7 @@
 
 系统会重新计算上传文件的 SHA-256。显式指定的列不存在、文件哈希变化、数据为空或列映射不明确时，任务会停止，不会猜测后继续运行。
 
-## 适配器生成
+### 适配器生成
 
 适配器生成分两次模型调用：
 
@@ -121,7 +157,7 @@ run_manifest.json
 
 缺少入口证据时，模型应返回 `unsupported`，而不是编造 API 或指标。
 
-## 预检与 ReAct 修复
+### 预检与 ReAct 修复
 
 正式运行前固定使用最多 8 条样本预检。预检失败时，错误日志和当前适配器会交给 ReAct 修复，但有以下边界：
 
@@ -133,7 +169,7 @@ run_manifest.json
 
 这部分使用 ReAct，不使用 ToT。候选入口比较是受限方案选择，也不展开无界搜索树。
 
-## 确定性校验
+### 确定性校验
 
 模型不能自行宣布评测成功。Go harness 会检查：
 
@@ -152,7 +188,7 @@ run_manifest.json
 
 生成代码会静态拒绝常见网络客户端、子进程和安装命令。若部署要求严格离线，还应设置 `SANDBOX_NETWORK_MODE=none`；默认 `bridge` 网络只提供容器隔离，不等于断网。
 
-## 主要 Artifact
+### 主要 Artifact
 
 | Artifact | 内容 |
 |---|---|
@@ -168,13 +204,13 @@ run_manifest.json
 | `benchmark_validation_report` | Go 端确定性校验结果 |
 | `evaluation_report` | Data Agent 生成的最终说明 |
 
-## 预算
+### 预算
 
 默认正式运行最多 1000 条样本，也不会超过数据总行数。用户可以在指令中写“最多 N 条样本”，当前硬上限为 100000 条。
 
 预检固定最多 8 条、最多 3 次。依赖安装继续使用现有 Coder ReAct 修复链，次数和运行时预算由计划治理配置控制。
 
-## API 示例
+### API 示例
 
 先上传：
 
@@ -207,7 +243,7 @@ curl -sS -X POST http://localhost:8080/api/plan \
 当前明确不支持：
 
 - 私有仓库认证和任意 Git 服务地址。
-- 自动训练、微调或修改目标仓库源码。
+- Benchmark 流程中的自动训练、微调或仓库源码修改；论文调试只会修改临时克隆工作区，并保留补丁证据。
 - 需要人工下载许可证数据、私有 checkpoint 或交互式 GUI 的仓库。
 - 任意二进制数据集和高度定制的数据加载协议。
 - 自动判断数据分布、标签定义和论文评测口径在科学上完全等价。

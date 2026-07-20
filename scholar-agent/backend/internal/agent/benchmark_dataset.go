@@ -27,18 +27,18 @@ type benchmarkUploadedFile struct {
 	Size        int64  `json:"size"`
 }
 
-func (a *BenchmarkAdapterAgent) executeDatasetProfile(ctx context.Context, task *models.Task) error {
+func (a *ResearchCodingAgent) executeDatasetProfile(ctx context.Context, task *models.Task) error {
 	manifest, err := profileBenchmarkDataset(task)
 	if err != nil {
-		return failBenchmarkTask(task, fmt.Errorf("dataset profile failed: %w", err))
+		return failResearchCodingTask(task, fmt.Errorf("dataset profile failed: %w", err))
 	}
 	payload, err := json.Marshal(manifest)
 	if err != nil {
-		return failBenchmarkTask(task, fmt.Errorf("encode dataset manifest: %w", err))
+		return failResearchCodingTask(task, fmt.Errorf("encode dataset manifest: %w", err))
 	}
 	task.Result = string(payload)
 	task.Status = models.StatusCompleted
-	setBenchmarkArtifacts(task, map[string]string{
+	setResearchCodingArtifacts(task, map[string]string{
 		"dataset_manifest": string(payload),
 	})
 	logToContext(ctx, "[%s] dataset profile: %s rows=%d input=%s target=%s", a.Name, manifest.Name, manifest.RowCount, manifest.InputColumn, manifest.TargetColumn)

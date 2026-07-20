@@ -31,7 +31,7 @@ const resolveCompactMode = (displayMode: ExecutionDisplayMode): CompactMode => {
   return displayMode;
 };
 
-const reportAgents = new Set(['librarian_agent', 'data_agent', 'benchmark_adapter_agent']);
+const reportAgents = new Set(['librarian_agent', 'data_agent', 'research_coding_agent']);
 
 export function ExecutionSidebar(props: ExecutionSidebarProps) {
   const {

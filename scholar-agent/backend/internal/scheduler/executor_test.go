@@ -38,15 +38,15 @@ func TestBuildTaskInputs_MergesNodeInputsAndArtifacts(t *testing.T) {
 	}
 }
 
-func TestRoutedExecutorUsesBenchmarkAdapterRunner(t *testing.T) {
+func TestRoutedExecutorUsesResearchCodingRunner(t *testing.T) {
 	defaultRunner := &executorTestRunner{}
-	benchmarkRunner := &executorTestRunner{}
-	executor := NewRoutedTaskExecutor(defaultRunner, defaultRunner, defaultRunner, benchmarkRunner)
-	runner, err := executor.resolveRunner("benchmark_adapter_agent")
+	researchCodingRunner := &executorTestRunner{}
+	executor := NewRoutedTaskExecutor(defaultRunner, defaultRunner, defaultRunner, researchCodingRunner)
+	runner, err := executor.resolveRunner("research_coding_agent")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runner != benchmarkRunner {
-		t.Fatal("benchmark adapter task was not routed to its dedicated runner")
+	if runner != researchCodingRunner {
+		t.Fatal("research coding task was not routed to its dedicated runner")
 	}
 }

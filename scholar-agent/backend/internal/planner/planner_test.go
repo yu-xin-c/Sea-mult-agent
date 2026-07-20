@@ -101,7 +101,7 @@ func TestCustomDatasetBenchmarkBuildsBoundedAdapterHarness(t *testing.T) {
 		}
 	}
 	profile := plan.Nodes[0]
-	if profile.AssignedTo != "benchmark_adapter_agent" || profile.Inputs["benchmark_input_column"] != "review" || profile.Inputs["benchmark_target_column"] != "label" {
+	if profile.AssignedTo != "research_coding_agent" || profile.Inputs["benchmark_input_column"] != "review" || profile.Inputs["benchmark_target_column"] != "label" {
 		t.Fatalf("unexpected dataset profile node: %#v", profile)
 	}
 	discovery := plan.Nodes[1]
@@ -119,5 +119,51 @@ func TestCustomDatasetBenchmarkBuildsBoundedAdapterHarness(t *testing.T) {
 	}
 	if !containsArtifact(execute.RequiredArtifacts, "validated_benchmark_adapter_spec") || !containsArtifact(plan.Nodes[9].OutputArtifacts, "benchmark_validation_report") {
 		t.Fatalf("benchmark evidence contracts are incomplete")
+	}
+}
+
+func TestPaperReproductionRoutesRepositoryDebugToResearchCodingAgent(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	intent := models.IntentContext{
+		RawIntent:  "复现 Transformer，遇到论文代码错误时调试，并画出重跑结果",
+		IntentType: "Paper_Reproduction",
+		Entities: map[string]any{
+			"paper_title": "Transformer",
+			"needs_fix":   true,
+			"needs_plot":  true,
+		},
+		Constraints: map[string]any{"reproduction_mode": "smoke"},
+	}
+	plan, err := NewPlanner().BuildPlan(t.Context(), intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var baseline, gapDebug, compare, visualize *models.TaskNode
+	for _, node := range plan.Nodes {
+		switch node.Type {
+		case "paper_code_execute":
+			baseline = node
+		case "fix_and_rerun":
+			gapDebug = node
+		case "paper_compare":
+			compare = node
+		case "result_visualization":
+			visualize = node
+		}
+	}
+	if baseline == nil || gapDebug == nil || compare == nil || visualize == nil {
+		t.Fatalf("missing repository debug flow: baseline=%v gap=%v compare=%v visualize=%v", baseline != nil, gapDebug != nil, compare != nil, visualize != nil)
+	}
+	if baseline.AssignedTo != "research_coding_agent" || gapDebug.AssignedTo != "research_coding_agent" {
+		t.Fatalf("paper debugging was not routed to research coding agent")
+	}
+	if !containsArtifact(baseline.OutputArtifacts, "paper_debug_report") || !containsArtifact(compare.RequiredArtifacts, "paper_debug_report") {
+		t.Fatalf("baseline debug evidence is not propagated")
+	}
+	if !containsArtifact(gapDebug.RequiredArtifacts, "comparison_report") || !containsArtifact(gapDebug.OutputArtifacts, "rerun_metrics") {
+		t.Fatalf("result-gap debug contracts are incomplete: %#v", gapDebug)
+	}
+	if len(visualize.Dependencies) != 1 || visualize.Dependencies[0] != gapDebug.ID || !containsArtifact(visualize.RequiredArtifacts, "rerun_metrics") {
+		t.Fatalf("visualization does not consume rerun evidence: %#v", visualize)
 	}
 }

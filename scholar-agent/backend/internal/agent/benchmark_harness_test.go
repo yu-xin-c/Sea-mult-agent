@@ -108,8 +108,8 @@ func TestBenchmarkHarnessRepairsFailedPreflightThenExecutesAndValidates(t *testi
 		"reason":       "use the repository's documented import path",
 	})
 	fakeSandbox := &scriptedBenchmarkSandbox{workspace: workspace, failFirst: true}
-	agent := &BenchmarkAdapterAgent{
-		Name:      "benchmark_adapter_agent",
+	agent := &ResearchCodingAgent{
+		Name:      "research_coding_agent",
 		ChatModel: newSequentialBenchmarkModel(t, string(repairPayload)),
 		Sandbox:   fakeSandbox,
 	}
@@ -198,8 +198,8 @@ func TestBenchmarkHarnessRejectsDatasetMutation(t *testing.T) {
 	workspace, manifest, spec, code := benchmarkHarnessFixture(t)
 	manifestJSON, _ := json.Marshal(manifest)
 	specJSON, _ := json.Marshal(spec)
-	agent := &BenchmarkAdapterAgent{
-		Name:    "benchmark_adapter_agent",
+	agent := &ResearchCodingAgent{
+		Name:    "research_coding_agent",
 		Sandbox: &scriptedBenchmarkSandbox{workspace: workspace, mutateData: true},
 	}
 	task := &models.Task{

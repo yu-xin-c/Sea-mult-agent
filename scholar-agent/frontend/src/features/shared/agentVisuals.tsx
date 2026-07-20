@@ -10,7 +10,7 @@ export const getAgentIcon = (agentName: string) => {
       return <TerminalSquare className="w-5 h-5 text-orange-500" />;
     case 'data_agent':
       return <Database className="w-5 h-5 text-green-500" />;
-    case 'benchmark_adapter_agent':
+    case 'research_coding_agent':
       return <Wrench className="w-5 h-5 text-teal-600" />;
     default:
       return <Bot className="w-5 h-5 text-gray-500" />;
