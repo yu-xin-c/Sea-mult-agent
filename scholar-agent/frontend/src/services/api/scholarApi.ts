@@ -29,9 +29,28 @@ export const chat = async (message: string, identity: RequestIdentity): Promise<
   return response.data;
 };
 
-export const executePlan = async (planId: string): Promise<ExecutePlanResponse> => {
-  const response = await httpClient.post<ExecutePlanResponse>(`/api/plans/${planId}/execute`, {});
-  return response.data;
+export const executePlan = async (planId: string, identity: RequestIdentity): Promise<ExecutePlanResponse> => {
+	const response = await httpClient.post<ExecutePlanResponse>(`/api/plans/${planId}/execute`, {}, { headers: buildIdentityHeaders(identity) });
+	return response.data;
+};
+
+export const approvePlan = async (planId: string, identity: RequestIdentity): Promise<ExecutePlanResponse> => {
+	const response = await httpClient.post<ExecutePlanResponse>(`/api/plans/${planId}/approve`, {}, { headers: buildIdentityHeaders(identity) });
+	return response.data;
+};
+
+export const cancelPlan = async (planId: string, identity: RequestIdentity): Promise<ExecutePlanResponse> => {
+	const response = await httpClient.post<ExecutePlanResponse>(`/api/plans/${planId}/cancel`, {}, { headers: buildIdentityHeaders(identity) });
+	return response.data;
+};
+
+export const retryTask = async (planId: string, taskId: string, identity: RequestIdentity): Promise<ExecutePlanResponse> => {
+	const response = await httpClient.post<ExecutePlanResponse>(
+		`/api/plans/${planId}/tasks/${taskId}/retry`,
+		{},
+		{ headers: buildIdentityHeaders(identity) },
+	);
+	return response.data;
 };
 
 export const getPdfProxyUrl = (url: string): string =>
@@ -44,7 +63,7 @@ export const createPlanEventSource = (
     onError?: () => void;
   },
 ): EventSource => {
-  const source = new EventSource(`${API_BASE_URL}/api/plans/${planId}/stream`);
+	const source = new EventSource(`${API_BASE_URL}/api/plans/${planId}/stream`, { withCredentials: true });
   source.addEventListener(PLAN_STREAM_EVENT_NAME, (evt) => {
     const parsed = JSON.parse((evt as MessageEvent).data) as PlanEvent;
     handlers.onPlanEvent(parsed);

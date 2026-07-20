@@ -17,6 +17,12 @@ type TaskNode struct {
 	Priority          int            `json:"priority"`
 	RetryLimit        int            `json:"retry_limit"`
 	RunCount          int            `json:"run_count"`
+	ExecutionID       string         `json:"execution_id,omitempty"`
+	ExecutionEpoch    int            `json:"execution_epoch"`
+	LeaseOwner        string         `json:"lease_owner,omitempty"`
+	LeaseExpiresAt    *time.Time     `json:"lease_expires_at,omitempty"`
+	TimeoutSeconds    int            `json:"timeout_seconds,omitempty"`
+	Contract          TaskContract   `json:"contract"`
 	Inputs            map[string]any `json:"inputs,omitempty"`
 	Result            string         `json:"result,omitempty"`
 	Code              string         `json:"code,omitempty"`
@@ -53,6 +59,12 @@ type PlanGraph struct {
 	UserIntent string              `json:"user_intent"`
 	IntentType string              `json:"intent_type"`
 	Status     TaskStatus          `json:"status"`
+	OwnerID    string              `json:"owner_id,omitempty"`
+	SessionID  string              `json:"session_id,omitempty"`
+	TraceID    string              `json:"trace_id"`
+	Approval   ApprovalState       `json:"approval"`
+	Budget     RunBudget           `json:"budget"`
+	Usage      RunUsage            `json:"usage"`
 	Nodes      []*TaskNode         `json:"nodes"`
 	Edges      []*TaskEdge         `json:"edges"`
 	Artifacts  map[string]Artifact `json:"artifacts"`

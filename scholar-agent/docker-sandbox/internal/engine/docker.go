@@ -11,7 +11,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -109,7 +108,10 @@ func (e *NativeDockerEngine) GetType() string {
 }
 
 func (e *NativeDockerEngine) Create(ctx context.Context, image string, mountPath string) (string, error) {
-	args := []string{"run", "-d", "--rm"}
+	args, err := secureDockerRunArgs(image)
+	if err != nil {
+		return "", err
+	}
 	if gpuRequest := dockerGPURequest(); gpuRequest != "" {
 		args = append(args, "--gpus", gpuRequest)
 	}
@@ -160,18 +162,7 @@ func normalizeDockerMountPath(mountPath string) (string, error) {
 	if strings.TrimSpace(mountPath) == "" {
 		return "", nil
 	}
-
-	absPath, err := filepath.Abs(mountPath)
-	if err != nil {
-		return "", fmt.Errorf("resolve mount path failed: %w", err)
-	}
-
-	if runtime.GOOS == "windows" {
-		absPath = filepath.Clean(absPath)
-		absPath = strings.ReplaceAll(absPath, "\\", "/")
-	}
-
-	return absPath, nil
+	return normalizeAndAuthorizeMountPath(mountPath)
 }
 
 func (e *NativeDockerEngine) Delete(ctx context.Context, id string) error {

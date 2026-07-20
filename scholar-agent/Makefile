@@ -1,6 +1,6 @@
 # ScholarAgent development helpers
 
-.PHONY: all help install install-ai tidy lint build package sync-frontend-dist test example-paper-reproduction run-backend run-frontend run-sandbox docker-up docker-down clean
+.PHONY: all help install install-ai tidy lint build package sync-frontend-dist test eval example-paper-reproduction run-backend run-frontend run-sandbox docker-up docker-down clean
 
 all: help
 
@@ -13,6 +13,7 @@ help:
 	@echo "  make build         - Build frontend, backend and sandbox"
 	@echo "  make package       - Build a single executable with embedded frontend and sandbox"
 	@echo "  make test          - Run backend, sandbox and offline example tests"
+	@echo "  make eval          - Run the deterministic Agent planning evaluation dataset"
 	@echo "  make example-paper-reproduction - Run the live Attention smoke example"
 	@echo "  make run-sandbox   - Start docker-sandbox locally via scripts/unix/"
 	@echo "  make run-backend   - Start backend locally via scripts/unix/"
@@ -54,6 +55,9 @@ test:
 	cd backend && go test ./...
 	cd docker-sandbox && go test ./...
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s examples/paper-reproduction -p 'test_*.py'
+
+eval:
+	cd backend && go test -v ./evals
 
 example-paper-reproduction:
 	PYTHONDONTWRITEBYTECODE=1 python3 examples/paper-reproduction/run.py

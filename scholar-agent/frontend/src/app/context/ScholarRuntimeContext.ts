@@ -13,6 +13,9 @@ export interface ScholarRuntimeContextValue {
     handleOpenTaskView: ScholarRuntimeApi['handleOpenTaskView'];
     handleExecuteTask: ScholarRuntimeApi['handleExecuteTask'];
     handleRunAllTasks: ScholarRuntimeApi['handleRunAllTasks'];
+	handleApproveAndRun: ScholarRuntimeApi['handleApproveAndRun'];
+	handleCancelPlan: ScholarRuntimeApi['handleCancelPlan'];
+	handleRetryFailedPlan: ScholarRuntimeApi['handleRetryFailedPlan'];
     setDisplayMode: ScholarRuntimeApi['setDisplayMode'];
     closeTaskPanel: ScholarRuntimeApi['closeTaskPanel'];
     resetRuntimeState: ScholarRuntimeApi['resetRuntimeState'];

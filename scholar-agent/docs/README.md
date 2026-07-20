@@ -5,6 +5,7 @@
 - [local_startup_guide.md](local_startup_guide.md)：本地启动、环境变量、联调顺序
 - [project_structure_frontend_backend.md](project_structure_frontend_backend.md)：仓库结构与模块职责
 - [backend_planner_models_reference.md](backend_planner_models_reference.md)：后端规划与调度模型说明
+- [agent_runtime_p0_p1.md](agent_runtime_p0_p1.md)：P0/P1 可靠性、安全、治理与运维说明
 - [user_manual.md](user_manual.md)：产品使用说明
 - [../examples/](../examples/)：可运行示例、成功条件与已验证结果
 

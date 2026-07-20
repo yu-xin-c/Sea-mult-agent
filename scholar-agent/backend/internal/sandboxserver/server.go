@@ -2,6 +2,7 @@ package sandboxserver
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -96,7 +97,7 @@ func NewHandler(cfg Config) http.Handler {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
 
-	api := r.Group("/api/v1")
+	api := r.Group("/api/v1", sandboxAuthMiddleware())
 	{
 		api.GET("/health", svc.Health)
 		api.POST("/sandboxes", svc.CreateSandbox)
@@ -108,6 +109,22 @@ func NewHandler(cfg Config) http.Handler {
 	}
 
 	return r
+}
+
+func sandboxAuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		expected := strings.TrimSpace(os.Getenv("SANDBOX_API_TOKEN"))
+		if expected == "" || c.Request.URL.Path == "/api/v1/health" {
+			c.Next()
+			return
+		}
+		provided := strings.TrimSpace(strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer "))
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(expected)) != 1 {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid sandbox bearer token"})
+			return
+		}
+		c.Next()
+	}
 }
 
 func (s *sandboxService) Health(c *gin.Context) {

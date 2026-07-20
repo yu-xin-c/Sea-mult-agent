@@ -3,7 +3,8 @@ import type { Dispatch, SetStateAction } from 'react';
 import type { Node } from '@xyflow/react';
 import type { ChatMessage, ExecuteTaskResultEvent, NodeExecutionState, Task } from '../../contracts/api';
 import { PLAN_EVENTS, isPlanTerminalEvent, pickImageBase64 } from '../../contracts/events';
-import { createPlanEventSource, executePlan, executeTaskStream } from '../../services/api/scholarApi';
+import { approvePlan, cancelPlan, createPlanEventSource, executePlan, executeTaskStream, retryTask } from '../../services/api/scholarApi';
+import type { RequestIdentity } from '../../services/api/scholarApi';
 import { getTaskStyleByStatus } from '../../features/shared/agentVisuals';
 import { createTaskNodeLabel } from '../../features/plan-graph/nodeLabelFactory';
 import { uiText } from '../constants/uiText';
@@ -15,6 +16,7 @@ interface ExecutionState {
   nodeStates: Record<string, NodeExecutionState>;
   displayMode: ExecutionDisplayMode;
   isExecuting: boolean;
+	approvalResolved: boolean;
 }
 
 type ExecutionAction =
@@ -23,9 +25,34 @@ type ExecutionAction =
   | { type: 'patch-task-state'; taskId: string; updater: (prev: NodeExecutionState) => NodeExecutionState }
   | { type: 'set-display-mode'; mode: ExecutionDisplayMode }
   | { type: 'set-executing'; value: boolean }
+	| { type: 'set-approval-resolved'; value: boolean }
   | { type: 'reset' };
 
 const initialNodeExecutionState: NodeExecutionState = { logs: '', result: '', code: '', imageBase64: '' };
+
+const updateNodeStatus = (node: Node, status: string): Node => {
+	const task = node.data.task as Task;
+	if (!task) return node;
+	const updatedTask = { ...task, Status: status };
+	return {
+		...node,
+		data: {
+			...node.data,
+			status,
+			task: updatedTask,
+			label: createTaskNodeLabel({
+				assignedTo: updatedTask.AssignedTo,
+				taskName: updatedTask.Name,
+				status,
+				step: typeof node.data.step === 'number' ? node.data.step : undefined,
+			}),
+		},
+		style: {
+			...(node.style || {}),
+			...getTaskStyleByStatus(status),
+		},
+	};
+};
 
 const detectBestDisplayMode = (task: Task, state: NodeExecutionState): ExecutionDisplayMode => {
   if (state.imageBase64) return 'plot';
@@ -113,12 +140,15 @@ const executionReducer = (state: ExecutionState, action: ExecutionAction): Execu
       return { ...state, displayMode: action.mode };
     case 'set-executing':
       return { ...state, isExecuting: action.value };
+	case 'set-approval-resolved':
+	  return { ...state, approvalResolved: action.value };
     case 'reset':
       return {
         selectedTask: null,
         nodeStates: {},
         displayMode: 'logs',
         isExecuting: false,
+		approvalResolved: false,
       };
     default:
       return state;
@@ -129,16 +159,18 @@ interface UseScholarRuntimeOptions {
   nodes: Node[];
   setNodes: Dispatch<SetStateAction<Node[]>>;
   appendChatMessage: (message: ChatMessage) => void;
+	identity: RequestIdentity;
 }
 
 export function useScholarRuntime(options: UseScholarRuntimeOptions) {
-  const { nodes, setNodes, appendChatMessage } = options;
+	const { nodes, setNodes, appendChatMessage, identity } = options;
   const planEventSourceRef = useRef<EventSource | null>(null);
   const [executionState, dispatchExecution] = useReducer(executionReducer, {
     selectedTask: null,
     nodeStates: {},
     displayMode: 'logs',
     isExecuting: false,
+	approvalResolved: false,
   });
 
   const selectedTaskState = useMemo(() => {
@@ -182,30 +214,7 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
   const updateNodeVisualState = useCallback(
     (taskId: string, status: string) => {
       setNodes((nds) =>
-        nds.map((n) => {
-          if (n.id !== taskId) return n;
-          const task = n.data.task as Task;
-          const updatedTask = { ...task, Status: status };
-          const styleState = getTaskStyleByStatus(status);
-          return {
-            ...n,
-            data: {
-              ...n.data,
-              status,
-              task: updatedTask,
-              label: createTaskNodeLabel({
-                assignedTo: updatedTask.AssignedTo,
-                taskName: updatedTask.Name,
-                status,
-                step: typeof n.data.step === 'number' ? n.data.step : undefined,
-              }),
-            },
-            style: {
-              ...(n.style || {}),
-              ...styleState,
-            },
-          };
-        }),
+		nds.map((node) => (node.id === taskId ? updateNodeStatus(node, status) : node)),
       );
     },
     [setNodes],
@@ -261,6 +270,9 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
           }
 
           if (isPlanTerminalEvent(event)) {
+			if (event.event_type === PLAN_EVENTS.PLAN_CANCELED) {
+				setNodes((current) => current.map((node) => updateNodeStatus(node, 'canceled')));
+			}
             source.close();
             planEventSourceRef.current = null;
             dispatchExecution({ type: 'set-executing', value: false });
@@ -283,7 +295,7 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
 
       planEventSourceRef.current = source;
     },
-    [appendChatMessage, appendNodeLog, patchNodeState, updateNodeVisualState],
+	[appendChatMessage, appendNodeLog, patchNodeState, setNodes, updateNodeVisualState],
   );
 
   const handleExecuteTask = useCallback(
@@ -414,7 +426,7 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
       appendChatMessage({ role: 'system', text: uiText.planStartMessage });
 
       try {
-        await executePlan(activePlanId);
+		await executePlan(activePlanId, identity);
         connectPlanStream(activePlanId);
       } catch (error) {
         console.error(error);
@@ -422,8 +434,72 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
         appendChatMessage({ role: 'system', text: uiText.planStartFailedMessage });
       }
     },
-    [appendChatMessage, connectPlanStream, executionState.isExecuting],
+	[appendChatMessage, connectPlanStream, executionState.isExecuting, identity],
   );
+
+	const handleApproveAndRun = useCallback(
+		async (activePlanId: string | null) => {
+			if (!activePlanId || executionState.isExecuting) return;
+			dispatchExecution({ type: 'set-executing', value: true });
+			try {
+				await approvePlan(activePlanId, identity);
+				dispatchExecution({ type: 'set-approval-resolved', value: true });
+				await executePlan(activePlanId, identity);
+				appendChatMessage({ role: 'system', text: '计划已审批，开始执行。' });
+				connectPlanStream(activePlanId);
+			} catch (error) {
+				console.error(error);
+				dispatchExecution({ type: 'set-executing', value: false });
+				appendChatMessage({ role: 'system', text: '计划审批或启动失败，请检查运行状态。' });
+			}
+		},
+		[appendChatMessage, connectPlanStream, executionState.isExecuting, identity],
+	);
+
+	const handleCancelPlan = useCallback(
+		async (activePlanId: string | null) => {
+			if (!activePlanId) return;
+			try {
+				await cancelPlan(activePlanId, identity);
+				planEventSourceRef.current?.close();
+				planEventSourceRef.current = null;
+				setNodes((current) => current.map((node) => updateNodeStatus(node, 'canceled')));
+				dispatchExecution({ type: 'set-executing', value: false });
+				appendChatMessage({ role: 'system', text: '计划已取消，未完成任务已停止。' });
+			} catch (error) {
+				console.error(error);
+				appendChatMessage({ role: 'system', text: '取消计划失败，请刷新计划状态后重试。' });
+			}
+		},
+		[appendChatMessage, identity, setNodes],
+	);
+
+	const handleRetryFailedPlan = useCallback(
+		async (activePlanId: string | null) => {
+			if (!activePlanId || executionState.isExecuting) return;
+			const failedNode = nodes.find((node) => node.data.status === 'failed');
+			if (!failedNode) return;
+			dispatchExecution({ type: 'set-executing', value: true });
+			try {
+				await retryTask(activePlanId, failedNode.id, identity);
+				setNodes((current) =>
+					current.map((node) =>
+						['failed', 'blocked', 'canceled'].includes(String(node.data.status))
+							? updateNodeStatus(node, 'pending')
+							: node,
+					),
+				);
+				await executePlan(activePlanId, identity);
+				appendChatMessage({ role: 'system', text: '失败节点已重置，计划开始重试。' });
+				connectPlanStream(activePlanId);
+			} catch (error) {
+				console.error(error);
+				dispatchExecution({ type: 'set-executing', value: false });
+				appendChatMessage({ role: 'system', text: '重试计划失败，请检查节点状态。' });
+			}
+		},
+		[appendChatMessage, connectPlanStream, executionState.isExecuting, identity, nodes, setNodes],
+	);
 
   const onNodeClick = useCallback(
     (_: unknown, node: Node) => {
@@ -487,6 +563,9 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
     handleOpenTaskView,
     handleExecuteTask,
     handleRunAllTasks,
+	handleApproveAndRun,
+	handleCancelPlan,
+	handleRetryFailedPlan,
     appendSelectedTaskLog,
     setDisplayMode,
     closeTaskPanel,

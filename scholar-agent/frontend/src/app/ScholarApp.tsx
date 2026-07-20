@@ -99,6 +99,7 @@ interface ScholarWorkspaceContentProps {
     handleSendMessage: () => void;
     intentContext: IntentContext | null;
     activePlanId: string | null;
+	activePlanStatus: string | null;
     isLoggedIn: boolean;
     userId: string | null;
     loginInput: string;
@@ -124,6 +125,7 @@ function ScholarWorkspaceContent(props: ScholarWorkspaceContentProps) {
     onEdgesChange,
     intentContext: chatFlow.intentContext,
     activePlanId: chatFlow.activePlanId,
+	activePlanStatus: chatFlow.activePlanStatus,
     layout,
     logsEndRef,
   });
@@ -215,6 +217,7 @@ export default function ScholarApp() {
     nodes,
     setNodes,
     appendChatMessage: chatFlow.appendChatMessage,
+	identity: chatFlow.requestIdentity,
   });
   const { resetRuntimeState } = runtime;
 
@@ -243,6 +246,9 @@ export default function ScholarApp() {
         handleOpenTaskView: runtime.handleOpenTaskView,
         handleExecuteTask: runtime.handleExecuteTask,
         handleRunAllTasks: runtime.handleRunAllTasks,
+		handleApproveAndRun: runtime.handleApproveAndRun,
+		handleCancelPlan: runtime.handleCancelPlan,
+		handleRetryFailedPlan: runtime.handleRetryFailedPlan,
         setDisplayMode: runtime.setDisplayMode,
         closeTaskPanel: runtime.closeTaskPanel,
         resetRuntimeState: runtime.resetRuntimeState,
@@ -271,6 +277,7 @@ export default function ScholarApp() {
           handleSendMessage: chatFlow.handleSendMessage,
           intentContext: chatFlow.intentContext,
           activePlanId: chatFlow.activePlanId,
+		  activePlanStatus: chatFlow.activePlanStatus,
           isLoggedIn: chatFlow.isLoggedIn,
           userId: chatFlow.userId,
           loginInput: chatFlow.loginInput,

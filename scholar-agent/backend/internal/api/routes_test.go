@@ -42,6 +42,72 @@ func TestCORSMiddlewareAllowsIdentityHeadersWithCredentials(t *testing.T) {
 	}
 }
 
+func TestCORSMiddlewareRejectsUnknownOrigin(t *testing.T) {
+	t.Setenv("CORS_ALLOWED_ORIGINS", "https://trusted.example")
+	router := gin.New()
+	router.Use(CORSMiddleware())
+	router.OPTIONS("/api/plan", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+	request := httptest.NewRequest(http.MethodOptions, "/api/plan", nil)
+	request.Header.Set("Origin", "https://untrusted.example")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("unexpected allow origin=%q", got)
+	}
+}
+
+func TestAPIAuthMiddlewareRequiresConfiguredBearerToken(t *testing.T) {
+	t.Setenv("API_AUTH_TOKEN", "deployment-secret")
+	router := gin.New()
+	router.Use(APIAuthMiddleware())
+	router.GET("/api/private", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+	unauthorized := httptest.NewRecorder()
+	router.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/private", nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("status=%d body=%s", unauthorized.Code, unauthorized.Body.String())
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/private", nil)
+	request.Header.Set("Authorization", "Bearer deployment-secret")
+	authorized := httptest.NewRecorder()
+	router.ServeHTTP(authorized, request)
+	if authorized.Code != http.StatusNoContent {
+		t.Fatalf("status=%d body=%s", authorized.Code, authorized.Body.String())
+	}
+}
+
+func TestValidateRemotePDFURLBlocksPrivateNetworks(t *testing.T) {
+	for _, raw := range []string{
+		"http://127.0.0.1/paper.pdf",
+		"http://10.0.0.1/paper.pdf",
+		"file:///tmp/paper.pdf",
+		"http://user:pass@1.1.1.1/paper.pdf",
+	} {
+		if _, err := validateRemotePDFURL(t.Context(), raw); err == nil {
+			t.Fatalf("expected %q to be rejected", raw)
+		}
+	}
+	if _, err := validateRemotePDFURL(t.Context(), "https://1.1.1.1/paper.pdf"); err != nil {
+		t.Fatalf("expected public HTTPS address to be accepted: %v", err)
+	}
+}
+
+func TestSafeRemoteTransportRechecksAddressAtDialTime(t *testing.T) {
+	transport := safeRemoteTransport()
+	if transport.DialContext == nil {
+		t.Fatal("safe transport must provide a guarded dialer")
+	}
+	if _, err := transport.DialContext(t.Context(), "tcp", "127.0.0.1:80"); err == nil {
+		t.Fatal("expected dial-time loopback address to be rejected")
+	}
+}
+
 func TestCollectPaperSearchFields_PrefersStructuredFields(t *testing.T) {
 	intentCtx := models.IntentContext{
 		Entities: map[string]any{

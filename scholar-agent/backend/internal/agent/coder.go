@@ -582,7 +582,11 @@ func (a *CoderAgent) ExecuteTask(ctx context.Context, task *models.Task, sharedC
 		output = stripInlinePipInstall(output)
 	}
 
-	log.Printf("[%s] Eino 执行流完成. 最终输出:\n%s", a.Name, output)
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("LOG_MODEL_OUTPUT")), "true") {
+		log.Printf("[%s] Eino 执行流完成. 最终输出:\n%s", a.Name, output)
+	} else {
+		log.Printf("[%s] Eino 执行流完成 (output_chars=%d)", a.Name, len(output))
+	}
 	task.Result = output
 	task.Status = models.StatusCompleted
 	return nil

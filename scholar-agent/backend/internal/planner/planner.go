@@ -29,14 +29,19 @@ func (p *Planner) BuildPlan(ctx context.Context, intent models.IntentContext) (*
 
 	plan := &models.PlanGraph{
 		ID:         uuid.New().String(),
+		TraceID:    "trace_" + strings.ReplaceAll(uuid.New().String(), "-", ""),
 		UserIntent: intent.RawIntent,
 		IntentType: intent.IntentType,
 		Status:     models.StatusPending,
 		Nodes:      []*models.TaskNode{},
 		Edges:      []*models.TaskEdge{},
 		Artifacts:  map[string]models.Artifact{},
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
+		Budget: models.RunBudget{
+			MaxTaskAttempts: 100,
+			MaxDurationSec:  2100,
+		},
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 
 	var nodes []*models.TaskNode
@@ -266,11 +271,33 @@ func newNode(name, taskType, agent string, deps, requiredArtifacts, outputArtifa
 		OutputArtifacts:   outputArtifacts,
 		Parallelizable:    parallelizable,
 		Priority:          0,
-		RetryLimit:        0,
+		RetryLimit:        1,
 		RunCount:          0,
-		Inputs:            map[string]any{},
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		TimeoutSeconds:    600,
+		Contract: models.TaskContract{
+			Version:         models.TaskContractVersion,
+			InputArtifacts:  append([]string(nil), requiredArtifacts...),
+			OutputArtifacts: append([]string(nil), outputArtifacts...),
+			AllowedTools:    allowedToolsForAgent(agent),
+		},
+		Inputs:    map[string]any{},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+}
+
+func allowedToolsForAgent(agent string) []string {
+	switch agent {
+	case "coder_agent":
+		return []string{"repository.read", "workspace.write", "code.generate"}
+	case "sandbox_agent":
+		return []string{"sandbox.create", "sandbox.command", "sandbox.python", "sandbox.delete"}
+	case "librarian_agent":
+		return []string{"paper.search", "paper.read", "repository.discover"}
+	case "data_agent":
+		return []string{"artifact.read", "metrics.analyze", "report.write"}
+	default:
+		return []string{"conversation.respond"}
 	}
 }
 

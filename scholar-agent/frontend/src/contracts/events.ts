@@ -10,6 +10,7 @@ export const PLAN_EVENTS = {
   TASK_FAILED: 'task_failed',
   PLAN_COMPLETED: 'plan_completed',
   PLAN_FAILED: 'plan_failed',
+	PLAN_CANCELED: 'plan_canceled',
 } as const;
 
 export const DIRECT_EXECUTION_EVENTS = {
@@ -22,7 +23,9 @@ export const DIRECT_EXECUTION_EVENTS = {
 export const PLAN_STREAM_EVENT_NAME = 'plan_event';
 
 export const isPlanTerminalEvent = (event: PlanEvent): boolean =>
-  event.event_type === PLAN_EVENTS.PLAN_COMPLETED || event.event_type === PLAN_EVENTS.PLAN_FAILED;
+	event.event_type === PLAN_EVENTS.PLAN_COMPLETED ||
+	event.event_type === PLAN_EVENTS.PLAN_FAILED ||
+	event.event_type === PLAN_EVENTS.PLAN_CANCELED;
 
 export const pickImageBase64 = (payload: ExecuteTaskResultEvent | Record<string, unknown> | undefined): string => {
   if (!payload) return '';

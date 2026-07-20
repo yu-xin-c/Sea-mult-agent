@@ -188,6 +188,7 @@ export function useScholarChatFlow(options: UseScholarChatFlowOptions) {
 
   const chatHistory = activeSession?.chatHistory ?? [];
   const activePlanId = activeSession?.activePlanId ?? null;
+	const activePlanStatus = activeSession?.planGraph?.status ?? null;
   const intentContext = activeSession?.intentContext ?? null;
   const sessionSummaries = useMemo<SessionSummary[]>(
     () =>
@@ -366,10 +367,15 @@ export function useScholarChatFlow(options: UseScholarChatFlowOptions) {
     loading,
     chatHistory,
     activePlanId,
+	activePlanStatus,
     intentContext,
     appendChatMessage,
     isLoggedIn: Boolean(persistedState.userId),
     userId: persistedState.userId,
+	requestIdentity: {
+		userId: persistedState.userId ?? guestUserId,
+		sessionId: persistedState.activeSessionId ?? 'session-unavailable',
+	},
     loginInput,
     setLoginInput,
     activeSessionId: persistedState.activeSessionId,

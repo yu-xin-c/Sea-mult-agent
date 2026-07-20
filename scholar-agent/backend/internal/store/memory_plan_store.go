@@ -45,6 +45,17 @@ func (s *MemoryPlanStore) GetPlan(planID string) (*models.PlanGraph, error) {
 	return clonePlanGraph(plan), nil
 }
 
+func (s *MemoryPlanStore) ListPlans() ([]*models.PlanGraph, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	plans := make([]*models.PlanGraph, 0, len(s.plans))
+	for _, plan := range s.plans {
+		plans = append(plans, clonePlanGraph(plan))
+	}
+	return plans, nil
+}
+
 func (s *MemoryPlanStore) UpdatePlan(planID string, update func(*models.PlanGraph) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -70,7 +81,7 @@ func (s *MemoryPlanStore) AppendEvent(planID string, event models.PlanEvent) err
 	if _, ok := s.plans[planID]; !ok {
 		return fmt.Errorf("plan not found: %s", planID)
 	}
-	s.events[planID] = append(s.events[planID], event)
+	s.events[planID] = append(s.events[planID], clonePlanEvent(event))
 	return nil
 }
 
@@ -83,8 +94,10 @@ func (s *MemoryPlanStore) ListEvents(planID string) ([]models.PlanEvent, error) 
 	}
 
 	events := s.events[planID]
-	out := make([]models.PlanEvent, len(events))
-	copy(out, events)
+	out := make([]models.PlanEvent, 0, len(events))
+	for _, event := range events {
+		out = append(out, clonePlanEvent(event))
+	}
 	return out, nil
 }
 
@@ -94,6 +107,18 @@ func clonePlanGraph(plan *models.PlanGraph) *models.PlanGraph {
 	}
 
 	cloned := *plan
+	if plan.Approval.ApprovedAt != nil {
+		approvedAt := *plan.Approval.ApprovedAt
+		cloned.Approval.ApprovedAt = &approvedAt
+	}
+	if plan.Usage.StartedAt != nil {
+		startedAt := *plan.Usage.StartedAt
+		cloned.Usage.StartedAt = &startedAt
+	}
+	if plan.Usage.FinishedAt != nil {
+		finishedAt := *plan.Usage.FinishedAt
+		cloned.Usage.FinishedAt = &finishedAt
+	}
 	cloned.Nodes = make([]*models.TaskNode, 0, len(plan.Nodes))
 	for _, node := range plan.Nodes {
 		if node == nil {
@@ -101,6 +126,21 @@ func clonePlanGraph(plan *models.PlanGraph) *models.PlanGraph {
 			continue
 		}
 		nodeCopy := *node
+		if node.LeaseExpiresAt != nil {
+			leaseExpiresAt := *node.LeaseExpiresAt
+			nodeCopy.LeaseExpiresAt = &leaseExpiresAt
+		}
+		if node.StartedAt != nil {
+			startedAt := *node.StartedAt
+			nodeCopy.StartedAt = &startedAt
+		}
+		if node.FinishedAt != nil {
+			finishedAt := *node.FinishedAt
+			nodeCopy.FinishedAt = &finishedAt
+		}
+		nodeCopy.Contract.InputArtifacts = append([]string(nil), node.Contract.InputArtifacts...)
+		nodeCopy.Contract.OutputArtifacts = append([]string(nil), node.Contract.OutputArtifacts...)
+		nodeCopy.Contract.AllowedTools = append([]string(nil), node.Contract.AllowedTools...)
 		if node.Dependencies != nil {
 			nodeCopy.Dependencies = append([]string(nil), node.Dependencies...)
 		}
@@ -139,6 +179,14 @@ func clonePlanGraph(plan *models.PlanGraph) *models.PlanGraph {
 	}
 
 	return &cloned
+}
+
+func clonePlanEvent(event models.PlanEvent) models.PlanEvent {
+	cloned := event
+	if event.Payload != nil {
+		cloned.Payload = cloneStringAnyMap(event.Payload)
+	}
+	return cloned
 }
 
 func cloneStringAnyMap(in map[string]any) map[string]any {

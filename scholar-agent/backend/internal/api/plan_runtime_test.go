@@ -49,6 +49,7 @@ func TestPlanRuntimeExecutesStoredGraphAndReplaysEvents(t *testing.T) {
 		bytes.NewBufferString(`{"intent":"运行一段 Python 代码并分析结果"}`),
 	)
 	planRequest.Header.Set("Content-Type", "application/json")
+	planRequest.Header.Set(userIDHeaderName, "runtime-test-user")
 	planResponse := httptest.NewRecorder()
 	router.ServeHTTP(planResponse, planRequest)
 	if planResponse.Code != http.StatusOK {
@@ -70,6 +71,7 @@ func TestPlanRuntimeExecutesStoredGraphAndReplaysEvents(t *testing.T) {
 	}
 
 	executeRequest := httptest.NewRequest(http.MethodPost, "/api/plans/"+created.PlanGraph.ID+"/execute", nil)
+	executeRequest.Header.Set(userIDHeaderName, "runtime-test-user")
 	executeResponse := httptest.NewRecorder()
 	router.ServeHTTP(executeResponse, executeRequest)
 	if executeResponse.Code != http.StatusAccepted {
@@ -98,6 +100,7 @@ func TestPlanRuntimeExecutesStoredGraphAndReplaysEvents(t *testing.T) {
 	}
 
 	eventsRequest := httptest.NewRequest(http.MethodGet, "/api/plans/"+created.PlanGraph.ID+"/events", nil)
+	eventsRequest.Header.Set(userIDHeaderName, "runtime-test-user")
 	eventsResponse := httptest.NewRecorder()
 	router.ServeHTTP(eventsResponse, eventsRequest)
 	if eventsResponse.Code != http.StatusOK {
@@ -110,6 +113,7 @@ func TestPlanRuntimeExecutesStoredGraphAndReplaysEvents(t *testing.T) {
 	}
 
 	streamRequest := httptest.NewRequest(http.MethodGet, "/api/plans/"+created.PlanGraph.ID+"/stream", nil)
+	streamRequest.Header.Set(userIDHeaderName, "runtime-test-user")
 	streamResponse := httptest.NewRecorder()
 	router.ServeHTTP(streamResponse, streamRequest)
 	if streamResponse.Code != http.StatusOK {
@@ -136,6 +140,70 @@ func TestPlanRuntimeRejectsUnknownPlan(t *testing.T) {
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestPlanRuntimeEnforcesOwnershipAndApproval(t *testing.T) {
+	t.Setenv("REQUIRE_PLAN_APPROVAL", "true")
+	gin.SetMode(gin.TestMode)
+	planStore := store.NewMemoryPlanStore()
+	eventBus := events.NewBus()
+	runtime := newPlanRuntime(
+		planner.NewPlanner(),
+		planStore,
+		scheduler.NewScheduler(planStore, scheduler.NewDefaultTaskExecutor(), eventBus, 1),
+		eventBus,
+	)
+	router := gin.New()
+	runtime.register(router.Group("/api"))
+
+	create := httptest.NewRequest(http.MethodPost, "/api/plan", bytes.NewBufferString(`{"intent":"运行 Python 代码"}`))
+	create.Header.Set("Content-Type", "application/json")
+	create.Header.Set(userIDHeaderName, "owner-a")
+	createResponse := httptest.NewRecorder()
+	router.ServeHTTP(createResponse, create)
+	if createResponse.Code != http.StatusOK {
+		t.Fatalf("create status=%d body=%s", createResponse.Code, createResponse.Body.String())
+	}
+	var created struct {
+		PlanGraph models.PlanGraph `json:"plan_graph"`
+	}
+	if err := json.Unmarshal(createResponse.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.PlanGraph.Status != models.StatusAwaitingApproval || !created.PlanGraph.Approval.Required {
+		t.Fatalf("expected approval gate, got status=%s approval=%#v", created.PlanGraph.Status, created.PlanGraph.Approval)
+	}
+
+	foreign := httptest.NewRequest(http.MethodGet, "/api/plans/"+created.PlanGraph.ID, nil)
+	foreign.Header.Set(userIDHeaderName, "owner-b")
+	foreignResponse := httptest.NewRecorder()
+	router.ServeHTTP(foreignResponse, foreign)
+	if foreignResponse.Code != http.StatusForbidden {
+		t.Fatalf("foreign access status=%d body=%s", foreignResponse.Code, foreignResponse.Body.String())
+	}
+
+	executeBeforeApproval := httptest.NewRequest(http.MethodPost, "/api/plans/"+created.PlanGraph.ID+"/execute", nil)
+	executeBeforeApproval.Header.Set(userIDHeaderName, "owner-a")
+	executeBeforeApprovalResponse := httptest.NewRecorder()
+	router.ServeHTTP(executeBeforeApprovalResponse, executeBeforeApproval)
+	if executeBeforeApprovalResponse.Code != http.StatusConflict {
+		t.Fatalf("execute before approval status=%d body=%s", executeBeforeApprovalResponse.Code, executeBeforeApprovalResponse.Body.String())
+	}
+
+	approve := httptest.NewRequest(http.MethodPost, "/api/plans/"+created.PlanGraph.ID+"/approve", nil)
+	approve.Header.Set(userIDHeaderName, "owner-a")
+	approveResponse := httptest.NewRecorder()
+	router.ServeHTTP(approveResponse, approve)
+	if approveResponse.Code != http.StatusOK {
+		t.Fatalf("approve status=%d body=%s", approveResponse.Code, approveResponse.Body.String())
+	}
+	approved, err := planStore.GetPlan(created.PlanGraph.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approved.Status != models.StatusPending || approved.Approval.Status != "approved" || approved.Approval.ApprovedBy != "owner-a" {
+		t.Fatalf("plan was not approved correctly: %#v", approved.Approval)
 	}
 }
 
