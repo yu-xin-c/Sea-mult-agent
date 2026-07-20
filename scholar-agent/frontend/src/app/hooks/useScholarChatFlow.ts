@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { ChatMessage, IntentContext, PlanClarification, PlanGraph } from '../../contracts/api';
-import { chat, createPlan } from '../../services/api/scholarApi';
+import type { ChatMessage, IntentContext, PlanClarification, PlanGraph, UploadedFile } from '../../contracts/api';
+import { chat, createPlan, uploadFile } from '../../services/api/scholarApi';
 import { uiText } from '../constants/uiText';
 
 const isTaskIntent = (input: string) => {
@@ -178,6 +178,9 @@ export function useScholarChatFlow(options: UseScholarChatFlowOptions) {
   const [persistedState, setPersistedState] = useState<PersistedChatState>(() => loadPersistedChatState());
   const [prompt, setPrompt] = useState('');
   const [loading, setLoading] = useState(false);
+	const [pendingAttachments, setPendingAttachments] = useState<UploadedFile[]>([]);
+	const [uploadingAttachments, setUploadingAttachments] = useState(false);
+	const [attachmentError, setAttachmentError] = useState('');
   const [loginInput, setLoginInput] = useState(() => loadPersistedChatState().userId ?? '');
   const [guestUserId] = useState(() => createId('guest'));
 
@@ -265,6 +268,8 @@ export function useScholarChatFlow(options: UseScholarChatFlowOptions) {
     });
     setLoginInput(nextUserId);
     setPrompt('');
+	setPendingAttachments([]);
+	setAttachmentError('');
   }, [loginInput]);
 
   const handleCreateSession = useCallback(() => {
@@ -279,6 +284,8 @@ export function useScholarChatFlow(options: UseScholarChatFlowOptions) {
       sessions: [nextSession, ...prev.sessions],
     }));
     setPrompt('');
+	setPendingAttachments([]);
+	setAttachmentError('');
   }, [persistedState.sessions.length, persistedState.userId]);
 
   const handleSwitchSession = useCallback((sessionId: string) => {
@@ -287,7 +294,42 @@ export function useScholarChatFlow(options: UseScholarChatFlowOptions) {
       activeSessionId: sessionId,
     }));
     setPrompt('');
+	setPendingAttachments([]);
+	setAttachmentError('');
   }, []);
+
+	const handleAttachFiles = useCallback(async (files: File[]) => {
+		if (files.length === 0 || !persistedState.activeSessionId) return;
+		const availableSlots = Math.max(0, 8 - pendingAttachments.length);
+		const selected = files.slice(0, availableSlots);
+		if (selected.length === 0) {
+			setAttachmentError('每个计划最多添加 8 个附件');
+			return;
+		}
+		setUploadingAttachments(true);
+		setAttachmentError('');
+		const identity = {
+			userId: persistedState.userId ?? guestUserId,
+			sessionId: persistedState.activeSessionId,
+		};
+		const uploaded: UploadedFile[] = [];
+		try {
+			for (const file of selected) {
+				uploaded.push(await uploadFile(file, identity));
+			}
+			setPendingAttachments((current) => [...current, ...uploaded].slice(0, 8));
+		} catch (error) {
+			console.error(error);
+			setAttachmentError('附件上传失败，请检查文件类型和大小');
+		} finally {
+			setUploadingAttachments(false);
+		}
+	}, [guestUserId, pendingAttachments.length, persistedState.activeSessionId, persistedState.userId]);
+
+	const handleRemoveAttachment = useCallback((uploadId: string) => {
+		setPendingAttachments((current) => current.filter((attachment) => attachment.id !== uploadId));
+		setAttachmentError('');
+	}, []);
 
   const updateSessionPlanState = useCallback(
     (sessionId: string, payload: { activePlanId: string | null; intentContext: IntentContext | null; planGraph: PlanGraph | null }) => {
@@ -307,23 +349,28 @@ export function useScholarChatFlow(options: UseScholarChatFlowOptions) {
   );
 
   const handleSendMessage = useCallback(async () => {
-    if (!prompt.trim() || !persistedState.activeSessionId) return;
+	if ((!prompt.trim() && pendingAttachments.length === 0) || !persistedState.activeSessionId || uploadingAttachments) return;
 
-    const userPrompt = prompt.trim();
+	const userPrompt = prompt.trim() || '请分析上传的材料，并设计预算受限的轻量消融实验。';
+	const attachmentNames = pendingAttachments.map((attachment) => attachment.name);
+	const attachmentIDs = pendingAttachments.map((attachment) => attachment.id);
     const requestUserId = persistedState.userId ?? guestUserId;
     const requestSessionId = persistedState.activeSessionId;
     setLoading(true);
-    appendMessageToSession(requestSessionId, { role: 'user', text: userPrompt });
+	appendMessageToSession(requestSessionId, {
+		role: 'user',
+		text: attachmentNames.length > 0 ? `${userPrompt}\n\n附件：${attachmentNames.join('、')}` : userPrompt,
+	});
     setPrompt('');
 
-    const isTaskRequest = isTaskIntent(userPrompt);
+	const isTaskRequest = pendingAttachments.length > 0 || isTaskIntent(userPrompt);
 
     try {
       if (isTaskRequest) {
-        const response = await createPlan(userPrompt, {
-          userId: requestUserId,
-          sessionId: requestSessionId,
-        });
+		const response = await createPlan(userPrompt, {
+		  userId: requestUserId,
+		  sessionId: requestSessionId,
+		}, attachmentIDs);
         const generatedPlanGraph = response.plan_graph;
         const returnedIntentContext = response.intent_context;
         if (!generatedPlanGraph) throw new Error('Backend did not return plan_graph');
@@ -336,10 +383,12 @@ export function useScholarChatFlow(options: UseScholarChatFlowOptions) {
         });
         const clarificationText = formatPlanClarification(response.clarification);
         if (clarificationText) {
-          appendMessageToSession(requestSessionId, {
+		appendMessageToSession(requestSessionId, {
             role: 'system',
             text: clarificationText,
-          });
+		});
+		setPendingAttachments([]);
+		setAttachmentError('');
         }
         appendMessageToSession(requestSessionId, {
           role: 'system',
@@ -359,12 +408,15 @@ export function useScholarChatFlow(options: UseScholarChatFlowOptions) {
     } finally {
       setLoading(false);
     }
-  }, [appendMessageToSession, guestUserId, persistedState.activeSessionId, persistedState.userId, prompt, updateSessionPlanState]);
+	}, [appendMessageToSession, guestUserId, pendingAttachments, persistedState.activeSessionId, persistedState.userId, prompt, updateSessionPlanState, uploadingAttachments]);
 
   return {
     prompt,
     setPrompt,
     loading,
+	pendingAttachments,
+	uploadingAttachments,
+	attachmentError,
     chatHistory,
     activePlanId,
 	activePlanStatus,
@@ -384,5 +436,7 @@ export function useScholarChatFlow(options: UseScholarChatFlowOptions) {
     handleCreateSession,
     handleSwitchSession,
     handleSendMessage,
+	handleAttachFiles,
+	handleRemoveAttachment,
   };
 }

@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -61,5 +62,23 @@ func TestPreferredRepositoryInputIsValidGitHubURL(t *testing.T) {
 	preferred := normalizeGitHubRepoURL("https://github.com/harvardnlp/annotated-transformer.git")
 	if githubURLRe.FindString(preferred) != preferred {
 		t.Fatalf("preferred repository was not accepted: %q", preferred)
+	}
+}
+
+func TestRepoDiscoveryUsesPreferredRepositoryWithoutPaperSearch(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	task := &models.Task{Inputs: map[string]any{
+		"preferred_repo_url": "https://github.com/example/research-repo",
+	}}
+	if err := executeRepoDiscovery(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	artifacts, ok := task.Metadata["artifact_values"].(map[string]any)
+	if !ok || artifacts["repo_url"] != "https://github.com/example/research-repo" {
+		t.Fatalf("unexpected preferred repository artifacts: %#v", task.Metadata)
+	}
+	if task.Status != models.StatusCompleted || task.Result != "https://github.com/example/research-repo" {
+		t.Fatalf("preferred repository was not selected: %#v", task)
 	}
 }

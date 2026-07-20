@@ -24,7 +24,8 @@ import (
 )
 
 type RequestPayload struct {
-	Intent string `json:"intent" binding:"required"`
+	Intent      string   `json:"intent" binding:"required"`
+	Attachments []string `json:"attachments,omitempty"`
 }
 
 type ExecutePayload struct {
@@ -97,6 +98,7 @@ func SetupRoutes(r *gin.Engine) {
 	}
 	sb := sandbox.NewSandboxClient(sandboxURL)
 	coderAgent := agent.NewCoderAgent(sb)
+	benchmarkAdapterAgent := agent.NewBenchmarkAdapterAgent(coderAgent)
 	librarianAgent := agent.NewLibrarianAgent()
 	dataAgent := agent.NewDataAgent()
 	chatAgent := agent.NewChatAgent(coderAgent)
@@ -109,7 +111,8 @@ func SetupRoutes(r *gin.Engine) {
 			c.Status(204)
 		})
 
-		RegisterPlanRuntimeRoutes(apiGroup, p, librarianAgent, dataAgent, coderAgent)
+		RegisterPlanRuntimeRoutes(apiGroup, p, librarianAgent, dataAgent, coderAgent, benchmarkAdapterAgent)
+		RegisterUploadRoutes(apiGroup)
 
 		apiGroup.GET("/hello", func(c *gin.Context) {
 			c.String(200, "hello api group")
@@ -257,7 +260,7 @@ func SetupRoutes(r *gin.Engine) {
 			// Initialize persistent sandbox for this task
 			// 先同步创建沙箱，再将 containerID 注入 context，避免 goroutine 内竞态
 			var containerID string
-			if sb != nil {
+			if sb != nil && shouldAllocateDirectSandbox(task) {
 				logChannel <- "[System] 正在通过 OpenSandbox 服务分配持久化沙箱环境..."
 				var sandboxErr error
 				containerID, sandboxErr = sb.CreatePersistentSandbox(ctx, task.ID, "python:3.9-bullseye", workspacePath)
@@ -288,6 +291,8 @@ func SetupRoutes(r *gin.Engine) {
 					err = dataAgent.ExecuteTask(ctx, task, nil)
 				case "coder_agent", "sandbox_agent":
 					err = coderAgent.ExecuteTask(ctx, task, nil)
+				case "benchmark_adapter_agent":
+					err = benchmarkAdapterAgent.ExecuteTask(ctx, task, nil)
 				default:
 					err = coderAgent.ExecuteTask(ctx, task, nil)
 				}
@@ -355,6 +360,15 @@ func SetupRoutes(r *gin.Engine) {
 			})
 		})
 	}
+}
+
+func shouldAllocateDirectSandbox(task *models.Task) bool {
+	if task == nil {
+		return false
+	}
+	// Benchmark tasks use the prepared_runtime produced by their DAG. Creating a
+	// second direct-execution sandbox would mount the wrong workspace.
+	return task.AssignedTo != "benchmark_adapter_agent"
 }
 
 func RegisterPlanRoute(apiGroup *gin.RouterGroup, p *planner.Planner) {

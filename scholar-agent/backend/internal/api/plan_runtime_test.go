@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -219,5 +221,65 @@ func TestBuildRuleIntentContextPreservesExplicitSmokeAndPreferredRepository(t *t
 	}
 	if shouldClarifyPaperReproductionMode(intent.RawIntent) {
 		t.Fatal("explicit smoke request should not require full reproduction clarification")
+	}
+}
+
+func TestPlanRuntimeRoutesUploadedDatasetToCustomBenchmarkHarness(t *testing.T) {
+	t.Setenv("UPLOAD_ROOT", t.TempDir())
+	owner := "benchmark-owner"
+	metadata := uploadMetadata{
+		ID: "6fb2d7dc-e40a-40cf-9a89-c8bf44f27314", Name: "reviews.csv", ContentType: "text/csv",
+		OwnerID: owner, SessionID: "session", CreatedAt: time.Now().UTC(), SHA256: "fixture",
+	}
+	directory := uploadDirectory(owner, metadata.ID)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	metadata.StoredPath = filepath.Join(directory, "content.csv")
+	content := []byte("review,label\ngood,positive\n")
+	metadata.Size = int64(len(content))
+	if err := os.WriteFile(metadata.StoredPath, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeUploadMetadata(metadata); err != nil {
+		t.Fatal(err)
+	}
+
+	planStore := store.NewMemoryPlanStore()
+	eventBus := events.NewBus()
+	runtime := newPlanRuntime(
+		planner.NewPlanner(), planStore,
+		scheduler.NewScheduler(planStore, scheduler.NewDefaultTaskExecutor(), eventBus, 1), eventBus,
+	)
+	router := gin.New()
+	runtime.register(router.Group("/api"))
+	payload := fmt.Sprintf(`{"intent":"用 https://github.com/example/research-repo 跑 benchmark，输入列 review，标签列 label","attachments":[%q]}`, metadata.ID)
+	request := httptest.NewRequest(http.MethodPost, "/api/plan", bytes.NewBufferString(payload))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(userIDHeaderName, owner)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	var created struct {
+		PlanGraph     models.PlanGraph     `json:"plan_graph"`
+		IntentContext models.IntentContext `json:"intent_context"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.IntentContext.IntentType != "Custom_Benchmark" || len(created.PlanGraph.Nodes) != 11 {
+		t.Fatalf("request did not enter custom benchmark harness: intent=%s nodes=%d", created.IntentContext.IntentType, len(created.PlanGraph.Nodes))
+	}
+	if created.PlanGraph.Nodes[0].AssignedTo != "benchmark_adapter_agent" {
+		t.Fatalf("dataset profile routed to %s", created.PlanGraph.Nodes[0].AssignedTo)
+	}
+	uploadedFiles, ok := created.IntentContext.Entities["uploaded_files"].([]any)
+	if !ok || len(uploadedFiles) != 1 {
+		t.Fatalf("unexpected public upload metadata: %#v", created.IntentContext.Entities["uploaded_files"])
+	}
+	if uploaded, ok := uploadedFiles[0].(map[string]any); !ok || uploaded["text_excerpt"] != nil {
+		t.Fatalf("benchmark dataset excerpt leaked into plan response: %#v", uploadedFiles[0])
 	}
 }

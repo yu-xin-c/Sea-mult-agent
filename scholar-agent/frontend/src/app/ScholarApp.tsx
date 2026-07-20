@@ -97,6 +97,11 @@ interface ScholarWorkspaceContentProps {
     prompt: string;
     setPrompt: (value: string) => void;
     handleSendMessage: () => void;
+	pendingAttachments: ReturnType<typeof useScholarChatFlow>['pendingAttachments'];
+	uploadingAttachments: boolean;
+	attachmentError: string;
+	handleAttachFiles: (files: File[]) => void;
+	handleRemoveAttachment: (uploadId: string) => void;
     intentContext: IntentContext | null;
     activePlanId: string | null;
 	activePlanStatus: string | null;
@@ -148,6 +153,9 @@ function ScholarWorkspaceContent(props: ScholarWorkspaceContentProps) {
         loading: chatFlow.loading,
         prompt: chatFlow.prompt,
         showSuggestions: pdfFlow.showSuggestions,
+		pendingAttachments: chatFlow.pendingAttachments,
+		uploadingAttachments: chatFlow.uploadingAttachments,
+		attachmentError: chatFlow.attachmentError,
         isLoggedIn: chatFlow.isLoggedIn,
         userId: chatFlow.userId,
         loginInput: chatFlow.loginInput,
@@ -162,6 +170,8 @@ function ScholarWorkspaceContent(props: ScholarWorkspaceContentProps) {
         onLogin: chatFlow.handleLogin,
         onCreateSession: chatFlow.handleCreateSession,
         onSwitchSession: chatFlow.handleSwitchSession,
+		onAttachFiles: chatFlow.handleAttachFiles,
+		onRemoveAttachment: chatFlow.handleRemoveAttachment,
       }}
       pdfActions={{
         onOpenPdf: () => pdfFlow.setPdfUrl(getPdfProxyUrl('https://arxiv.org/pdf/1706.03762.pdf')),
@@ -275,6 +285,11 @@ export default function ScholarApp() {
           prompt: chatFlow.prompt,
           setPrompt: chatFlow.setPrompt,
           handleSendMessage: chatFlow.handleSendMessage,
+		  pendingAttachments: chatFlow.pendingAttachments,
+		  uploadingAttachments: chatFlow.uploadingAttachments,
+		  attachmentError: chatFlow.attachmentError,
+		  handleAttachFiles: chatFlow.handleAttachFiles,
+		  handleRemoveAttachment: chatFlow.handleRemoveAttachment,
           intentContext: chatFlow.intentContext,
           activePlanId: chatFlow.activePlanId,
 		  activePlanStatus: chatFlow.activePlanStatus,

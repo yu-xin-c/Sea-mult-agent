@@ -31,6 +31,8 @@ const resolveCompactMode = (displayMode: ExecutionDisplayMode): CompactMode => {
   return displayMode;
 };
 
+const reportAgents = new Set(['librarian_agent', 'data_agent', 'benchmark_adapter_agent']);
+
 export function ExecutionSidebar(props: ExecutionSidebarProps) {
   const {
     selectedTask,
@@ -187,6 +189,7 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
     onExecute,
     onChangeDisplayMode,
   } = props;
+  const ablationBudget = selectedTask.Type === 'ablation_design' ? selectedTask.Inputs : undefined;
 
   return (
     <>
@@ -195,7 +198,13 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
           {getAgentIcon(selectedTask.AssignedTo)}
           节点执行面板
         </h3>
-        <button onClick={onClose} className="text-gray-500 hover:text-gray-700 p-1.5 hover:bg-gray-200 rounded-full transition-all">
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-gray-500 hover:text-gray-700 p-1.5 hover:bg-gray-200 rounded-full transition-all"
+          title="关闭节点执行面板"
+          aria-label="关闭节点执行面板"
+        >
           <X className="w-5 h-5" />
         </button>
       </div>
@@ -212,6 +221,14 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
             {selectedTask.AssignedTo}
           </div>
         </div>
+
+        {ablationBudget && (
+          <div className="grid grid-cols-3 border-y border-gray-100 py-3 text-center">
+            <BudgetValue label="实验" value={ablationBudget.ablation_max_experiments} suffix="组" />
+            <BudgetValue label="GPU" value={ablationBudget.ablation_max_gpu_minutes} suffix="分钟" />
+            <BudgetValue label="总耗时" value={ablationBudget.ablation_max_wall_minutes} suffix="分钟" />
+          </div>
+        )}
 
         <button
           onClick={onExecute}
@@ -264,7 +281,7 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
                   生成图表
                 </button>
               )}
-              {(selectedTask.AssignedTo === 'librarian_agent' || selectedTask.AssignedTo === 'data_agent') && executionResult && (
+              {reportAgents.has(selectedTask.AssignedTo) && executionResult && (
                 <button
                   onClick={() => onChangeDisplayMode('report')}
                   className={`flex-1 py-3 text-xs font-black text-center border-b-2 flex items-center justify-center gap-1 transition-all ${
@@ -306,7 +323,7 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
               </label>
               <div className="bg-gray-900 rounded-2xl p-5 flex-1 overflow-y-auto font-mono text-[11px] text-green-400 leading-relaxed shadow-2xl border border-gray-800 whitespace-pre-wrap selection:bg-green-800 selection:text-white scrollbar-thin scrollbar-thumb-gray-700">
                 {executionLogs || '>>> 准备就绪，等待响应...'}
-                {executionResult && !['librarian_agent', 'data_agent'].includes(selectedTask.AssignedTo) && (
+                {executionResult && !reportAgents.has(selectedTask.AssignedTo) && (
                   <div className="mt-5 pt-5 border-t border-gray-800 text-blue-400 font-bold">
                     [Output]:<br />
                     {executionResult}
@@ -336,5 +353,15 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
         </div>
       </div>
     </>
+  );
+}
+
+function BudgetValue({ label, value, suffix }: { label: string; value: unknown; suffix: string }) {
+  const displayValue = typeof value === 'number' || typeof value === 'string' ? String(value) : '-';
+  return (
+    <div>
+      <div className="text-[10px] font-bold text-gray-400">{label}</div>
+      <div className="mt-1 text-sm font-bold text-gray-800">{displayValue} {suffix}</div>
+    </div>
   );
 }

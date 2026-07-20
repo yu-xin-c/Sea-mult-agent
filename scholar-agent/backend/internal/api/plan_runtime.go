@@ -53,6 +53,7 @@ func RegisterPlanRuntimeRoutes(
 	librarian scheduler.AgentRunner,
 	data scheduler.AgentRunner,
 	coder scheduler.AgentRunner,
+	benchmarkAdapter ...scheduler.AgentRunner,
 ) {
 	var planStore store.PlanStore = store.NewMemoryPlanStore()
 	if path := strings.TrimSpace(os.Getenv("PLAN_STORE_PATH")); path != "" {
@@ -67,7 +68,7 @@ func RegisterPlanRuntimeRoutes(
 		}
 	}
 	eventBus := events.NewBus()
-	executor := scheduler.NewRoutedTaskExecutor(librarian, data, coder)
+	executor := scheduler.NewRoutedTaskExecutor(librarian, data, coder, benchmarkAdapter...)
 	runner := scheduler.NewScheduler(planStore, executor, eventBus, 2)
 	runtime := newPlanRuntime(p, planStore, runner, eventBus)
 	runtime.register(apiGroup)
@@ -95,6 +96,20 @@ func (r *planRuntime) createPlan(c *gin.Context) {
 	userID := resolveUserID(c)
 	sessionID := resolveSessionID(c)
 	intentContext := buildRuleIntentContext(payload.Intent)
+	attachments, err := resolvePlanUploads(userID, payload.Attachments)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(attachments) > 0 {
+		if hasBenchmarkDatasetAttachment(attachments) && containsAny(payload.Intent, []string{"benchmark", "基准测试", "评测", "测评", "跑分"}) {
+			intentContext.IntentType = "Custom_Benchmark"
+			intentContext.Entities["needs_custom_benchmark"] = true
+			removeAttachmentTextExcerpts(attachments)
+		}
+		intentContext.Entities["uploaded_files"] = attachments
+		intentContext.Metadata["attachment_count"] = len(attachments)
+	}
 	plan, err := r.planner.BuildPlan(c.Request.Context(), intentContext)
 	if err != nil {
 		log.Printf("Error generating plan graph: %v", err)
@@ -387,12 +402,12 @@ func buildRuleIntentContext(rawIntent string) models.IntentContext {
 		Reasoning:  "deterministic API fallback classifier",
 		Source:     "rule_fallback",
 	}
+	if repoURL := routeGitHubRepoURLRe.FindString(rawIntent); repoURL != "" {
+		context.Entities["preferred_repo_url"] = strings.TrimSuffix(repoURL, ".git")
+	}
 	if intentType == "Paper_Reproduction" {
 		for key, value := range collectPaperSearchFields(context, rawIntent) {
 			context.Entities[key] = value
-		}
-		if repoURL := routeGitHubRepoURLRe.FindString(rawIntent); repoURL != "" {
-			context.Entities["preferred_repo_url"] = strings.TrimSuffix(repoURL, ".git")
 		}
 		if containsAny(rawIntent, []string{"smoke", "最小实验", "最小验证", "快速验证"}) {
 			context.Entities["smoke_reproduction"] = true
@@ -404,8 +419,29 @@ func buildRuleIntentContext(rawIntent string) models.IntentContext {
 		if containsAny(rawIntent, []string{"debug", "fix", "修复", "排查", "不一致", "重跑"}) {
 			context.Entities["needs_fix"] = true
 		}
+		if containsAny(rawIntent, []string{"ablation", "消融", "参数敏感性", "模块移除", "随机种子", "seed stability", "运行成本对照"}) {
+			context.Entities["needs_ablation"] = true
+		}
 	}
 	return context
+}
+
+func hasBenchmarkDatasetAttachment(attachments []map[string]any) bool {
+	for _, attachment := range attachments {
+		name := strings.ToLower(strings.TrimSpace(fmt.Sprint(attachment["name"])))
+		for _, extension := range []string{".csv", ".tsv", ".json", ".jsonl"} {
+			if strings.HasSuffix(name, extension) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func removeAttachmentTextExcerpts(attachments []map[string]any) {
+	for _, attachment := range attachments {
+		delete(attachment, "text_excerpt")
+	}
 }
 
 func legacyPlanFromGraph(graph *models.PlanGraph) *models.Plan {

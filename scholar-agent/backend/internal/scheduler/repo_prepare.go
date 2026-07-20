@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,6 +28,7 @@ type repoPrepareManifest struct {
 	FullReproductionSwitch bool                      `json:"full_reproduction_switch"`
 	ModeDecision           ReproductionModeDecision  `json:"mode_decision"`
 	HardwareProbe          ReproductionResourceProbe `json:"hardware_probe"`
+	UploadedFiles          []string                  `json:"uploaded_files,omitempty"`
 }
 
 const reproductionSmokeRunnerName = "scholar_repro_smoke.py"
@@ -50,6 +52,10 @@ func executeRepoPrepare(ctx context.Context, runtimeTask *models.Task) error {
 	dependencyFiles, codeCandidates, scanErr := scanRepositoryWorkspace(workspacePath)
 	if scanErr != nil {
 		return scanErr
+	}
+	uploadedFiles, uploadErr := materializeUploadedFiles(workspacePath, runtimeTask)
+	if uploadErr != nil {
+		return uploadErr
 	}
 
 	selectedCodeFile := choosePreferredCodeFile(codeCandidates)
@@ -88,6 +94,7 @@ func executeRepoPrepare(ctx context.Context, runtimeTask *models.Task) error {
 		FullReproductionSwitch: modeDecision.EffectiveMode == reproductionModeFull,
 		ModeDecision:           modeDecision,
 		HardwareProbe:          modeDecision.Probe,
+		UploadedFiles:          uploadedFiles,
 	}
 	manifestJSON, _ := json.Marshal(manifest)
 	modeReport := reproductionModeReport(modeDecision)
@@ -106,6 +113,93 @@ func executeRepoPrepare(ctx context.Context, runtimeTask *models.Task) error {
 	runtimeTask.Result = chooseNonEmpty(workspacePath, selectedCodeFile, repoURL)
 	runtimeTask.Code = generatedCode
 	runtimeTask.Status = models.StatusCompleted
+	return nil
+}
+
+type uploadedFileInput struct {
+	Name        string `json:"name"`
+	StoragePath string `json:"storage_path"`
+}
+
+func materializeUploadedFiles(workspacePath string, task *models.Task) ([]string, error) {
+	if task == nil || task.Inputs == nil || task.Inputs["uploaded_files"] == nil {
+		return nil, nil
+	}
+	raw, err := json.Marshal(task.Inputs["uploaded_files"])
+	if err != nil {
+		return nil, fmt.Errorf("encode uploaded files: %w", err)
+	}
+	var uploaded []uploadedFileInput
+	if err := json.Unmarshal(raw, &uploaded); err != nil {
+		return nil, fmt.Errorf("decode uploaded files: %w", err)
+	}
+	if len(uploaded) == 0 {
+		return nil, nil
+	}
+	targetDirectory, err := ensureWorkspaceUploadDirectory(workspacePath)
+	if err != nil {
+		return nil, err
+	}
+	materialized := make([]string, 0, len(uploaded))
+	for index, file := range uploaded {
+		sourcePath := filepath.Clean(strings.TrimSpace(file.StoragePath))
+		info, err := os.Lstat(sourcePath)
+		if err != nil || !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("uploaded file %q is unavailable", file.Name)
+		}
+		name := filepath.Base(strings.TrimSpace(file.Name))
+		if name == "" || name == "." {
+			name = fmt.Sprintf("attachment-%d", index+1)
+		}
+		targetPath := filepath.Join(targetDirectory, fmt.Sprintf("%02d-%s", index+1, name))
+		if err := copyRegularFile(sourcePath, targetPath); err != nil {
+			return nil, err
+		}
+		relative, _ := filepath.Rel(workspacePath, targetPath)
+		materialized = append(materialized, filepath.ToSlash(relative))
+	}
+	return materialized, nil
+}
+
+func ensureWorkspaceUploadDirectory(workspacePath string) (string, error) {
+	current := filepath.Clean(workspacePath)
+	info, err := os.Lstat(current)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("workspace is not a regular directory")
+	}
+	for _, component := range []string{".scholar", "uploads"} {
+		current = filepath.Join(current, component)
+		info, err = os.Lstat(current)
+		if os.IsNotExist(err) {
+			if err := os.Mkdir(current, 0o700); err != nil {
+				return "", fmt.Errorf("create uploaded file workspace: %w", err)
+			}
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("inspect uploaded file workspace: %w", err)
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("uploaded file workspace contains an unsafe path component")
+		}
+	}
+	return current, nil
+}
+
+func copyRegularFile(sourcePath, targetPath string) error {
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		return fmt.Errorf("open uploaded file: %w", err)
+	}
+	defer source.Close()
+	target, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("create workspace attachment: %w", err)
+	}
+	defer target.Close()
+	if _, err := io.Copy(target, source); err != nil {
+		return fmt.Errorf("copy workspace attachment: %w", err)
+	}
 	return nil
 }
 
@@ -133,7 +227,7 @@ func maybeCreateReproductionSmokeRunner(workspacePath string, task *models.Task)
 	runnerKind := "bounded_forward_pass"
 	runner := buildAttentionReproductionSmokeRunner(hasRepoTransformer)
 	if shouldCreateAttentionAblationRunner(task) {
-		runner = buildAttentionAblationSmokeRunner()
+		runner = buildAttentionAblationSmokeRunner(task)
 		runnerKind = "attention_structure_ablation"
 	}
 	if err := os.WriteFile(runnerPath, []byte(runner), 0o644); err != nil {
@@ -143,6 +237,9 @@ func maybeCreateReproductionSmokeRunner(workspacePath string, task *models.Task)
 }
 
 func shouldCreateAttentionAblationRunner(task *models.Task) bool {
+	if strings.TrimSpace(taskInputValue(task, "ablation_plan")) != "" {
+		return true
+	}
 	context := strings.ToLower(strings.Join([]string{
 		taskField(task, func(t *models.Task) string { return t.Name }),
 		taskField(task, func(t *models.Task) string { return t.Description }),
@@ -157,8 +254,69 @@ func shouldCreateAttentionAblationRunner(task *models.Task) bool {
 	return requestsAblation && requestsAttentionVariants
 }
 
-func buildAttentionAblationSmokeRunner() string {
-	return `import json
+type attentionAblationVariant struct {
+	Name        string `json:"name"`
+	Heads       int    `json:"heads"`
+	UseScaling  bool   `json:"use_scaling"`
+	UseResidual bool   `json:"use_residual"`
+	BatchSize   int    `json:"batch_size"`
+	SequenceLen int    `json:"sequence_length"`
+	Seed        int    `json:"seed"`
+	Category    string `json:"category"`
+}
+
+func selectedAttentionAblationVariants(task *models.Task) []attentionAblationVariant {
+	variants := []attentionAblationVariant{{Name: "baseline", Heads: 4, UseScaling: true, UseResidual: true, BatchSize: 2, SequenceLen: 16, Seed: 20260717, Category: "baseline"}}
+	categories := map[string]bool{}
+	if raw := strings.TrimSpace(taskInputValue(task, "ablation_plan")); raw != "" {
+		var plan models.AblationPlan
+		if err := json.Unmarshal([]byte(raw), &plan); err == nil {
+			for _, candidate := range plan.Selected {
+				categories[candidate.Category] = true
+			}
+		}
+	}
+	if len(categories) == 0 {
+		categories["parameter"] = true
+		categories["module"] = true
+	}
+	if categories["parameter"] {
+		variants = append(variants,
+			attentionAblationVariant{Name: "heads_1", Heads: 1, UseScaling: true, UseResidual: true, BatchSize: 2, SequenceLen: 16, Seed: 20260717, Category: "parameter"},
+			attentionAblationVariant{Name: "heads_2", Heads: 2, UseScaling: true, UseResidual: true, BatchSize: 2, SequenceLen: 16, Seed: 20260717, Category: "parameter"},
+			attentionAblationVariant{Name: "heads_8", Heads: 8, UseScaling: true, UseResidual: true, BatchSize: 2, SequenceLen: 16, Seed: 20260717, Category: "parameter"},
+		)
+	}
+	if categories["module"] {
+		variants = append(variants,
+			attentionAblationVariant{Name: "no_scaling", Heads: 4, UseScaling: false, UseResidual: true, BatchSize: 2, SequenceLen: 16, Seed: 20260717, Category: "module"},
+			attentionAblationVariant{Name: "no_residual", Heads: 4, UseScaling: true, UseResidual: false, BatchSize: 2, SequenceLen: 16, Seed: 20260717, Category: "module"},
+		)
+	}
+	if categories["data_scale"] {
+		variants = append(variants,
+			attentionAblationVariant{Name: "sequence_8", Heads: 4, UseScaling: true, UseResidual: true, BatchSize: 2, SequenceLen: 8, Seed: 20260717, Category: "data_scale"},
+			attentionAblationVariant{Name: "sequence_32", Heads: 4, UseScaling: true, UseResidual: true, BatchSize: 2, SequenceLen: 32, Seed: 20260717, Category: "data_scale"},
+		)
+	}
+	if categories["seed_stability"] {
+		variants = append(variants,
+			attentionAblationVariant{Name: "seed_17", Heads: 4, UseScaling: true, UseResidual: true, BatchSize: 2, SequenceLen: 16, Seed: 17, Category: "seed_stability"},
+			attentionAblationVariant{Name: "seed_47", Heads: 4, UseScaling: true, UseResidual: true, BatchSize: 2, SequenceLen: 16, Seed: 47, Category: "seed_stability"},
+		)
+	}
+	if categories["runtime_cost"] {
+		variants = append(variants,
+			attentionAblationVariant{Name: "batch_1", Heads: 4, UseScaling: true, UseResidual: true, BatchSize: 1, SequenceLen: 16, Seed: 20260717, Category: "runtime_cost"},
+			attentionAblationVariant{Name: "batch_4", Heads: 4, UseScaling: true, UseResidual: true, BatchSize: 4, SequenceLen: 16, Seed: 20260717, Category: "runtime_cost"},
+		)
+	}
+	return variants
+}
+
+func buildAttentionAblationSmokeRunner(task *models.Task) string {
+	variantsJSON, _ := json.Marshal(selectedAttentionAblationVariants(task))
+	template := `import json
 import math
 import statistics
 import time
@@ -167,12 +325,11 @@ import torch
 import torch.nn as nn
 
 
-SEED = 20260717
 DMODEL = 64
-BATCH_SIZE = 2
-SEQ_LEN = 16
 WARMUP_RUNS = 8
 TIMED_RUNS = 40
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+VARIANTS = json.loads(r'''__SCHOLAR_ABLATION_VARIANTS__''')
 
 
 class AblationAttention(nn.Module):
@@ -206,25 +363,31 @@ class AblationAttention(nn.Module):
         return output, entropy
 
 
-def run_variant(name, heads, use_scaling, use_residual, shared_state, inputs):
-    model = AblationAttention(heads, use_scaling, use_residual)
+def run_variant(config, shared_state):
+    torch.manual_seed(config["seed"])
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(config["seed"])
+    inputs = torch.randn(config["batch_size"], config["sequence_length"], DMODEL, device=DEVICE)
+    model = AblationAttention(config["heads"], config["use_scaling"], config["use_residual"])
     model.load_state_dict(shared_state)
+    model.to(DEVICE)
     model.eval()
     with torch.no_grad():
         for _ in range(WARMUP_RUNS):
             model(inputs)
+        if DEVICE.type == "cuda":
+            torch.cuda.synchronize()
         elapsed = []
         output = None
         entropy = None
         for _ in range(TIMED_RUNS):
             start = time.perf_counter()
             output, entropy = model(inputs)
+            if DEVICE.type == "cuda":
+                torch.cuda.synchronize()
             elapsed.append((time.perf_counter() - start) * 1000.0)
     return {
-        "name": name,
-        "heads": heads,
-        "use_scaling": use_scaling,
-        "use_residual": use_residual,
+        **config,
         "latency_median_ms": round(statistics.median(elapsed), 6),
         "attention_entropy": round(float(entropy.item()), 6),
         "output_l2": round(float(output.norm().item()), 6),
@@ -239,43 +402,37 @@ def percent_change(value, baseline):
 
 
 def main():
-    torch.manual_seed(SEED)
-    torch.set_num_threads(1)
-    inputs = torch.randn(BATCH_SIZE, SEQ_LEN, DMODEL)
+    torch.manual_seed(20260717)
+    if DEVICE.type == "cpu":
+        torch.set_num_threads(1)
     reference = AblationAttention(4, True, True)
     shared_state = reference.state_dict()
-    variants = [
-        ("heads_1", 1, True, True),
-        ("heads_2", 2, True, True),
-        ("heads_4", 4, True, True),
-        ("heads_8", 8, True, True),
-        ("no_scaling", 4, False, True),
-        ("no_residual", 4, True, False),
-    ]
-    results = [run_variant(name, heads, scaling, residual, shared_state, inputs) for name, heads, scaling, residual in variants]
+    results = [run_variant(config, shared_state) for config in VARIANTS]
     by_name = {item["name"]: item for item in results}
-    baseline = by_name["heads_4"]
+    baseline = by_name["baseline"]
+    comparisons = {}
+    for item in results:
+        if item["name"] == "baseline":
+            continue
+        comparisons[item["name"]] = {
+            "latency_median_ms": percent_change(item["latency_median_ms"], baseline["latency_median_ms"]),
+            "attention_entropy": percent_change(item["attention_entropy"], baseline["attention_entropy"]),
+            "output_l2": percent_change(item["output_l2"], baseline["output_l2"]),
+        }
     metrics = {
         "status": "ok",
         "reproduction_scope": "attention_structure_ablation",
         "paper": "Attention Is All You Need",
         "repo_entry": "scholar_agent_generated_attention_ablation",
-        "device": "cpu",
+        "device": str(DEVICE),
         "torch_version": torch.__version__,
-        "seed": SEED,
         "config": {
             "d_model": DMODEL,
-            "batch_size": BATCH_SIZE,
-            "sequence_length": SEQ_LEN,
             "warmup_runs": WARMUP_RUNS,
             "timed_runs": TIMED_RUNS,
         },
         "results": results,
-        "comparisons_percent": {
-            "heads_1_to_8_latency": percent_change(by_name["heads_8"]["latency_median_ms"], by_name["heads_1"]["latency_median_ms"]),
-            "no_scaling_attention_entropy_vs_heads_4": percent_change(by_name["no_scaling"]["attention_entropy"], baseline["attention_entropy"]),
-            "no_residual_output_l2_vs_heads_4": percent_change(by_name["no_residual"]["output_l2"], baseline["output_l2"]),
-        },
+        "comparisons_percent_vs_baseline": comparisons,
         "notes": [
             "The repository is cloned and scanned by ScholarAgent before this bounded harness is generated.",
             "This is a structural smoke ablation, not WMT14 training or paper BLEU reproduction.",
@@ -287,6 +444,7 @@ def main():
 if __name__ == "__main__":
     main()
 `
+	return strings.Replace(template, "__SCHOLAR_ABLATION_VARIANTS__", string(variantsJSON), 1)
 }
 
 func shouldCreateGenericAttentionSmokeRunner(workspacePath string, task *models.Task) bool {

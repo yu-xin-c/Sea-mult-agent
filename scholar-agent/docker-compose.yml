@@ -31,12 +31,15 @@ services:
       - /tmp:/tmp
       - ../docker-core/config:/app/config:ro
       - scholar-plan-data:/app/data
+      - scholar-upload-data:/app/uploads
     env_file:
       - ./backend.env
     environment:
       - SANDBOX_URL=http://docker-sandbox:8082
       - SANDBOX_API_TOKEN=${SANDBOX_API_TOKEN:-local-sandbox-token}
       - PLAN_STORE_PATH=/app/data/plans.json
+      - UPLOAD_ROOT=/app/uploads
+      - UPLOAD_MAX_MB=${UPLOAD_MAX_MB:-32}
     depends_on:
       - docker-sandbox
     networks:
@@ -58,3 +61,4 @@ networks:
 
 volumes:
   scholar-plan-data:
+  scholar-upload-data:

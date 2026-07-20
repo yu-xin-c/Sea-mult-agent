@@ -12,6 +12,16 @@ export interface ChatMessage {
   taskId?: string;
 }
 
+export interface UploadedFile {
+  id: string;
+  name: string;
+  content_type: string;
+  size: number;
+  sha256: string;
+  content_url: string;
+  created_at: string;
+}
+
 export interface Task {
   ID: string;
   Name: string;
@@ -20,6 +30,7 @@ export interface Task {
   AssignedTo: string;
   Status: string;
   Dependencies: string[];
+  Inputs?: Record<string, unknown>;
 }
 
 export interface GraphTask {
@@ -30,6 +41,7 @@ export interface GraphTask {
   assigned_to: string;
   status: string;
   dependencies: string[];
+  inputs?: Record<string, unknown>;
   required_artifacts: string[];
   output_artifacts: string[];
   parallelizable: boolean;

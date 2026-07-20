@@ -6,6 +6,8 @@
 - [project_structure_frontend_backend.md](project_structure_frontend_backend.md)：仓库结构与模块职责
 - [backend_planner_models_reference.md](backend_planner_models_reference.md)：后端规划与调度模型说明
 - [agent_runtime_p0_p1.md](agent_runtime_p0_p1.md)：P0/P1 可靠性、安全、治理与运维说明
+- [tot_ablation_and_uploads.md](tot_ablation_and_uploads.md)：受限 ToT 消融设计、预算选择和文件上传
+- [custom_benchmark_adapter_agent.md](custom_benchmark_adapter_agent.md)：上传自有数据并为公开仓库生成受限评测适配器
 - [user_manual.md](user_manual.md)：产品使用说明
 - [../examples/](../examples/)：可运行示例、成功条件与已验证结果
 

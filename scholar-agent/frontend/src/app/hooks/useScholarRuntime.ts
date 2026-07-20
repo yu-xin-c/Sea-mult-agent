@@ -29,6 +29,8 @@ type ExecutionAction =
   | { type: 'reset' };
 
 const initialNodeExecutionState: NodeExecutionState = { logs: '', result: '', code: '', imageBase64: '' };
+const reportAgents = new Set(['librarian_agent', 'data_agent', 'benchmark_adapter_agent']);
+const isReportAgent = (assignedTo: string) => reportAgents.has(assignedTo);
 
 const updateNodeStatus = (node: Node, status: string): Node => {
 	const task = node.data.task as Task;
@@ -57,7 +59,7 @@ const updateNodeStatus = (node: Node, status: string): Node => {
 const detectBestDisplayMode = (task: Task, state: NodeExecutionState): ExecutionDisplayMode => {
   if (state.imageBase64) return 'plot';
   if (state.code && !state.result) return 'code';
-  if (state.result && (task.AssignedTo === 'librarian_agent' || task.AssignedTo === 'data_agent')) return 'report';
+  if (state.result && isReportAgent(task.AssignedTo)) return 'report';
   return 'logs';
 };
 
@@ -184,7 +186,7 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
 
   const buildDirectExecutionInputs = useCallback(
     (task: Task): Record<string, unknown> => {
-      const inputs: Record<string, unknown> = {};
+      const inputs: Record<string, unknown> = { ...(task.Inputs ?? {}) };
       for (const dependencyId of task.Dependencies || []) {
         const upstream = executionState.nodeStates[dependencyId];
         if (!upstream) continue;
@@ -310,7 +312,7 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
 
       const directInputs = buildDirectExecutionInputs(task);
       const initLog = `[System] 正在唤醒 ${task.AssignedTo}...\n[System] 正在通过 Eino 框架调用 DeepSeek 模型${
-        task.AssignedTo === 'librarian_agent' || task.AssignedTo === 'data_agent' ? '生成报告' : '生成代码'
+        isReportAgent(task.AssignedTo) ? '生成结构化结果' : '生成代码'
       }...\n\n${formatParameterObject('[Params] 本次传入参数', directInputs)}\n`;
       patchNodeState(task.ID, () => ({ logs: initLog, result: '', code: '', imageBase64: '' }));
 
@@ -360,7 +362,7 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
 
               const taskActions: ('view_plot' | 'view_report')[] = [];
               if (imageBase64) taskActions.push('view_plot');
-              if (finalResult && (task.AssignedTo === 'librarian_agent' || task.AssignedTo === 'data_agent')) {
+              if (finalResult && isReportAgent(task.AssignedTo)) {
                 taskActions.push('view_report');
               }
 
@@ -378,7 +380,7 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
               });
 
               if (imageBase64) dispatchExecution({ type: 'set-display-mode', mode: 'plot' });
-              else if (task.AssignedTo === 'librarian_agent' || task.AssignedTo === 'data_agent') {
+              else if (isReportAgent(task.AssignedTo)) {
                 dispatchExecution({ type: 'set-display-mode', mode: 'report' });
               }
 

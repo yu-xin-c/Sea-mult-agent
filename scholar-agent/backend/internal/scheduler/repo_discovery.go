@@ -70,6 +70,19 @@ func executeRepoDiscovery(ctx context.Context, runtimeTask *models.Task) error {
 	}
 
 	query := buildRepoDiscoveryQuery(runtimeTask)
+	preferredRepoURL := normalizeGitHubRepoURL(taskInputValue(runtimeTask, "preferred_repo_url"))
+	if preferredRepoURL != "" && githubURLRe.FindString(preferredRepoURL) == preferredRepoURL {
+		candidate := repoCandidate{
+			Title:       "User-preferred repository",
+			RepoName:    strings.TrimPrefix(preferredRepoURL, "https://github.com/"),
+			Description: "Repository explicitly requested by the user; cloneability is verified by repo_prepare.",
+			RepoURLs:    []string{preferredRepoURL},
+			Source:      "user_preference",
+			ScoreHint:   1_000_000,
+		}
+		completeRepoDiscoveryTask(runtimeTask, query, []repoCandidate{candidate}, preferredRepoURL, false, false, "")
+		return nil
+	}
 	if strings.TrimSpace(query) == "" {
 		return fmt.Errorf("repo_discovery: empty query")
 	}
@@ -95,19 +108,6 @@ func executeRepoDiscovery(ctx context.Context, runtimeTask *models.Task) error {
 	}
 
 	candidates := make([]repoCandidate, 0, len(items))
-	preferredRepoURL := normalizeGitHubRepoURL(taskInputValue(runtimeTask, "preferred_repo_url"))
-	if preferredRepoURL != "" && githubURLRe.FindString(preferredRepoURL) == preferredRepoURL {
-		candidates = append(candidates, repoCandidate{
-			Title:       "User-preferred repository",
-			RepoName:    strings.TrimPrefix(preferredRepoURL, "https://github.com/"),
-			Description: "Repository explicitly requested in the reproduction intent.",
-			RepoURLs:    []string{preferredRepoURL},
-			Source:      "user_preference",
-			ScoreHint:   1_000_000,
-		})
-	} else {
-		preferredRepoURL = ""
-	}
 	for _, item := range items {
 		pid := strings.TrimSpace(item.Paper.ID)
 		title := strings.TrimSpace(item.Paper.Title)
@@ -148,13 +148,13 @@ func executeRepoDiscovery(ctx context.Context, runtimeTask *models.Task) error {
 	} else {
 		selected = firstSelectedRepo(candidates)
 	}
-	if preferredRepoURL != "" {
-		selected = preferredRepoURL
-	}
+	completeRepoDiscoveryTask(runtimeTask, query, candidates, selected, fallbackUsed, strictTrustedSelection, hfSearchError)
+	return nil
+}
 
+func completeRepoDiscoveryTask(runtimeTask *models.Task, query string, candidates []repoCandidate, selected string, fallbackUsed, strictTrustedSelection bool, searchError string) {
 	candidateJSON, _ := json.Marshal(candidates)
-	report := buildRepoDiscoveryReport(query, candidates, selected, fallbackUsed, strictTrustedSelection, hfSearchError)
-
+	report := buildRepoDiscoveryReport(query, candidates, selected, fallbackUsed, strictTrustedSelection, searchError)
 	if runtimeTask.Metadata == nil {
 		runtimeTask.Metadata = map[string]any{}
 	}
@@ -163,14 +163,12 @@ func executeRepoDiscovery(ctx context.Context, runtimeTask *models.Task) error {
 		"repo_validation_report": report,
 		"repo_url":               selected,
 	}
-
 	runtimeTask.Result = selected
 	if strings.TrimSpace(runtimeTask.Result) == "" {
 		// 没有 repo_url 时也要返回可读结果，避免前端显示空白。
 		runtimeTask.Result = report
 	}
 	runtimeTask.Status = models.StatusCompleted
-	return nil
 }
 
 func hfPaperSearch(ctx context.Context, client *http.Client, base, query string, limit int) ([]hfPaperSearchItem, error) {

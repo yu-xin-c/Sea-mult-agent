@@ -5,6 +5,7 @@ import type {
   ExecuteTaskPayload,
   PlanEvent,
   PlanResponse,
+	UploadedFile,
 } from '../../contracts/api';
 import { DIRECT_EXECUTION_EVENTS, PLAN_STREAM_EVENT_NAME } from '../../contracts/events';
 import { httpClient } from './httpClient';
@@ -19,8 +20,18 @@ const buildIdentityHeaders = (identity: RequestIdentity) => ({
   'X-Session-Id': identity.sessionId,
 });
 
-export const createPlan = async (intent: string, identity: RequestIdentity): Promise<PlanResponse> => {
-  const response = await httpClient.post<PlanResponse>('/api/plan', { intent }, { headers: buildIdentityHeaders(identity) });
+export const createPlan = async (intent: string, identity: RequestIdentity, attachments: string[] = []): Promise<PlanResponse> => {
+  const response = await httpClient.post<PlanResponse>('/api/plan', { intent, attachments }, { headers: buildIdentityHeaders(identity) });
+  return response.data;
+};
+
+export const uploadFile = async (file: File, identity: RequestIdentity): Promise<UploadedFile> => {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await httpClient.post<UploadedFile>('/api/uploads', formData, {
+    headers: buildIdentityHeaders(identity),
+    timeout: 120_000,
+  });
   return response.data;
 };
 
