@@ -13,6 +13,7 @@ const agentLabels: Record<string, string> = {
   coder_agent: '代码智能体',
   sandbox_agent: '沙箱智能体',
   data_agent: '数据智能体',
+  research_coding_agent: '科研 Coding 智能体',
   general_agent: '通用智能体',
 };
 

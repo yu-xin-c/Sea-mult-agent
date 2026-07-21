@@ -19,7 +19,7 @@
 Sea-Mult-Agent 面向论文阅读、代码仓库发现、环境准备、受控实验和结果分析等科研工作流。用户提交研究目标后，Planner 会生成 DAG，Scheduler 按依赖调度 Librarian、Coder、Sandbox 和 Data 等角色，并通过 SSE 将日志、状态和结构化产物实时推送到前端。
 
 > [!NOTE]
-> 本项目目前是可完整运行的研究原型，不是已经完成安全加固的多租户生产服务。默认 Plan Store 位于内存中，Docker 沙箱具有较高宿主机权限，部署前请阅读[项目状态与安全说明](#project-status)。
+> 本项目目前是具备持久化、恢复、审批、预算和受限沙箱能力的单机研究原型，不是已完成多租户安全认证的生产服务。Docker 沙箱仍具有较高宿主机权限，部署前请阅读[项目状态与安全说明](#project-status)。
 
 ![ScholarAgent dashboard](scholar-agent/docs/assets/scholar-agent-dashboard.png)
 
@@ -31,7 +31,12 @@ Sea-Mult-Agent 面向论文阅读、代码仓库发现、环境准备、受控�
 | **专业 Agent 路由** | 根据任务类型路由到 Librarian、Coder、Sandbox、Data 或 Chat 角色 |
 | **真实隔离执行** | 通过独立 Go 沙箱服务调用原生 Docker，支持持久工作区与产物回传 |
 | **仓库优先的论文复现** | 发现或使用指定 GitHub 仓库，准备依赖并运行受控 smoke 实验 |
+| **预算受限的消融设计** | ToT 评估参数、模块、数据规模、随机种子和运行成本候选，只执行预算内的高价值组合 |
+| **研究材料上传** | 在工作台附加论文、配置、笔记和小型数据文件，按用户隔离并传入复现流程 |
+| **科研仓库 Coding Agent** | 对论文代码做受限调试、补丁回滚和重跑，也能为自有数据生成仓库 Benchmark 适配器 |
+| **自有数据仓库评测** | Research Coding Agent 生成受限适配器，经 8 条预检、ReAct 修复和指标重算后运行用户数据 |
 | **实时可观测执行** | SSE 推送计划、节点、日志和 Artifact 事件，前端同步展示执行状态 |
+| **可靠执行与治理** | 任务租约、迟到结果隔离、取消/重试、持久化恢复、预算和人工审批 |
 | **研究工作台** | 集成对话、PDF 阅读、DAG 看板、节点日志、代码、报告与图表视图 |
 
 ## Quick Start
@@ -94,6 +99,17 @@ Attention Is All You Need，使用 smoke 模式运行轻量注意力消融，
         -> 准备运行时 -> 安装依赖 -> 执行实验 -> 对比论文声明
 ```
 
+### Benchmark a Repository with Your Data
+
+在 Web UI 上传 `CSV`、`TSV`、`JSON` 或 `JSONL`，然后输入：
+
+```text
+用 https://github.com/OWNER/REPOSITORY 跑 benchmark，
+输入列是 review，标签列是 label，最多运行 500 条样本。
+```
+
+系统会分析数据契约、克隆仓库、生成独立适配器，并在正式运行前用最多 8 条样本预检。分类和回归指标会根据逐样本预测由 Go harness 重算。论文代码运行失败时，同一 Agent 还能在有限源码上下文中生成最小补丁并重跑。完整契约和限制见[Research Coding Agent](scholar-agent/docs/research_coding_agent.md)。
+
 ## Interface
 
 执行图仅突出主控制链和必要的数据依赖，重复连线会自动合并。节点编号、Agent 类型和状态共同建立阅读顺序；长链使用紧凑蛇形布局，移动端可在“对话 / 流程”视图间切换。
@@ -113,12 +129,13 @@ React Workbench -- REST --> Go API / Intent Router
        | SSE                     v
        +---------------- Plan Store <--> Planner / Scheduler
                                       |
-                         +------------+------------+
-                         |            |            |
-                    Librarian       Coder        Data
-                         |            |
-                         |       Docker Sandbox
-                         +------------+------------+
+                         +---------+---------+---------+
+                         |         |         |         |
+                    Librarian    Coder   ResearchCoding   Data
+                         |         |         |
+                         +---------+----+----+
+                                        |
+                                  Docker Sandbox
                                       |
                            Logs / Metrics / Artifacts
 ```
@@ -141,6 +158,7 @@ React Workbench -- REST --> Go API / Intent Router
 | **Coder** | 仓库发现、代码准备、依赖分析和修复 |
 | **Sandbox** | 运行时准备、依赖安装与隔离实验执行 |
 | **Data** | 指标汇总、论文声明对比、报告与图表生成 |
+| **Research Coding** | 论文仓库代码调试、受限补丁与重跑，以及自有数据 Benchmark 适配和证据校验 |
 | **Chat** | 通用问答与轻量任务入口 |
 
 ## API
@@ -151,9 +169,15 @@ React Workbench -- REST --> Go API / Intent Router
 | `POST` | `/api/plan` | 根据用户意图创建并保存 DAG |
 | `GET` | `/api/plans/:id` | 查询计划、节点状态和产物 |
 | `POST` | `/api/plans/:id/execute` | 启动整张计划图 |
+| `POST` | `/api/plans/:id/approve` | 批准需要人工确认的计划 |
+| `POST` | `/api/plans/:id/cancel` | 取消计划与未完成节点 |
+| `POST` | `/api/plans/:id/tasks/:taskId/retry` | 重试失败、阻塞或取消节点 |
+| `POST` | `/api/plans/:id/tasks/:taskId/reassign` | 重分配节点并使旧执行租约失效 |
 | `GET` | `/api/plans/:id/events` | 获取计划事件历史 |
 | `GET` | `/api/plans/:id/stream` | 订阅计划级 SSE 事件流 |
 | `POST` | `/api/execute` | 直接执行单个 Agent 任务并流式返回结果 |
+| `POST` | `/api/uploads` | 上传论文、配置或小型 Benchmark 数据并返回附件 ID |
+| `GET` | `/api/uploads/:id/content` | 按用户所有权读取上传内容 |
 | `POST` | `/api/chat` | 通用对话接口 |
 | `GET` | `/api/pdf-proxy?url=...` | 代理读取远端 PDF |
 
@@ -170,6 +194,11 @@ React Workbench -- REST --> Go API / Intent Router
 | `SANDBOX_DEFAULT_IMAGE` | No | 论文 smoke test 使用的预装运行时镜像 |
 | `REDIS_ADDR` | No | 启用会话记忆；未设置时使用 No-op memory store |
 | `REDIS_USERNAME` / `REDIS_PASSWORD` / `REDIS_DB` | No | 可选 Redis 认证与数据库配置 |
+| `PLAN_STORE_PATH` | No | 单机计划和事件 JSON 存储；Compose 默认启用持久卷 |
+| `PLAN_MAX_TASK_ATTEMPTS` / `PLAN_MAX_DURATION_SECONDS` | No | 计划尝试次数与时长预算 |
+| `REQUIRE_PLAN_APPROVAL` | No | 强制计划在执行前人工审批 |
+| `API_AUTH_TOKEN` / `SANDBOX_API_TOKEN` | No | 部署 API 与内部沙箱的静态 Bearer 保护 |
+| `CORS_ALLOWED_ORIGINS` | No | 允许访问后端的前端 Origin 列表 |
 
 GPU 透传需要宿主机安装 NVIDIA Container Toolkit，并在 Compose 环境中设置：
 
@@ -240,11 +269,15 @@ Sea-mult-agent/
 
 ## Documentation
 
+- [项目架构](scholar-agent/docs/project_architecture.md)
 - [本地启动指南](scholar-agent/docs/local_startup_guide.md)
 - [用户手册](scholar-agent/docs/user_manual.md)
 - [可运行示例](scholar-agent/examples/)
 - [前后端项目结构](scholar-agent/docs/project_structure_frontend_backend.md)
 - [规划与调度设计](scholar-agent/docs/plan/)
+- [Agent Runtime P0/P1](scholar-agent/docs/agent_runtime_p0_p1.md)
+- [受限 ToT 消融与文件上传](scholar-agent/docs/tot_ablation_and_uploads.md)
+- [Research Coding Agent](scholar-agent/docs/research_coding_agent.md)
 - [论文仓库发现](scholar-agent/docs/papers_with_code/)
 - [意图识别与评测](scholar-agent/docs/intent/)
 - [贡献指南](scholar-agent/docs/CONTRIBUTING.md)
@@ -253,9 +286,9 @@ Sea-mult-agent/
 ## Project Status
 
 - **Research prototype**：接口和数据结构仍可能调整，不承诺向后兼容。
-- **In-memory Plan Store**：计划和事件支持运行中查询与 SSE 回放，但服务重启后不会保留，也不支持持久化断点恢复。
-- **Authentication**：当前用户 ID 与游客会话用于产品流程演示，不是生产级身份认证或租户隔离。
-- **Sandbox privilege**：默认沙箱服务挂载 `/var/run/docker.sock`，等同于较高宿主机权限；请勿在不可信公网环境中直接开放执行接口。
+- **Persistent single-node runtime**：配置 `PLAN_STORE_PATH` 后会原子持久化计划与事件，并在重启时恢复中断任务；多副本部署仍需要共享事务数据库和 leader election。
+- **Authentication**：已支持静态 API token 和计划所有权检查，但用户 ID/游客会话仍不是 OIDC、RBAC 或生产级多租户认证。
+- **Sandbox privilege**：已有 CPU、内存、PID、capability、镜像与挂载限制，Compose 仅本机暴露沙箱端口；但 Docker socket 仍等同于较高宿主机权限。
 - **GPU runtime**：GPU 透传已在 V100 主机验证，但默认运行时镜像为 CPU/通用 Python 镜像。
 - **Full reproduction**：当前重点是轻量 smoke 与结构消融，不包含大规模数据集训练。
 

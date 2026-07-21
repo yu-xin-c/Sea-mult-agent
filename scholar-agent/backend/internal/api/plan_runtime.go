@@ -3,10 +3,13 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,7 +32,7 @@ type planRuntime struct {
 	events    *events.Bus
 
 	mu      sync.Mutex
-	running map[string]struct{}
+	running map[string]context.CancelFunc
 }
 
 func newPlanRuntime(p *planner.Planner, planStore store.PlanStore, runner *scheduler.Scheduler, eventBus *events.Bus) *planRuntime {
@@ -38,7 +41,7 @@ func newPlanRuntime(p *planner.Planner, planStore store.PlanStore, runner *sched
 		store:     planStore,
 		scheduler: runner,
 		events:    eventBus,
-		running:   map[string]struct{}{},
+		running:   map[string]context.CancelFunc{},
 	}
 }
 
@@ -50,10 +53,22 @@ func RegisterPlanRuntimeRoutes(
 	librarian scheduler.AgentRunner,
 	data scheduler.AgentRunner,
 	coder scheduler.AgentRunner,
+	researchCoding ...scheduler.AgentRunner,
 ) {
-	planStore := store.NewMemoryPlanStore()
+	var planStore store.PlanStore = store.NewMemoryPlanStore()
+	if path := strings.TrimSpace(os.Getenv("PLAN_STORE_PATH")); path != "" {
+		fileStore, err := store.NewFilePlanStore(path)
+		if err != nil {
+			log.Printf("plan store init failed, falling back to memory: %v", err)
+		} else {
+			planStore = fileStore
+			if err := store.RecoverInterruptedPlans(planStore); err != nil {
+				log.Printf("plan store recovery failed: %v", err)
+			}
+		}
+	}
 	eventBus := events.NewBus()
-	executor := scheduler.NewRoutedTaskExecutor(librarian, data, coder)
+	executor := scheduler.NewRoutedTaskExecutor(librarian, data, coder, researchCoding...)
 	runner := scheduler.NewScheduler(planStore, executor, eventBus, 2)
 	runtime := newPlanRuntime(p, planStore, runner, eventBus)
 	runtime.register(apiGroup)
@@ -64,6 +79,10 @@ func (r *planRuntime) register(apiGroup *gin.RouterGroup) {
 	apiGroup.GET("/plans/:id", r.getPlan)
 	apiGroup.GET("/plans/:id/events", r.getPlanEvents)
 	apiGroup.POST("/plans/:id/execute", r.executePlan)
+	apiGroup.POST("/plans/:id/cancel", r.cancelPlan)
+	apiGroup.POST("/plans/:id/approve", r.approvePlan)
+	apiGroup.POST("/plans/:id/tasks/:taskId/retry", r.retryTask)
+	apiGroup.POST("/plans/:id/tasks/:taskId/reassign", r.reassignTask)
 	apiGroup.GET("/plans/:id/stream", r.streamPlanEvents)
 }
 
@@ -74,21 +93,36 @@ func (r *planRuntime) createPlan(c *gin.Context) {
 		return
 	}
 
+	userID := resolveUserID(c)
+	sessionID := resolveSessionID(c)
 	intentContext := buildRuleIntentContext(payload.Intent)
+	attachments, err := resolvePlanUploads(userID, payload.Attachments)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(attachments) > 0 {
+		if hasBenchmarkDatasetAttachment(attachments) && containsAny(payload.Intent, []string{"benchmark", "基准测试", "评测", "测评", "跑分"}) {
+			intentContext.IntentType = "Custom_Benchmark"
+			intentContext.Entities["needs_custom_benchmark"] = true
+			removeAttachmentTextExcerpts(attachments)
+		}
+		intentContext.Entities["uploaded_files"] = attachments
+		intentContext.Metadata["attachment_count"] = len(attachments)
+	}
 	plan, err := r.planner.BuildPlan(c.Request.Context(), intentContext)
 	if err != nil {
 		log.Printf("Error generating plan graph: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate plan"})
 		return
 	}
+	configurePlanGovernance(plan, intentContext, userID, sessionID)
 	if err := r.store.SavePlan(plan); err != nil {
 		log.Printf("Error saving plan graph: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save plan"})
 		return
 	}
 
-	userID := resolveUserID(c)
-	sessionID := resolveSessionID(c)
 	response := gin.H{
 		"message":        "Plan generated successfully",
 		"plan_graph":     plan,
@@ -105,15 +139,17 @@ func (r *planRuntime) createPlan(c *gin.Context) {
 }
 
 func (r *planRuntime) getPlan(c *gin.Context) {
-	plan, err := r.store.GetPlan(c.Param("id"))
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+	plan, ok := r.authorizedPlan(c)
+	if !ok {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"plan_graph": plan})
 }
 
 func (r *planRuntime) getPlanEvents(c *gin.Context) {
+	if _, ok := r.authorizedPlan(c); !ok {
+		return
+	}
 	events, err := r.store.ListEvents(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
@@ -124,9 +160,8 @@ func (r *planRuntime) getPlanEvents(c *gin.Context) {
 
 func (r *planRuntime) executePlan(c *gin.Context) {
 	planID := c.Param("id")
-	plan, err := r.store.GetPlan(planID)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+	plan, ok := r.authorizedPlan(c)
+	if !ok {
 		return
 	}
 	if plan.Status != models.StatusPending && plan.Status != models.StatusReady {
@@ -140,22 +175,22 @@ func (r *planRuntime) executePlan(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": "plan is already running"})
 		return
 	}
-	r.running[planID] = struct{}{}
+	ctx, cancel := context.WithTimeout(context.Background(), planTimeout(plan))
+	r.running[planID] = cancel
 	r.mu.Unlock()
 
-	go func() {
+	go func(runCtx context.Context, runCancel context.CancelFunc) {
 		defer func() {
+			runCancel()
 			r.mu.Lock()
 			delete(r.running, planID)
 			r.mu.Unlock()
 		}()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 35*time.Minute)
-		defer cancel()
-		if err := r.scheduler.ExecutePlan(ctx, planID); err != nil {
+		if err := r.scheduler.ExecutePlan(runCtx, planID); err != nil && !errors.Is(err, context.Canceled) {
 			log.Printf("plan execution failed plan_id=%s: %v", planID, err)
 		}
-	}()
+	}(ctx, cancel)
 
 	c.JSON(http.StatusAccepted, gin.H{
 		"message": "Plan execution started",
@@ -163,10 +198,82 @@ func (r *planRuntime) executePlan(c *gin.Context) {
 	})
 }
 
+func (r *planRuntime) cancelPlan(c *gin.Context) {
+	plan, ok := r.authorizedPlan(c)
+	if !ok {
+		return
+	}
+	r.mu.Lock()
+	cancel := r.running[plan.ID]
+	r.mu.Unlock()
+	if err := r.scheduler.CancelPlan(plan.ID, "canceled by user"); err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	if cancel != nil {
+		cancel()
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Plan canceled", "plan_id": plan.ID})
+}
+
+func (r *planRuntime) approvePlan(c *gin.Context) {
+	plan, ok := r.authorizedPlan(c)
+	if !ok {
+		return
+	}
+	now := time.Now()
+	userID := resolveUserID(c)
+	if err := r.store.UpdatePlan(plan.ID, func(current *models.PlanGraph) error {
+		if !current.Approval.Required {
+			return fmt.Errorf("plan does not require approval")
+		}
+		current.Approval.Status = "approved"
+		current.Approval.ApprovedBy = userID
+		current.Approval.ApprovedAt = &now
+		current.Status = models.StatusPending
+		current.UpdatedAt = now
+		return nil
+	}); err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Plan approved", "plan_id": plan.ID})
+}
+
+func (r *planRuntime) retryTask(c *gin.Context) {
+	plan, ok := r.authorizedPlan(c)
+	if !ok {
+		return
+	}
+	if err := r.scheduler.RetryTask(plan.ID, c.Param("taskId")); err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Task reset for retry", "plan_id": plan.ID, "task_id": c.Param("taskId")})
+}
+
+func (r *planRuntime) reassignTask(c *gin.Context) {
+	plan, ok := r.authorizedPlan(c)
+	if !ok {
+		return
+	}
+	var payload struct {
+		AssignedTo string `json:"assigned_to" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := r.scheduler.ReassignTask(plan.ID, c.Param("taskId"), payload.AssignedTo); err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Task reassigned", "plan_id": plan.ID, "task_id": c.Param("taskId"), "assigned_to": payload.AssignedTo})
+}
+
 func (r *planRuntime) streamPlanEvents(c *gin.Context) {
 	planID := c.Param("id")
-	if _, err := r.store.GetPlan(planID); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+	if _, ok := r.authorizedPlan(c); !ok {
 		return
 	}
 
@@ -179,19 +286,26 @@ func (r *planRuntime) streamPlanEvents(c *gin.Context) {
 	defer r.events.Unsubscribe(planID, subscription)
 
 	seen := map[string]struct{}{}
-	history, err := r.store.ListEvents(planID)
-	if err != nil {
-		writePlanSSE(c, "error", gin.H{"error": err.Error()})
-		return
+	replayUnseen := func() bool {
+		history, err := r.store.ListEvents(planID)
+		if err != nil {
+			writePlanSSE(c, "error", gin.H{"error": err.Error()})
+			return false
+		}
+		for _, event := range history {
+			fingerprint := planEventFingerprint(event)
+			if _, duplicate := seen[fingerprint]; duplicate {
+				continue
+			}
+			seen[fingerprint] = struct{}{}
+			if !writePlanSSE(c, planStreamEventName, event) || isTerminalPlanEvent(event) {
+				return false
+			}
+		}
+		return true
 	}
-	for _, event := range history {
-		seen[planEventFingerprint(event)] = struct{}{}
-		if !writePlanSSE(c, planStreamEventName, event) {
-			return
-		}
-		if isTerminalPlanEvent(event) {
-			return
-		}
+	if !replayUnseen() {
+		return
 	}
 
 	heartbeat := time.NewTicker(10 * time.Second)
@@ -215,6 +329,11 @@ func (r *planRuntime) streamPlanEvents(c *gin.Context) {
 				return
 			}
 		case <-heartbeat.C:
+			// The in-memory bus is intentionally non-blocking. Replaying the durable
+			// history heals any live event dropped for a slow SSE subscriber.
+			if !replayUnseen() {
+				return
+			}
 			if !writePlanSSE(c, "heartbeat", "keep-alive") {
 				return
 			}
@@ -222,6 +341,51 @@ func (r *planRuntime) streamPlanEvents(c *gin.Context) {
 			return
 		}
 	}
+}
+
+func (r *planRuntime) authorizedPlan(c *gin.Context) (*models.PlanGraph, bool) {
+	plan, err := r.store.GetPlan(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "plan not found"})
+		return nil, false
+	}
+	if plan.OwnerID != "" && plan.OwnerID != resolveUserID(c) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "plan belongs to another user"})
+		return nil, false
+	}
+	return plan, true
+}
+
+func configurePlanGovernance(plan *models.PlanGraph, intent models.IntentContext, userID, sessionID string) {
+	plan.OwnerID = userID
+	plan.SessionID = sessionID
+	plan.Budget.MaxTaskAttempts = positiveEnvInt("PLAN_MAX_TASK_ATTEMPTS", plan.Budget.MaxTaskAttempts)
+	plan.Budget.MaxDurationSec = positiveEnvInt("PLAN_MAX_DURATION_SECONDS", plan.Budget.MaxDurationSec)
+	requiresApproval := strings.EqualFold(strings.TrimSpace(os.Getenv("REQUIRE_PLAN_APPROVAL")), "true") ||
+		strings.EqualFold(strings.TrimSpace(fmt.Sprint(intent.Constraints["reproduction_mode"])), "full")
+	plan.Approval.Required = requiresApproval
+	if requiresApproval {
+		plan.Approval.Status = "pending"
+		plan.Approval.Reason = "high-risk or full reproduction plan"
+		plan.Status = models.StatusAwaitingApproval
+	} else {
+		plan.Approval.Status = "not_required"
+	}
+}
+
+func positiveEnvInt(key string, fallback int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(os.Getenv(key)))
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func planTimeout(plan *models.PlanGraph) time.Duration {
+	if plan != nil && plan.Budget.MaxDurationSec > 0 {
+		return time.Duration(plan.Budget.MaxDurationSec) * time.Second
+	}
+	return 35 * time.Minute
 }
 
 func buildRuleIntentContext(rawIntent string) models.IntentContext {
@@ -238,12 +402,12 @@ func buildRuleIntentContext(rawIntent string) models.IntentContext {
 		Reasoning:  "deterministic API fallback classifier",
 		Source:     "rule_fallback",
 	}
+	if repoURL := routeGitHubRepoURLRe.FindString(rawIntent); repoURL != "" {
+		context.Entities["preferred_repo_url"] = strings.TrimSuffix(repoURL, ".git")
+	}
 	if intentType == "Paper_Reproduction" {
 		for key, value := range collectPaperSearchFields(context, rawIntent) {
 			context.Entities[key] = value
-		}
-		if repoURL := routeGitHubRepoURLRe.FindString(rawIntent); repoURL != "" {
-			context.Entities["preferred_repo_url"] = strings.TrimSuffix(repoURL, ".git")
 		}
 		if containsAny(rawIntent, []string{"smoke", "最小实验", "最小验证", "快速验证"}) {
 			context.Entities["smoke_reproduction"] = true
@@ -255,8 +419,29 @@ func buildRuleIntentContext(rawIntent string) models.IntentContext {
 		if containsAny(rawIntent, []string{"debug", "fix", "修复", "排查", "不一致", "重跑"}) {
 			context.Entities["needs_fix"] = true
 		}
+		if containsAny(rawIntent, []string{"ablation", "消融", "参数敏感性", "模块移除", "随机种子", "seed stability", "运行成本对照"}) {
+			context.Entities["needs_ablation"] = true
+		}
 	}
 	return context
+}
+
+func hasBenchmarkDatasetAttachment(attachments []map[string]any) bool {
+	for _, attachment := range attachments {
+		name := strings.ToLower(strings.TrimSpace(fmt.Sprint(attachment["name"])))
+		for _, extension := range []string{".csv", ".tsv", ".json", ".jsonl"} {
+			if strings.HasSuffix(name, extension) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func removeAttachmentTextExcerpts(attachments []map[string]any) {
+	for _, attachment := range attachments {
+		delete(attachment, "text_excerpt")
+	}
 }
 
 func legacyPlanFromGraph(graph *models.PlanGraph) *models.Plan {
@@ -317,5 +502,5 @@ func planEventFingerprint(event models.PlanEvent) string {
 }
 
 func isTerminalPlanEvent(event models.PlanEvent) bool {
-	return event.EventType == "plan_completed" || event.EventType == "plan_failed"
+	return event.EventType == "plan_completed" || event.EventType == "plan_failed" || event.EventType == "plan_canceled"
 }

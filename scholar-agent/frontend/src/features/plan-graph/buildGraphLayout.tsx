@@ -52,6 +52,7 @@ export const graphTaskToTask = (task: GraphTask): Task => ({
   AssignedTo: task.assigned_to,
   Status: task.status,
   Dependencies: task.dependencies ?? [],
+  Inputs: task.inputs,
 });
 
 export const buildGraphLayout = (planGraph: PlanGraph): { nodes: Node[]; edges: Edge[] } => {
@@ -59,7 +60,7 @@ export const buildGraphLayout = (planGraph: PlanGraph): { nodes: Node[]; edges: 
   const newEdges: Edge[] = [];
 
   const levelMap: Record<string, number> = {};
-  const laneOrder = ['librarian_agent', 'coder_agent', 'sandbox_agent', 'data_agent', 'general_agent'];
+  const laneOrder = ['librarian_agent', 'coder_agent', 'research_coding_agent', 'sandbox_agent', 'data_agent', 'general_agent'];
   const tasksById = Object.fromEntries(planGraph.nodes.map((task) => [task.id, task]));
 
   const resolveLevel = (task: GraphTask): number => {
@@ -91,9 +92,11 @@ export const buildGraphLayout = (planGraph: PlanGraph): { nodes: Node[]; edges: 
     counts[level] = (counts[level] || 0) + 1;
     return counts;
   }, {});
-  const useCompactLongChain = maxLevel >= 5 && Object.values(tasksPerLevel).every((count) => count === 1);
   const maxTasksInLevel = Math.max(...Object.values(tasksPerLevel), 1);
+  const useCompactLongChain = maxLevel >= 5 && maxTasksInLevel <= 2;
   const compactColumns = getCompactColumnCount();
+  const compactStackGap = 112;
+  const compactRowHeight = maxTasksInLevel > 1 ? 260 : 148;
 
   const levelCounts: Record<number, number> = {};
   sortedTasks.forEach((task, taskIndex) => {
@@ -116,10 +119,11 @@ export const buildGraphLayout = (planGraph: PlanGraph): { nodes: Node[]; edges: 
       const column = row % 2 === 0 ? naturalColumn : compactColumns - naturalColumn - 1;
       const startsNewRow = naturalColumn === 0 && row > 0;
       const endsRow = naturalColumn === compactColumns - 1 && level < maxLevel;
+      const levelStackOffset = ((maxTasksInLevel - tasksPerLevel[level]) * compactStackGap) / 2;
 
       position = {
         x: 48 + column * 268,
-        y: 48 + row * 148,
+        y: 48 + row * compactRowHeight + levelStackOffset + stackIndex * compactStackGap,
       };
       targetPosition = startsNewRow ? Position.Top : row % 2 === 0 ? Position.Left : Position.Right;
       sourcePosition = endsRow ? Position.Bottom : row % 2 === 0 ? Position.Right : Position.Left;

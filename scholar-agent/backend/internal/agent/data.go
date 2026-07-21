@@ -18,6 +18,7 @@ type DataAgent struct {
 	Name         string
 	SystemPrompt string
 	EinoChain    compose.Runnable[string, string]
+	ChatModel    *openai.ChatModel
 }
 
 type dataContextKey string
@@ -52,6 +53,7 @@ func (a *DataAgent) initEinoChain() {
 	if err != nil {
 		log.Fatalf("初始化数据分析模型失败: %v", err)
 	}
+	a.ChatModel = chatModel
 
 	graph := compose.NewGraph[string, string]()
 
@@ -90,6 +92,9 @@ func (a *DataAgent) initEinoChain() {
 
 func (a *DataAgent) ExecuteTask(ctx context.Context, task *models.Task, sharedContext map[string]interface{}) error {
 	logToContext(ctx, "[%s] 开始执行任务: %s", a.Name, task.Name)
+	if task != nil && task.Type == "ablation_design" {
+		return a.executeAblationDesign(ctx, task)
+	}
 
 	input := task.Description
 	if task != nil && len(task.Inputs) > 0 {

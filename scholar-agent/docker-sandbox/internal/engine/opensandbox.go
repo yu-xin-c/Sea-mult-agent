@@ -37,7 +37,7 @@ func (e *OpenSandboxEngine) Create(ctx context.Context, image string, mountPath 
 		},
 		"entrypoint": []string{"/bin/sh"},
 	}
-	// Note: OpenSandbox might not support mountPath natively in the same way, 
+	// Note: OpenSandbox might not support mountPath natively in the same way,
 	// but we'll ignore it for now or implement as needed.
 	payload, _ := json.Marshal(reqBody)
 

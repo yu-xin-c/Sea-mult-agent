@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -15,6 +17,7 @@ import (
 type SandboxClient struct {
 	BaseURL string
 	Client  *http.Client
+	Token   string
 }
 
 // SandboxCreateRequest 创建沙箱请求 (简化版)
@@ -54,6 +57,7 @@ func NewSandboxClient(baseURL string) *SandboxClient {
 	}
 	return &SandboxClient{
 		BaseURL: baseURL,
+		Token:   strings.TrimSpace(os.Getenv("SANDBOX_API_TOKEN")),
 		Client: &http.Client{
 			Timeout: 600 * time.Second,
 		},
@@ -71,6 +75,7 @@ func (s *SandboxClient) CreatePersistentSandbox(ctx context.Context, taskID stri
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	s.authorize(req)
 
 	resp, err := s.Client.Do(req)
 	if err != nil {
@@ -97,6 +102,7 @@ func (s *SandboxClient) CleanupSandbox(ctx context.Context, sandboxID string) er
 	if err != nil {
 		return err
 	}
+	s.authorize(req)
 
 	resp, err := s.Client.Do(req)
 	if err != nil {
@@ -115,6 +121,7 @@ func (s *SandboxClient) RunPythonCode(ctx context.Context, sandboxID string, cod
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	s.authorize(req)
 
 	resp, err := s.Client.Do(req)
 	if err != nil {
@@ -147,6 +154,7 @@ func (s *SandboxClient) ExecCommand(ctx context.Context, sandboxID string, cmd [
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	s.authorize(req)
 
 	resp, err := s.Client.Do(req)
 	if err != nil {
@@ -178,6 +186,7 @@ func (s *SandboxClient) streamExecution(ctx context.Context, sandboxID string, s
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	s.authorize(req)
 
 	resp, err := s.Client.Do(req)
 	if err != nil {
@@ -222,4 +231,10 @@ func (s *SandboxClient) streamExecution(ctx context.Context, sandboxID string, s
 		return nil, fmt.Errorf("stream execution ended without final response")
 	}
 	return finalResponse, nil
+}
+
+func (s *SandboxClient) authorize(req *http.Request) {
+	if strings.TrimSpace(s.Token) != "" {
+		req.Header.Set("Authorization", "Bearer "+s.Token)
+	}
 }

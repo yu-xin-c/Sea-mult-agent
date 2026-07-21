@@ -166,7 +166,7 @@ func buildPlannerNodeDescription(rawIntent string, bp plannerNodeBlueprint) stri
 
 func normalizeAssignedTo(value string) string {
 	switch strings.TrimSpace(value) {
-	case "librarian_agent", "coder_agent", "sandbox_agent", "data_agent", "general_agent":
+	case "librarian_agent", "coder_agent", "sandbox_agent", "data_agent", "research_coding_agent", "general_agent":
 		return value
 	default:
 		return "general_agent"
@@ -222,6 +222,28 @@ func normalizePlannerTaskType(bp plannerNodeBlueprint) string {
 	}, " ")
 
 	switch bp.AssignedTo {
+	case "research_coding_agent":
+		if containsAny(context, "dataset_profile", "profile dataset", "inspect dataset", "uploaded dataset") {
+			return "dataset_profile"
+		}
+		if containsAny(context, "benchmark_adapter_preflight", "preflight", "repair adapter", "validate adapter") {
+			return "benchmark_adapter_preflight"
+		}
+		if containsAny(context, "benchmark_adapter_generate", "generate adapter", "benchmark adapter", "adapter code") {
+			return "benchmark_adapter_generate"
+		}
+		if containsAny(context, "benchmark_validate", "validate evidence", "verify benchmark", "benchmark evidence") {
+			return "benchmark_validate"
+		}
+		if containsAny(context, "benchmark_execute", "execute benchmark", "run benchmark", "custom benchmark") {
+			return "benchmark_execute"
+		}
+		if containsAny(context, "fix_and_rerun", "result gap", "debug mismatch", "repair and rerun") {
+			return "fix_and_rerun"
+		}
+		if containsAny(context, "paper_code_execute", "execute baseline", "run paper code", "debug baseline") {
+			return "paper_code_execute"
+		}
 	case "sandbox_agent":
 		if containsAny(context, "install_dependencies", "install dependency", "install package", "pip install", "requirements") {
 			return "install_dependencies"
@@ -245,8 +267,8 @@ func normalizePlannerTaskType(bp plannerNodeBlueprint) string {
 		if containsAny(context, "repo_prepare", "prepare workspace", "workspace", "checkout") {
 			return "repo_prepare"
 		}
-		if containsAny(context, "fix_and_rerun", "debug", "fix", "repair", "rerun") {
-			return "fix_and_rerun"
+		if containsAny(context, "ablation_design", "ablation", "消融", "parameter sensitivity", "seed stability") {
+			return "ablation_design"
 		}
 	case "librarian_agent":
 		if containsAny(context, "paper_parse", "extract method", "parse paper") {
@@ -274,7 +296,7 @@ func normalizePlannerTaskType(bp plannerNodeBlueprint) string {
 	}
 
 	switch rawType {
-	case "framework_research", "framework_recommendation", "generate_code", "resolve_dependencies", "prepare_runtime", "install_dependencies", "execute_code", "paper_parse", "repo_discovery", "repo_prepare", "paper_compare", "result_visualization", "fix_and_rerun", "verify_result", "render_plot", "general_research", "general_synthesis", "general_process":
+	case "framework_research", "framework_recommendation", "generate_code", "resolve_dependencies", "prepare_runtime", "install_dependencies", "execute_code", "paper_code_execute", "paper_parse", "repo_discovery", "repo_prepare", "ablation_design", "paper_compare", "result_visualization", "fix_and_rerun", "verify_result", "render_plot", "general_research", "general_synthesis", "general_process", "dataset_profile", "benchmark_adapter_generate", "benchmark_adapter_preflight", "benchmark_execute", "benchmark_validate":
 		return rawType
 	}
 
@@ -287,6 +309,8 @@ func normalizePlannerTaskType(bp plannerNodeBlueprint) string {
 		return "general_research"
 	case "data_agent":
 		return "verify_result"
+	case "research_coding_agent":
+		return "benchmark_adapter_generate"
 	default:
 		return "general_process"
 	}
@@ -321,13 +345,15 @@ func containsAny(s string, keywords ...string) bool {
 
 func normalizePlannerAssignedTo(bp plannerNodeBlueprint) string {
 	switch bp.Type {
-	case "generate_code", "resolve_dependencies", "repo_discovery", "repo_prepare", "fix_and_rerun":
+	case "dataset_profile", "benchmark_adapter_generate", "benchmark_adapter_preflight", "benchmark_execute", "benchmark_validate", "paper_code_execute", "fix_and_rerun":
+		return "research_coding_agent"
+	case "generate_code", "resolve_dependencies", "repo_discovery", "repo_prepare":
 		return "coder_agent"
 	case "prepare_runtime", "install_dependencies", "execute_code":
 		return "sandbox_agent"
 	case "framework_research", "paper_parse", "general_research":
 		return "librarian_agent"
-	case "framework_recommendation", "paper_compare", "result_visualization", "verify_result", "render_plot", "general_synthesis":
+	case "framework_recommendation", "ablation_design", "paper_compare", "result_visualization", "verify_result", "render_plot", "general_synthesis":
 		return "data_agent"
 	default:
 		return bp.AssignedTo
@@ -345,6 +371,12 @@ func applyPlannerNodeDefaults(bp plannerNodeBlueprint) plannerNodeBlueprint {
 	case "repo_prepare":
 		bp.RequiredArtifacts = ensureArtifacts(bp.RequiredArtifacts, "repo_url", "candidate_repositories", "repo_validation_report")
 		bp.OutputArtifacts = ensureArtifacts(bp.OutputArtifacts, "workspace_path", "code_file_path", "generated_code", "repo_manifest")
+	case "paper_code_execute":
+		bp.RequiredArtifacts = ensureArtifacts(bp.RequiredArtifacts, "workspace_path", "code_file_path", "generated_code", "prepared_runtime", "repo_manifest")
+		bp.OutputArtifacts = ensureArtifacts(bp.OutputArtifacts, "run_metrics", "paper_debug_report", "paper_patch_manifest")
+	case "fix_and_rerun":
+		bp.RequiredArtifacts = ensureArtifacts(bp.RequiredArtifacts, "workspace_path", "code_file_path", "generated_code", "prepared_runtime", "repo_manifest", "run_metrics", "paper_debug_report", "comparison_report")
+		bp.OutputArtifacts = ensureArtifacts(bp.OutputArtifacts, "rerun_metrics", "rerun_report", "gap_debug_report", "gap_patch_manifest")
 	}
 	return bp
 }

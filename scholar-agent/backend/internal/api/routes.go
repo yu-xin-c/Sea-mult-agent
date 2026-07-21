@@ -24,7 +24,8 @@ import (
 )
 
 type RequestPayload struct {
-	Intent string `json:"intent" binding:"required"`
+	Intent      string   `json:"intent" binding:"required"`
+	Attachments []string `json:"attachments,omitempty"`
 }
 
 type ExecutePayload struct {
@@ -49,23 +50,39 @@ var (
 func CORSMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := strings.TrimSpace(c.GetHeader("Origin"))
-		if origin == "" {
-			origin = "*"
-		} else {
+		if origin != "" && corsOriginAllowed(origin) {
 			c.Writer.Header().Set("Vary", "Origin")
+			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
 		}
-		c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
 		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, X-User-Id, X-Session-Id")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT")
 
 		if c.Request.Method == "OPTIONS" {
+			if origin != "" && !corsOriginAllowed(origin) {
+				c.AbortWithStatus(http.StatusForbidden)
+				return
+			}
 			c.AbortWithStatus(204)
 			return
 		}
 
 		c.Next()
 	}
+}
+
+func corsOriginAllowed(origin string) bool {
+	configured := strings.TrimSpace(os.Getenv("CORS_ALLOWED_ORIGINS"))
+	if configured == "" {
+		configured = "http://localhost:5173,http://127.0.0.1:5173"
+	}
+	for _, candidate := range strings.Split(configured, ",") {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "*" || candidate == origin {
+			return true
+		}
+	}
+	return false
 }
 
 func SetupRoutes(r *gin.Engine) {
@@ -81,18 +98,21 @@ func SetupRoutes(r *gin.Engine) {
 	}
 	sb := sandbox.NewSandboxClient(sandboxURL)
 	coderAgent := agent.NewCoderAgent(sb)
+	researchCodingAgent := agent.NewResearchCodingAgent(coderAgent)
 	librarianAgent := agent.NewLibrarianAgent()
 	dataAgent := agent.NewDataAgent()
 	chatAgent := agent.NewChatAgent(coderAgent)
 
 	apiGroup := r.Group("/api")
+	apiGroup.Use(APIAuthMiddleware())
 	{
 		// Preflight handlers for the group
 		apiGroup.OPTIONS("/*path", func(c *gin.Context) {
 			c.Status(204)
 		})
 
-		RegisterPlanRuntimeRoutes(apiGroup, p, librarianAgent, dataAgent, coderAgent)
+		RegisterPlanRuntimeRoutes(apiGroup, p, librarianAgent, dataAgent, coderAgent, researchCodingAgent)
+		RegisterUploadRoutes(apiGroup)
 
 		apiGroup.GET("/hello", func(c *gin.Context) {
 			c.String(200, "hello api group")
@@ -127,13 +147,26 @@ func SetupRoutes(r *gin.Engine) {
 				return
 			}
 
-			log.Printf("[PDF Proxy] Fetching: %s", pdfURL)
+			validatedURL, err := validateRemotePDFURL(c.Request.Context(), pdfURL)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			log.Printf("[PDF Proxy] Fetching host: %s", validatedURL.Hostname())
 
 			client := &http.Client{
-				Timeout: 30 * time.Second,
+				Transport: safeRemoteTransport(),
+				Timeout:   30 * time.Second,
+				CheckRedirect: func(req *http.Request, via []*http.Request) error {
+					if len(via) >= 5 {
+						return fmt.Errorf("too many redirects")
+					}
+					_, err := validateRemotePDFURL(req.Context(), req.URL.String())
+					return err
+				},
 			}
 
-			req, err := http.NewRequest("GET", pdfURL, nil)
+			req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, validatedURL.String(), nil)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to create request: %v", err)})
 				return
@@ -156,17 +189,28 @@ func SetupRoutes(r *gin.Engine) {
 				return
 			}
 
-			// Set content type and other headers
-			c.Header("Content-Type", "application/pdf")
-			c.Header("Access-Control-Allow-Origin", "*")
-			c.Header("Access-Control-Allow-Methods", "GET, OPTIONS")
-			c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-
-			// Stream the PDF back to the frontend
-			_, err = io.Copy(c.Writer, resp.Body)
-			if err != nil {
-				log.Printf("[PDF Proxy] Error streaming PDF: %v", err)
+			contentType := strings.ToLower(resp.Header.Get("Content-Type"))
+			if !strings.HasPrefix(contentType, "application/pdf") {
+				c.JSON(http.StatusUnsupportedMediaType, gin.H{"error": "upstream response is not a PDF"})
+				return
 			}
+			maxBytes := int64(positiveEnvInt("PDF_PROXY_MAX_MB", 32)) * 1024 * 1024
+			if resp.ContentLength > maxBytes {
+				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "PDF exceeds configured size limit"})
+				return
+			}
+			body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+			if err != nil {
+				c.JSON(http.StatusBadGateway, gin.H{"error": "failed to read upstream PDF"})
+				return
+			}
+			if int64(len(body)) > maxBytes {
+				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "PDF exceeds configured size limit"})
+				return
+			}
+
+			c.Header("Content-Type", "application/pdf")
+			c.Data(http.StatusOK, "application/pdf", body)
 		})
 
 		apiGroup.POST("/execute", func(c *gin.Context) {
@@ -216,7 +260,7 @@ func SetupRoutes(r *gin.Engine) {
 			// Initialize persistent sandbox for this task
 			// 先同步创建沙箱，再将 containerID 注入 context，避免 goroutine 内竞态
 			var containerID string
-			if sb != nil {
+			if sb != nil && shouldAllocateDirectSandbox(task) {
 				logChannel <- "[System] 正在通过 OpenSandbox 服务分配持久化沙箱环境..."
 				var sandboxErr error
 				containerID, sandboxErr = sb.CreatePersistentSandbox(ctx, task.ID, "python:3.9-bullseye", workspacePath)
@@ -247,6 +291,8 @@ func SetupRoutes(r *gin.Engine) {
 					err = dataAgent.ExecuteTask(ctx, task, nil)
 				case "coder_agent", "sandbox_agent":
 					err = coderAgent.ExecuteTask(ctx, task, nil)
+				case "research_coding_agent":
+					err = researchCodingAgent.ExecuteTask(ctx, task, nil)
 				default:
 					err = coderAgent.ExecuteTask(ctx, task, nil)
 				}
@@ -314,6 +360,15 @@ func SetupRoutes(r *gin.Engine) {
 			})
 		})
 	}
+}
+
+func shouldAllocateDirectSandbox(task *models.Task) bool {
+	if task == nil {
+		return false
+	}
+	// Benchmark tasks use the prepared_runtime produced by their DAG. Creating a
+	// second direct-execution sandbox would mount the wrong workspace.
+	return task.AssignedTo != "research_coding_agent"
 }
 
 func RegisterPlanRoute(apiGroup *gin.RouterGroup, p *planner.Planner) {

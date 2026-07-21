@@ -2,10 +2,13 @@ package planner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
 	"scholar-agent-backend/internal/models"
 	"scholar-agent-backend/internal/prompts"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,19 +32,26 @@ func (p *Planner) BuildPlan(ctx context.Context, intent models.IntentContext) (*
 
 	plan := &models.PlanGraph{
 		ID:         uuid.New().String(),
+		TraceID:    "trace_" + strings.ReplaceAll(uuid.New().String(), "-", ""),
 		UserIntent: intent.RawIntent,
 		IntentType: intent.IntentType,
 		Status:     models.StatusPending,
 		Nodes:      []*models.TaskNode{},
 		Edges:      []*models.TaskEdge{},
 		Artifacts:  map[string]models.Artifact{},
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
+		Budget: models.RunBudget{
+			MaxTaskAttempts: 100,
+			MaxDurationSec:  2100,
+		},
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 
 	var nodes []*models.TaskNode
 	var err error
-	if p.agent != nil {
+	if isCustomDatasetBenchmarkIntent(intent) {
+		nodes = buildCustomDatasetBenchmarkNodes(intent)
+	} else if p.agent != nil {
 		nodes, err = p.agent.BuildNodes(ctx, intent)
 		if err != nil {
 			logPlannerFallback(intent, err)
@@ -58,6 +68,8 @@ func (p *Planner) BuildPlan(ctx context.Context, intent models.IntentContext) (*
 			nodes = buildPaperReproductionNodesV2(intent)
 		case "Code_Execution":
 			nodes = buildCodeExecutionNodesV2(intent)
+		case "Custom_Benchmark":
+			nodes = buildCustomDatasetBenchmarkNodes(intent)
 		default:
 			nodes = buildGeneralNodesV2(intent)
 		}
@@ -132,7 +144,7 @@ func (p *Planner) GeneratePlan(intent string, intentType string) (*models.Plan, 
 		t3 := createMockTask("Setup Sandbox Environment (Install Dependencies)", "sandbox_agent", []string{t2.ID}, intent)
 		t4 := createMockTask("Execute Baseline Code", "sandbox_agent", []string{t3.ID}, intent)
 		t5 := createMockTask("Compare Results with Paper", "data_agent", []string{t4.ID}, intent)
-		t6 := createMockTask("Debug/Refine Code if Results Mismatch", "coder_agent", []string{t5.ID}, intent)
+		t6 := createMockTask("Debug/Refine Code if Results Mismatch", "research_coding_agent", []string{t5.ID}, intent)
 
 		plan.Tasks[t1.ID] = t1
 		plan.Tasks[t2.ID] = t2
@@ -266,12 +278,218 @@ func newNode(name, taskType, agent string, deps, requiredArtifacts, outputArtifa
 		OutputArtifacts:   outputArtifacts,
 		Parallelizable:    parallelizable,
 		Priority:          0,
-		RetryLimit:        0,
+		RetryLimit:        1,
 		RunCount:          0,
-		Inputs:            map[string]any{},
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		TimeoutSeconds:    600,
+		Contract: models.TaskContract{
+			Version:         models.TaskContractVersion,
+			InputArtifacts:  append([]string(nil), requiredArtifacts...),
+			OutputArtifacts: append([]string(nil), outputArtifacts...),
+			AllowedTools:    allowedToolsForAgent(agent),
+		},
+		Inputs:    map[string]any{},
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
+}
+
+func allowedToolsForAgent(agent string) []string {
+	switch agent {
+	case "coder_agent":
+		return []string{"repository.read", "workspace.write", "code.generate"}
+	case "sandbox_agent":
+		return []string{"sandbox.create", "sandbox.command", "sandbox.python", "sandbox.delete"}
+	case "librarian_agent":
+		return []string{"paper.search", "paper.read", "repository.discover"}
+	case "data_agent":
+		return []string{"artifact.read", "metrics.analyze", "report.write"}
+	case "research_coding_agent":
+		return []string{"repository.read", "repository.patch_scoped", "dataset.profile", "workspace.write_scoped", "sandbox.command", "metrics.validate"}
+	default:
+		return []string{"conversation.respond"}
+	}
+}
+
+func buildCustomDatasetBenchmarkNodes(intent models.IntentContext) []*models.TaskNode {
+	context := intent.RawIntent
+	uploadedFiles := intent.Entities["uploaded_files"]
+	benchmarkInputs := buildCustomBenchmarkInputs(intent)
+
+	profile := newNode(
+		"Profile Uploaded Dataset",
+		"dataset_profile",
+		"research_coding_agent",
+		nil,
+		nil,
+		[]string{"dataset_manifest"},
+		true,
+		context,
+	)
+	profile.Inputs = copyBenchmarkInputs(benchmarkInputs)
+	profile.Inputs["uploaded_files"] = uploadedFiles
+
+	discover := newNode(
+		"Retrieve Benchmark Repository",
+		"repo_discovery",
+		"coder_agent",
+		nil,
+		nil,
+		[]string{"candidate_repositories", "repo_validation_report", "repo_url"},
+		true,
+		context,
+	)
+	discover.Description = buildRepoDiscoveryDescription(context)
+	discover.Inputs = buildRepoDiscoveryInputs(intent)
+
+	prepare := newNode(
+		"Prepare Benchmark Workspace",
+		"repo_prepare",
+		"coder_agent",
+		[]string{discover.ID},
+		[]string{"repo_url", "candidate_repositories", "repo_validation_report"},
+		[]string{"workspace_path", "code_file_path", "generated_code", "repo_manifest", "reproduction_mode_report"},
+		false,
+		context,
+	)
+	prepare.Inputs = map[string]any{
+		"requested_reproduction_mode": "smoke",
+		"full_reproduction_requested": false,
+		"uploaded_files":              workspaceUploadReferences(uploadedFiles),
+	}
+
+	generate := newNode(
+		"Generate Repository Benchmark Adapter",
+		"benchmark_adapter_generate",
+		"research_coding_agent",
+		[]string{profile.ID, prepare.ID},
+		[]string{"dataset_manifest", "workspace_path", "repo_manifest"},
+		[]string{"benchmark_adapter_plan", "benchmark_adapter_spec", "benchmark_generated_code", "benchmark_code_file_path", "benchmark_adapter_report"},
+		false,
+		context,
+	)
+	generate.Inputs = copyBenchmarkInputs(benchmarkInputs)
+
+	resolve := newNode(
+		"Resolve Benchmark Dependencies",
+		"resolve_dependencies",
+		"coder_agent",
+		[]string{generate.ID},
+		[]string{"workspace_path", "repo_manifest", "benchmark_generated_code", "benchmark_code_file_path"},
+		[]string{"dependency_spec"},
+		false,
+		context,
+	)
+	prepareRuntime := newNode(
+		"Prepare Benchmark Runtime",
+		"prepare_runtime",
+		"sandbox_agent",
+		[]string{resolve.ID},
+		[]string{"workspace_path", "dependency_spec"},
+		[]string{"runtime_session"},
+		false,
+		context,
+	)
+	install := newNode(
+		"Install Benchmark Dependencies",
+		"install_dependencies",
+		"sandbox_agent",
+		[]string{prepareRuntime.ID},
+		[]string{"workspace_path", "runtime_session", "dependency_spec"},
+		[]string{"prepared_runtime", "dependency_install_report"},
+		false,
+		context,
+	)
+	preflight := newNode(
+		"Preflight And Repair Benchmark Adapter",
+		"benchmark_adapter_preflight",
+		"research_coding_agent",
+		[]string{install.ID},
+		[]string{"workspace_path", "dataset_manifest", "benchmark_adapter_spec", "benchmark_generated_code", "benchmark_code_file_path", "prepared_runtime"},
+		[]string{"validated_benchmark_adapter_spec", "validated_benchmark_generated_code", "validated_benchmark_code_file_path", "benchmark_preflight_report"},
+		false,
+		context,
+	)
+	preflight.Inputs = copyBenchmarkInputs(benchmarkInputs)
+	execute := newNode(
+		"Execute Custom Dataset Benchmark",
+		"benchmark_execute",
+		"research_coding_agent",
+		[]string{preflight.ID},
+		[]string{"workspace_path", "dataset_manifest", "validated_benchmark_adapter_spec", "validated_benchmark_generated_code", "validated_benchmark_code_file_path", "prepared_runtime"},
+		[]string{"benchmark_run_metrics", "benchmark_run_manifest", "benchmark_predictions_path", "benchmark_execution_report"},
+		false,
+		context,
+	)
+	execute.Inputs = copyBenchmarkInputs(benchmarkInputs)
+	validate := newNode(
+		"Validate Benchmark Evidence",
+		"benchmark_validate",
+		"research_coding_agent",
+		[]string{execute.ID},
+		[]string{"dataset_manifest", "benchmark_run_metrics", "benchmark_run_manifest"},
+		[]string{"benchmark_metrics", "benchmark_validation_report"},
+		false,
+		context,
+	)
+	report := newNode(
+		"Generate Trusted Benchmark Report",
+		"framework_report",
+		"data_agent",
+		[]string{validate.ID},
+		[]string{"benchmark_metrics", "benchmark_validation_report", "validated_benchmark_adapter_spec"},
+		[]string{"evaluation_report"},
+		false,
+		context,
+	)
+	return []*models.TaskNode{profile, discover, prepare, generate, resolve, prepareRuntime, install, preflight, execute, validate, report}
+}
+
+func isCustomDatasetBenchmarkIntent(intent models.IntentContext) bool {
+	if intent.IntentType == "Custom_Benchmark" || boolEntity(intent.Entities, "needs_custom_benchmark") {
+		return true
+	}
+	if intent.Entities == nil || intent.Entities["uploaded_files"] == nil {
+		return false
+	}
+	normalized := strings.ToLower(intent.RawIntent)
+	return hasAny(normalized, "benchmark", "基准测试", "评测", "测评", "跑分")
+}
+
+func buildCustomBenchmarkInputs(intent models.IntentContext) map[string]any {
+	inputs := map[string]any{
+		"benchmark_max_preflight_attempts": 3,
+		"benchmark_max_samples": boundedIntentNumber(intent.RawIntent, []string{
+			`(?i)(?:最多|最大|max(?:imum)?)\s*(\d+)\s*(?:条|个|rows?|samples?|样本)`,
+		}, 1000, 1, 100000),
+	}
+	for key, patterns := range map[string][]string{
+		"benchmark_input_column": {
+			`(?i)(?:输入列|input(?:\s+column)?)\s*(?:是|为|[:：=])?\s*["']?([A-Za-z_][A-Za-z0-9_.-]*)`,
+		},
+		"benchmark_target_column": {
+			`(?i)(?:标签列|目标列|label(?:\s+column)?|target(?:\s+column)?)\s*(?:是|为|[:：=])?\s*["']?([A-Za-z_][A-Za-z0-9_.-]*)`,
+		},
+	} {
+		for _, pattern := range patterns {
+			matches := regexp.MustCompile(pattern).FindStringSubmatch(intent.RawIntent)
+			if len(matches) > 1 {
+				inputs[key] = matches[1]
+				break
+			}
+		}
+	}
+	if hasAny(strings.ToLower(intent.RawIntent), "latency", "throughput", "推理", "延迟", "吞吐") {
+		inputs["benchmark_mode"] = "inference_performance"
+	}
+	return inputs
+}
+
+func copyBenchmarkInputs(source map[string]any) map[string]any {
+	copyValues := make(map[string]any, len(source))
+	for key, value := range source {
+		copyValues[key] = value
+	}
+	return copyValues
 }
 
 func buildFrameworkEvaluationNodes(context string) []*models.TaskNode {
@@ -298,32 +516,11 @@ func buildFrameworkEvaluationNodes(context string) []*models.TaskNode {
 }
 
 func buildPaperReproductionNodes(context string) []*models.TaskNode {
-	normalized := strings.ToLower(context)
-	needsPlot := hasAny(normalized, "plot", "画图", "图表", "曲线", "可视化")
-	needsFix := hasAny(normalized, "debug", "fix", "修复", "排查", "不一致")
-
-	t1 := newNode("Parse Paper & Extract Method", "paper_parse", "librarian_agent", nil, nil, []string{"parsed_paper"}, true, context)
-	t2 := newRepoDiscoveryNode([]string{t1.ID}, context, models.IntentContext{})
-	t3 := newNode("Prepare Workspace", "repo_prepare", "coder_agent", []string{t2.ID}, []string{"repo_url", "candidate_repositories", "repo_validation_report"}, []string{"workspace_path"}, false, context)
-	t4 := newNode("Setup Runtime Environment", "env_setup", "sandbox_agent", []string{t3.ID}, []string{"workspace_path"}, []string{"runtime_env"}, false, context)
-	t5 := newNode("Execute Baseline", "baseline_run", "sandbox_agent", []string{t4.ID}, []string{"runtime_env"}, []string{"run_metrics"}, false, context)
-	t6 := newNode("Compare With Paper Claims", "paper_compare", "data_agent", []string{t5.ID}, []string{"run_metrics", "parsed_paper"}, []string{"comparison_report"}, false, context)
-
-	nodes := []*models.TaskNode{t1, t2, t3, t4, t5, t6}
-	lastID := t6.ID
-	lastArtifact := "comparison_report"
-
-	if needsPlot {
-		t7 := newNode("Visualize Reproduction Results", "result_visualization", "data_agent", []string{lastID}, []string{lastArtifact}, []string{"result_plot"}, true, context)
-		nodes = append(nodes, t7)
-		lastID = t7.ID
-		lastArtifact = "result_plot"
-	}
-	if needsFix {
-		t8 := newNode("Fix Gaps And Rerun", "fix_and_rerun", "coder_agent", []string{lastID}, []string{lastArtifact}, []string{"rerun_report"}, false, context)
-		nodes = append(nodes, t8)
-	}
-	return nodes
+	return buildPaperReproductionNodesV2(models.IntentContext{
+		RawIntent:  context,
+		IntentType: "Paper_Reproduction",
+		Entities:   map[string]any{},
+	})
 }
 
 func buildCodeExecutionNodes(context string) []*models.TaskNode {
@@ -575,6 +772,9 @@ func buildFrameworkEvaluationNodesV2(intent models.IntentContext) []*models.Task
 func buildPaperReproductionNodesV2(intent models.IntentContext) []*models.TaskNode {
 	context := intent.RawIntent
 	normalized := strings.ToLower(context)
+	needsAblation := boolEntity(intent.Entities, "needs_ablation") || hasAny(normalized,
+		"ablation", "消融", "参数敏感性", "模块移除", "随机种子", "seed stability", "运行成本对照",
+	)
 	needsPlot := boolEntity(intent.Entities, "needs_plot") || hasAny(normalized,
 		"plot",
 		"\u753b\u56fe",
@@ -593,30 +793,105 @@ func buildPaperReproductionNodesV2(intent models.IntentContext) []*models.TaskNo
 	paperTitle := stringEntity(intent.Entities, "paper_title", "Paper")
 
 	t1 := newNode("Parse "+paperTitle+" & Extract Method", "paper_parse", "librarian_agent", nil, nil, []string{"parsed_paper"}, true, context)
+	if uploadedFiles, ok := intent.Entities["uploaded_files"]; ok {
+		t1.Inputs["uploaded_files"] = uploadedFiles
+	}
 	t2 := newRepoDiscoveryNode([]string{t1.ID}, context, intent)
-	t3 := newNode("Prepare Workspace", "repo_prepare", "coder_agent", []string{t2.ID}, []string{"repo_url", "candidate_repositories", "repo_validation_report"}, []string{"workspace_path", "code_file_path", "generated_code", "repo_manifest", "reproduction_mode_report"}, false, context)
+	repoPrepareDependencies := []string{t2.ID}
+	repoPrepareArtifacts := []string{"repo_url", "candidate_repositories", "repo_validation_report"}
+	var ablationDesign *models.TaskNode
+	if needsAblation {
+		ablationDesign = newNode(
+			"Design Bounded Ablation Study",
+			"ablation_design",
+			"data_agent",
+			[]string{t1.ID},
+			[]string{"parsed_paper"},
+			[]string{"ablation_plan", "selected_ablation_configs", "ablation_selection_report"},
+			true,
+			context,
+		)
+		ablationDesign.Inputs = buildAblationDesignInputs(intent)
+		repoPrepareDependencies = append(repoPrepareDependencies, ablationDesign.ID)
+		repoPrepareArtifacts = append(repoPrepareArtifacts, "ablation_plan", "selected_ablation_configs")
+	}
+	t3 := newNode("Prepare Workspace", "repo_prepare", "coder_agent", repoPrepareDependencies, repoPrepareArtifacts, []string{"workspace_path", "code_file_path", "generated_code", "repo_manifest", "reproduction_mode_report"}, false, context)
 	t3.Inputs = buildPaperReproductionInputs(intent)
 	t4 := newNode("Resolve "+paperTitle+" Dependencies", "resolve_dependencies", "coder_agent", []string{t3.ID}, []string{"workspace_path", "code_file_path", "generated_code", "repo_manifest"}, []string{"dependency_spec"}, false, context)
 	t5 := newNode("Setup Runtime Environment", "prepare_runtime", "sandbox_agent", []string{t4.ID}, []string{"workspace_path", "dependency_spec"}, []string{"runtime_session"}, false, context)
 	t6 := newNode("Install "+paperTitle+" Dependencies", "install_dependencies", "sandbox_agent", []string{t5.ID}, []string{"runtime_session", "dependency_spec"}, []string{"prepared_runtime", "dependency_install_report"}, false, context)
-	t7 := newNode("Execute Baseline", "execute_code", "sandbox_agent", []string{t6.ID}, []string{"workspace_path", "code_file_path", "generated_code", "prepared_runtime"}, []string{"run_metrics"}, false, context)
-	t8 := newNode("Compare With Paper Claims", "paper_compare", "data_agent", []string{t7.ID}, []string{"run_metrics", "parsed_paper", "repo_manifest", "reproduction_mode_report"}, []string{"comparison_report"}, false, context)
+	t7 := newNode("Execute And Debug Baseline", "paper_code_execute", "research_coding_agent", []string{t6.ID}, []string{"workspace_path", "code_file_path", "generated_code", "prepared_runtime", "repo_manifest"}, []string{"run_metrics", "paper_debug_report", "paper_patch_manifest"}, false, context)
+	t8 := newNode("Compare With Paper Claims", "paper_compare", "data_agent", []string{t7.ID}, []string{"run_metrics", "paper_debug_report", "parsed_paper", "repo_manifest", "reproduction_mode_report"}, []string{"comparison_report"}, false, context)
 
-	nodes := []*models.TaskNode{t1, t2, t3, t4, t5, t6, t7, t8}
+	nodes := []*models.TaskNode{t1, t2}
+	if ablationDesign != nil {
+		nodes = append(nodes, ablationDesign)
+	}
+	nodes = append(nodes, t3, t4, t5, t6, t7, t8)
 	lastID := t8.ID
 	lastArtifact := "comparison_report"
 
-	if needsPlot {
-		t7 := newNode("Visualize Reproduction Results", "result_visualization", "data_agent", []string{lastID}, []string{lastArtifact}, []string{"result_plot"}, true, context)
-		nodes = append(nodes, t7)
-		lastID = t7.ID
-		lastArtifact = "result_plot"
-	}
 	if needsFix {
-		t8 := newNode("Fix Gaps And Rerun", "fix_and_rerun", "coder_agent", []string{lastID}, []string{lastArtifact}, []string{"rerun_report"}, false, context)
-		nodes = append(nodes, t8)
+		fix := newNode(
+			"Debug Result Gap And Rerun",
+			"fix_and_rerun",
+			"research_coding_agent",
+			[]string{t7.ID, t8.ID},
+			[]string{"workspace_path", "code_file_path", "generated_code", "prepared_runtime", "repo_manifest", "run_metrics", "paper_debug_report", "comparison_report"},
+			[]string{"rerun_metrics", "rerun_report", "gap_debug_report", "gap_patch_manifest"},
+			false,
+			context,
+		)
+		nodes = append(nodes, fix)
+		lastID = fix.ID
+		lastArtifact = "rerun_metrics"
+	}
+	if needsPlot {
+		visualize := newNode("Visualize Reproduction Results", "result_visualization", "data_agent", []string{lastID}, []string{lastArtifact}, []string{"result_plot"}, true, context)
+		nodes = append(nodes, visualize)
 	}
 	return nodes
+}
+
+func buildAblationDesignInputs(intent models.IntentContext) map[string]any {
+	maxExperiments := boundedIntentNumber(intent.RawIntent, []string{
+		`(?i)(?:最多|max(?:imum)?)\s*(\d+)\s*(?:组|个|项|次)?\s*(?:轻量|小型|bounded)?\s*(?:消融|实验|ablations?|experiments?)`,
+	}, 3, 1, 6)
+	maxGPUMinutes := boundedIntentNumber(intent.RawIntent, []string{
+		`(?i)gpu(?:\s*时间|\s*time)?\s*(?:不超过|最多|[:：]?)?\s*(\d+)\s*(?:minutes?|分钟)`,
+		`(?i)(\d+)\s*(?:gpu[- ]?minutes?|gpu\s*分钟|分钟\s*gpu)`,
+	}, 30, 0, 1440)
+	maxWallMinutes := boundedIntentNumber(intent.RawIntent, []string{
+		`(?i)(?:总耗时|总时长|wall(?:[- ]?time)?)\s*(?:不超过|最多|[:：]?)?\s*(\d+)\s*(?:minutes?|分钟)`,
+	}, 60, 5, 1440)
+	inputs := map[string]any{
+		"ablation_max_experiments":  maxExperiments,
+		"ablation_max_gpu_minutes":  maxGPUMinutes,
+		"ablation_max_wall_minutes": maxWallMinutes,
+		"ablation_strategy":         "bounded_tree_of_thoughts",
+	}
+	return inputs
+}
+
+func boundedIntentNumber(raw string, patterns []string, fallback, minimum, maximum int) int {
+	for _, pattern := range patterns {
+		matches := regexp.MustCompile(pattern).FindStringSubmatch(raw)
+		if len(matches) < 2 {
+			continue
+		}
+		value, err := strconv.Atoi(matches[1])
+		if err != nil {
+			continue
+		}
+		if value < minimum {
+			return minimum
+		}
+		if value > maximum {
+			return maximum
+		}
+		return value
+	}
+	return fallback
 }
 
 func buildPaperReproductionInputs(intent models.IntentContext) map[string]any {
@@ -644,10 +919,29 @@ func buildPaperReproductionInputs(intent models.IntentContext) map[string]any {
 	if rawMode := strings.TrimSpace(stringEntity(intent.Constraints, "reproduction_mode", "")); rawMode != "" {
 		requestedMode = rawMode
 	}
-	return map[string]any{
+	inputs := map[string]any{
 		"requested_reproduction_mode": requestedMode,
 		"full_reproduction_requested": fullRequested,
 	}
+	if uploadedFiles, ok := intent.Entities["uploaded_files"]; ok {
+		inputs["uploaded_files"] = workspaceUploadReferences(uploadedFiles)
+	}
+	return inputs
+}
+
+func workspaceUploadReferences(value any) any {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return value
+	}
+	var files []map[string]any
+	if err := json.Unmarshal(raw, &files); err != nil {
+		return value
+	}
+	for _, file := range files {
+		delete(file, "text_excerpt")
+	}
+	return files
 }
 
 func buildCodeExecutionNodesV2(intent models.IntentContext) []*models.TaskNode {
@@ -899,28 +1193,42 @@ func bilingualTaskName(name string) string {
 
 func exactTaskNameTranslations() map[string]string {
 	return map[string]string{
-		"Research Candidate Frameworks":        "调研候选框架",
-		"Generate Selection Recommendation":    "生成选型建议",
-		"Generate Benchmark Report":            "生成基准测试报告",
-		"Design Shared RAG Benchmark Protocol": "设计共享 RAG 评测协议",
-		"Compare RAG Benchmark Results":        "对比 RAG 基准测试结果",
-		"Locate Reference Repository":          "定位参考仓库",
-		"Prepare Workspace":                    "准备工作区",
-		"Setup Runtime Environment":            "搭建运行环境",
-		"Execute Baseline":                     "执行基线实验",
-		"Compare With Paper Claims":            "对比论文声明结果",
-		"Visualize Reproduction Results":       "可视化复现实验结果",
-		"Fix Gaps And Rerun":                   "修复问题并重新运行",
-		"Generate Code":                        "生成代码",
-		"Resolve Dependencies":                 "解析依赖",
-		"Prepare Runtime":                      "准备运行环境",
-		"Install Dependencies":                 "安装依赖",
-		"Execute Code":                         "执行代码",
-		"Render Output Plot":                   "渲染输出图表",
-		"Verify And Summarize Result":          "校验并总结结果",
-		"Collect Background Context":           "收集背景信息",
-		"Synthesize Response":                  "综合生成回答",
-		"Process Request":                      "处理请求",
+		"Profile Uploaded Dataset":                                      "分析上传数据集",
+		"Retrieve Benchmark Repository":                                 "获取评测目标仓库",
+		"Prepare Benchmark Workspace":                                   "准备评测工作区",
+		"Generate Repository Benchmark Adapter":                         "生成仓库评测适配器",
+		"Resolve Benchmark Dependencies":                                "解析评测依赖",
+		"Prepare Benchmark Runtime":                                     "准备评测运行环境",
+		"Install Benchmark Dependencies":                                "安装评测依赖",
+		"Preflight And Repair Benchmark Adapter":                        "预检并修复评测适配器",
+		"Execute Custom Dataset Benchmark":                              "执行自定义数据评测",
+		"Validate Benchmark Evidence":                                   "校验评测证据",
+		"Generate Trusted Benchmark Report":                             "生成可信评测报告",
+		"Research Candidate Frameworks":                                 "调研候选框架",
+		"Generate Selection Recommendation":                             "生成选型建议",
+		"Generate Benchmark Report":                                     "生成基准测试报告",
+		"Design Shared RAG Benchmark Protocol":                          "设计共享 RAG 评测协议",
+		"Compare RAG Benchmark Results":                                 "对比 RAG 基准测试结果",
+		"Locate Reference Repository":                                   "定位参考仓库",
+		"Prepare Workspace":                                             "准备工作区",
+		"Setup Runtime Environment":                                     "搭建运行环境",
+		"Design Bounded Ablation Study":                                 "设计受限消融实验",
+		"Execute Baseline":                                              "执行基线实验",
+		"Execute And Debug Baseline":                                    "执行并调试基线实验",
+		"Compare With Paper Claims":                                     "对比论文声明结果",
+		"Visualize Reproduction Results":                                "可视化复现实验结果",
+		"Fix Gaps And Rerun":                                            "修复问题并重新运行",
+		"Debug Result Gap And Rerun":                                    "调试结果差异并重新运行",
+		"Generate Code":                                                 "生成代码",
+		"Resolve Dependencies":                                          "解析依赖",
+		"Prepare Runtime":                                               "准备运行环境",
+		"Install Dependencies":                                          "安装依赖",
+		"Execute Code":                                                  "执行代码",
+		"Render Output Plot":                                            "渲染输出图表",
+		"Verify And Summarize Result":                                   "校验并总结结果",
+		"Collect Background Context":                                    "收集背景信息",
+		"Synthesize Response":                                           "综合生成回答",
+		"Process Request":                                               "处理请求",
 		"Retrieve Documentation & Best Practices for Target Frameworks": "获取目标框架文档与最佳实践",
 		"Generate Environment Setup & Integration Code for Framework A": "为框架 A 生成环境配置与集成代码",
 		"Generate Environment Setup & Integration Code for Framework B": "为框架 B 生成环境配置与集成代码",
@@ -1034,6 +1342,13 @@ func validateCriticalNodeContracts(intent models.IntentContext, nodes []*models.
 			if !containsArtifact(node.OutputArtifacts, "parsed_paper") {
 				return fmt.Errorf("paper_parse node %q must output parsed_paper", node.Name)
 			}
+		case "ablation_design":
+			if node.AssignedTo != "data_agent" {
+				return fmt.Errorf("ablation_design node %q must be assigned to data_agent", node.Name)
+			}
+			if !containsArtifact(node.RequiredArtifacts, "parsed_paper") || !containsArtifact(node.OutputArtifacts, "ablation_plan") {
+				return fmt.Errorf("ablation_design node %q must consume parsed_paper and output ablation_plan", node.Name)
+			}
 		case "repo_discovery":
 			hasRepoDiscovery = true
 			if node.AssignedTo != "coder_agent" {
@@ -1096,6 +1411,17 @@ func validateCriticalNodeContracts(intent models.IntentContext, nodes []*models.
 			}
 			if !containsArtifact(node.RequiredArtifacts, "generated_code") && !containsArtifact(node.RequiredArtifacts, "code_file_path") {
 				return fmt.Errorf("execute_code node %q must require generated code input", node.Name)
+			}
+		case "paper_code_execute":
+			hasExecuteCode = true
+			if node.AssignedTo != "research_coding_agent" {
+				return fmt.Errorf("paper_code_execute node %q must be assigned to research_coding_agent", node.Name)
+			}
+			if !containsArtifact(node.RequiredArtifacts, "code_file_path") || !containsArtifact(node.RequiredArtifacts, "prepared_runtime") {
+				return fmt.Errorf("paper_code_execute node %q must require code_file_path and prepared_runtime", node.Name)
+			}
+			if !containsArtifact(node.OutputArtifacts, "run_metrics") || !containsArtifact(node.OutputArtifacts, "paper_debug_report") {
+				return fmt.Errorf("paper_code_execute node %q must output run_metrics and paper_debug_report", node.Name)
 			}
 		}
 	}

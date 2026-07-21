@@ -1,4 +1,4 @@
-import type { ChatMessage } from '../../contracts/api';
+import type { ChatMessage, UploadedFile } from '../../contracts/api';
 import { ChatComposer } from './ChatComposer';
 import { ChatMessageList } from './ChatMessageList';
 import { ChatSessionManager } from './ChatSessionManager';
@@ -8,6 +8,9 @@ interface ChatPanelState {
   loading: boolean;
   prompt: string;
   showSuggestions: boolean;
+	pendingAttachments: UploadedFile[];
+	uploadingAttachments: boolean;
+	attachmentError: string;
   isLoggedIn: boolean;
   userId: string | null;
   loginInput: string;
@@ -29,6 +32,8 @@ interface ChatActions {
   onLogin: () => void;
   onCreateSession: () => void;
   onSwitchSession: (sessionId: string) => void;
+	onAttachFiles: (files: File[]) => void;
+	onRemoveAttachment: (uploadId: string) => void;
 }
 
 interface PdfActions {
@@ -81,9 +86,14 @@ export function ChatPanel(props: ChatPanelProps) {
         loading={state.loading}
         isLoggedIn={state.isLoggedIn}
         showSuggestions={state.showSuggestions}
+		pendingAttachments={state.pendingAttachments}
+		uploadingAttachments={state.uploadingAttachments}
+		attachmentError={state.attachmentError}
         setPrompt={chatActions.setPrompt}
         setShowSuggestions={chatActions.setShowSuggestions}
         onSendMessage={chatActions.onSendMessage}
+		onAttachFiles={chatActions.onAttachFiles}
+		onRemoveAttachment={chatActions.onRemoveAttachment}
       />
     </div>
   );

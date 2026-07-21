@@ -97,8 +97,14 @@ interface ScholarWorkspaceContentProps {
     prompt: string;
     setPrompt: (value: string) => void;
     handleSendMessage: () => void;
+	pendingAttachments: ReturnType<typeof useScholarChatFlow>['pendingAttachments'];
+	uploadingAttachments: boolean;
+	attachmentError: string;
+	handleAttachFiles: (files: File[]) => void;
+	handleRemoveAttachment: (uploadId: string) => void;
     intentContext: IntentContext | null;
     activePlanId: string | null;
+	activePlanStatus: string | null;
     isLoggedIn: boolean;
     userId: string | null;
     loginInput: string;
@@ -124,6 +130,7 @@ function ScholarWorkspaceContent(props: ScholarWorkspaceContentProps) {
     onEdgesChange,
     intentContext: chatFlow.intentContext,
     activePlanId: chatFlow.activePlanId,
+	activePlanStatus: chatFlow.activePlanStatus,
     layout,
     logsEndRef,
   });
@@ -146,6 +153,9 @@ function ScholarWorkspaceContent(props: ScholarWorkspaceContentProps) {
         loading: chatFlow.loading,
         prompt: chatFlow.prompt,
         showSuggestions: pdfFlow.showSuggestions,
+		pendingAttachments: chatFlow.pendingAttachments,
+		uploadingAttachments: chatFlow.uploadingAttachments,
+		attachmentError: chatFlow.attachmentError,
         isLoggedIn: chatFlow.isLoggedIn,
         userId: chatFlow.userId,
         loginInput: chatFlow.loginInput,
@@ -160,6 +170,8 @@ function ScholarWorkspaceContent(props: ScholarWorkspaceContentProps) {
         onLogin: chatFlow.handleLogin,
         onCreateSession: chatFlow.handleCreateSession,
         onSwitchSession: chatFlow.handleSwitchSession,
+		onAttachFiles: chatFlow.handleAttachFiles,
+		onRemoveAttachment: chatFlow.handleRemoveAttachment,
       }}
       pdfActions={{
         onOpenPdf: () => pdfFlow.setPdfUrl(getPdfProxyUrl('https://arxiv.org/pdf/1706.03762.pdf')),
@@ -215,6 +227,7 @@ export default function ScholarApp() {
     nodes,
     setNodes,
     appendChatMessage: chatFlow.appendChatMessage,
+	identity: chatFlow.requestIdentity,
   });
   const { resetRuntimeState } = runtime;
 
@@ -243,6 +256,9 @@ export default function ScholarApp() {
         handleOpenTaskView: runtime.handleOpenTaskView,
         handleExecuteTask: runtime.handleExecuteTask,
         handleRunAllTasks: runtime.handleRunAllTasks,
+		handleApproveAndRun: runtime.handleApproveAndRun,
+		handleCancelPlan: runtime.handleCancelPlan,
+		handleRetryFailedPlan: runtime.handleRetryFailedPlan,
         setDisplayMode: runtime.setDisplayMode,
         closeTaskPanel: runtime.closeTaskPanel,
         resetRuntimeState: runtime.resetRuntimeState,
@@ -269,8 +285,14 @@ export default function ScholarApp() {
           prompt: chatFlow.prompt,
           setPrompt: chatFlow.setPrompt,
           handleSendMessage: chatFlow.handleSendMessage,
+		  pendingAttachments: chatFlow.pendingAttachments,
+		  uploadingAttachments: chatFlow.uploadingAttachments,
+		  attachmentError: chatFlow.attachmentError,
+		  handleAttachFiles: chatFlow.handleAttachFiles,
+		  handleRemoveAttachment: chatFlow.handleRemoveAttachment,
           intentContext: chatFlow.intentContext,
           activePlanId: chatFlow.activePlanId,
+		  activePlanStatus: chatFlow.activePlanStatus,
           isLoggedIn: chatFlow.isLoggedIn,
           userId: chatFlow.userId,
           loginInput: chatFlow.loginInput,

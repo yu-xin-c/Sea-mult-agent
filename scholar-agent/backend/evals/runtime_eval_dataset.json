@@ -1,0 +1,30 @@
+[
+  {
+    "name": "paper reproduction smoke",
+    "intent": "使用指定 GitHub 仓库复现 Attention Is All You Need，运行 smoke 实验并对比论文声明",
+    "expected_intent_type": "Paper_Reproduction",
+    "min_nodes": 8,
+    "required_task_types": ["paper_parse", "repo_prepare", "prepare_runtime", "paper_code_execute", "paper_compare"]
+  },
+  {
+    "name": "framework evaluation",
+	"intent": "对比 LangChain 和 LlamaIndex 的 RAG 性能评测、延迟与依赖复杂度",
+    "expected_intent_type": "Framework_Evaluation",
+    "min_nodes": 7,
+    "required_task_types": ["framework_research", "generate_code", "execute_code", "framework_report"]
+  },
+  {
+    "name": "code execution",
+    "intent": "写一段 Python 代码计算均值并画图，然后验证结果",
+    "expected_intent_type": "Code_Execution",
+    "min_nodes": 5,
+    "required_task_types": ["generate_code", "prepare_runtime", "execute_code", "render_plot"]
+  },
+  {
+    "name": "general research",
+    "intent": "总结多智能体协作的主要设计原则",
+    "expected_intent_type": "General",
+    "min_nodes": 2,
+    "required_task_types": ["general_research", "general_synthesis"]
+  }
+]

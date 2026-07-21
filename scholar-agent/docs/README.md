@@ -3,8 +3,12 @@
 当前建议优先阅读这些最终版文档：
 
 - [local_startup_guide.md](local_startup_guide.md)：本地启动、环境变量、联调顺序
+- [project_architecture.md](project_architecture.md)：当前系统架构、运行链路、数据契约、部署与安全边界
 - [project_structure_frontend_backend.md](project_structure_frontend_backend.md)：仓库结构与模块职责
 - [backend_planner_models_reference.md](backend_planner_models_reference.md)：后端规划与调度模型说明
+- [agent_runtime_p0_p1.md](agent_runtime_p0_p1.md)：P0/P1 可靠性、安全、治理与运维说明
+- [tot_ablation_and_uploads.md](tot_ablation_and_uploads.md)：受限 ToT 消融设计、预算选择和文件上传
+- [research_coding_agent.md](research_coding_agent.md)：论文仓库代码调试、受限补丁与重跑、自有数据 Benchmark 适配
 - [user_manual.md](user_manual.md)：产品使用说明
 - [../examples/](../examples/)：可运行示例、成功条件与已验证结果
 

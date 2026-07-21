@@ -12,6 +12,16 @@ export interface ChatMessage {
   taskId?: string;
 }
 
+export interface UploadedFile {
+  id: string;
+  name: string;
+  content_type: string;
+  size: number;
+  sha256: string;
+  content_url: string;
+  created_at: string;
+}
+
 export interface Task {
   ID: string;
   Name: string;
@@ -20,6 +30,7 @@ export interface Task {
   AssignedTo: string;
   Status: string;
   Dependencies: string[];
+  Inputs?: Record<string, unknown>;
 }
 
 export interface GraphTask {
@@ -30,9 +41,24 @@ export interface GraphTask {
   assigned_to: string;
   status: string;
   dependencies: string[];
+  inputs?: Record<string, unknown>;
   required_artifacts: string[];
   output_artifacts: string[];
   parallelizable: boolean;
+  priority: number;
+  retry_limit: number;
+  run_count: number;
+  execution_id?: string;
+  execution_epoch: number;
+  lease_owner?: string;
+  lease_expires_at?: string;
+  timeout_seconds?: number;
+  contract: {
+    version: string;
+    input_artifacts: string[];
+    output_artifacts: string[];
+    allowed_tools: string[];
+  };
   result?: string;
   code?: string;
   image_base64?: string;
@@ -52,6 +78,25 @@ export interface PlanGraph {
   user_intent: string;
   intent_type: string;
   status: string;
+  owner_id?: string;
+  session_id?: string;
+  trace_id: string;
+  approval: {
+    required: boolean;
+    status: string;
+    reason?: string;
+    approved_by?: string;
+    approved_at?: string;
+  };
+  budget: {
+    max_task_attempts: number;
+    max_duration_seconds: number;
+  };
+  usage: {
+    task_attempts: number;
+    started_at?: string;
+    finished_at?: string;
+  };
   nodes: GraphTask[];
   edges: GraphEdge[];
 }
@@ -71,6 +116,9 @@ export interface PlanEvent {
   task_status?: string;
   payload?: Record<string, unknown>;
   timestamp: string;
+  trace_id?: string;
+  span_id?: string;
+  execution_id?: string;
 }
 
 export interface NodeExecutionState {

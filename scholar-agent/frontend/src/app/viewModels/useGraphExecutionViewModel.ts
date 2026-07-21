@@ -13,12 +13,13 @@ interface UseGraphExecutionViewModelOptions {
   onEdgesChange: OnEdgesChange<Edge>;
   intentContext: IntentContext | null;
   activePlanId: string | null;
+	activePlanStatus: string | null;
   layout: ReturnType<typeof useScholarLayoutState>;
   logsEndRef: RefObject<HTMLDivElement | null>;
 }
 
 export function useGraphExecutionViewModel(options: UseGraphExecutionViewModelOptions) {
-  const { nodes, edges, onNodesChange, onEdgesChange, intentContext, activePlanId, layout, logsEndRef } = options;
+	const { nodes, edges, onNodesChange, onEdgesChange, intentContext, activePlanId, activePlanStatus, layout, logsEndRef } = options;
   const runtime = useScholarRuntimeContext();
 
   return useMemo(() => {
@@ -33,7 +34,11 @@ export function useGraphExecutionViewModel(options: UseGraphExecutionViewModelOp
       graphTitle: uiText.graphTitle,
       graphHint: uiText.graphHint,
       isExecuting: runtime.state.executionState.isExecuting,
+	  requiresApproval: activePlanStatus === 'awaiting_approval' && !runtime.state.executionState.approvalResolved,
       onRunAll: () => void runtime.actions.handleRunAllTasks(activePlanId),
+	  onApproveAndRun: () => void runtime.actions.handleApproveAndRun(activePlanId),
+	  onCancel: () => void runtime.actions.handleCancelPlan(activePlanId),
+	  onRetryFailed: () => void runtime.actions.handleRetryFailedPlan(activePlanId),
     };
 
     const isExpandedMode = runtime.state.executionState.displayMode.endsWith('-expanded');
@@ -65,5 +70,5 @@ export function useGraphExecutionViewModel(options: UseGraphExecutionViewModelOp
       showExecutionResizeHandle,
       executionSidebarProps,
     };
-  }, [activePlanId, edges, intentContext, layout.sidebarWidth, logsEndRef, nodes, onEdgesChange, onNodesChange, runtime]);
+	}, [activePlanId, activePlanStatus, edges, intentContext, layout.sidebarWidth, logsEndRef, nodes, onEdgesChange, onNodesChange, runtime]);
 }

@@ -5,7 +5,7 @@ services:
   docker-sandbox:
     build: ./docker-sandbox
     ports:
-      - "8082:8082"
+      - "127.0.0.1:8082:8082"
     volumes:
       # 极其重要：挂载 Docker Socket，允许容器内的 Go 程序操作宿主机的 Docker
       - /var/run/docker.sock:/var/run/docker.sock
@@ -13,6 +13,12 @@ services:
       - /tmp:/tmp
     environment:
       - SANDBOX_DOCKER_GPUS=${SANDBOX_DOCKER_GPUS:-}
+      - SANDBOX_API_TOKEN=${SANDBOX_API_TOKEN:-local-sandbox-token}
+      - SANDBOX_CPU_LIMIT=${SANDBOX_CPU_LIMIT:-2}
+      - SANDBOX_MEMORY_LIMIT=${SANDBOX_MEMORY_LIMIT:-4g}
+      - SANDBOX_PIDS_LIMIT=${SANDBOX_PIDS_LIMIT:-256}
+      - SANDBOX_NETWORK_MODE=${SANDBOX_NETWORK_MODE:-bridge}
+      - SANDBOX_WORKSPACE_ROOTS=/tmp
     networks:
       - scholar-network
 
@@ -24,10 +30,16 @@ services:
     volumes:
       - /tmp:/tmp
       - ../docker-core/config:/app/config:ro
+      - scholar-plan-data:/app/data
+      - scholar-upload-data:/app/uploads
     env_file:
       - ./backend.env
     environment:
       - SANDBOX_URL=http://docker-sandbox:8082
+      - SANDBOX_API_TOKEN=${SANDBOX_API_TOKEN:-local-sandbox-token}
+      - PLAN_STORE_PATH=/app/data/plans.json
+      - UPLOAD_ROOT=/app/uploads
+      - UPLOAD_MAX_MB=${UPLOAD_MAX_MB:-32}
     depends_on:
       - docker-sandbox
     networks:
@@ -46,3 +58,7 @@ services:
 networks:
   scholar-network:
     driver: bridge
+
+volumes:
+  scholar-plan-data:
+  scholar-upload-data:

@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Bot, X } from 'lucide-react';
 import { ChatPanel } from '../../features/chat/ChatPanel';
 import { PdfPanel } from '../../features/pdf-viewer/PdfPanel';
-import type { ChatMessage } from '../../contracts/api';
+import type { ChatMessage, UploadedFile } from '../../contracts/api';
 import type { Plugin } from '@react-pdf-viewer/core';
 import type { defaultLayoutPlugin } from '@react-pdf-viewer/default-layout';
 
@@ -44,6 +44,9 @@ interface LeftWorkspaceChatProps {
     loading: boolean;
     prompt: string;
     showSuggestions: boolean;
+	pendingAttachments: UploadedFile[];
+	uploadingAttachments: boolean;
+	attachmentError: string;
     isLoggedIn: boolean;
     userId: string | null;
     loginInput: string;
@@ -64,6 +67,8 @@ interface LeftWorkspaceChatProps {
     onLogin: () => void;
     onCreateSession: () => void;
     onSwitchSession: (sessionId: string) => void;
+	onAttachFiles: (files: File[]) => void;
+	onRemoveAttachment: (uploadId: string) => void;
   };
   pdfActions: {
     onOpenPdf: () => void;
