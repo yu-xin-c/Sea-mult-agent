@@ -271,6 +271,9 @@ func normalizePlannerTaskType(bp plannerNodeBlueprint) string {
 			return "ablation_design"
 		}
 	case "librarian_agent":
+		if containsAny(context, "claim_rubric_extract", "claim rubric", "freeze claims", "gradable criteria") {
+			return "claim_rubric_extract"
+		}
 		if containsAny(context, "paper_parse", "extract method", "parse paper") {
 			return "paper_parse"
 		}
@@ -281,6 +284,9 @@ func normalizePlannerTaskType(bp plannerNodeBlueprint) string {
 			return "general_research"
 		}
 	case "data_agent":
+		if containsAny(context, "claim_evidence_build", "claim evidence", "evidence graph", "claim verification") {
+			return "claim_evidence_build"
+		}
 		if containsAny(context, "framework_recommendation", "framework_report", "benchmark report", "selection recommendation") {
 			return "framework_recommendation"
 		}
@@ -296,7 +302,7 @@ func normalizePlannerTaskType(bp plannerNodeBlueprint) string {
 	}
 
 	switch rawType {
-	case "framework_research", "framework_recommendation", "generate_code", "resolve_dependencies", "prepare_runtime", "install_dependencies", "execute_code", "paper_code_execute", "paper_parse", "repo_discovery", "repo_prepare", "ablation_design", "paper_compare", "result_visualization", "fix_and_rerun", "verify_result", "render_plot", "general_research", "general_synthesis", "general_process", "dataset_profile", "benchmark_adapter_generate", "benchmark_adapter_preflight", "benchmark_execute", "benchmark_validate":
+	case "framework_research", "framework_recommendation", "generate_code", "resolve_dependencies", "prepare_runtime", "install_dependencies", "execute_code", "paper_code_execute", "paper_parse", "claim_rubric_extract", "repo_discovery", "repo_prepare", "ablation_design", "paper_compare", "claim_evidence_build", "result_visualization", "fix_and_rerun", "verify_result", "render_plot", "general_research", "general_synthesis", "general_process", "dataset_profile", "benchmark_adapter_generate", "benchmark_adapter_preflight", "benchmark_execute", "benchmark_validate":
 		return rawType
 	}
 
@@ -351,9 +357,9 @@ func normalizePlannerAssignedTo(bp plannerNodeBlueprint) string {
 		return "coder_agent"
 	case "prepare_runtime", "install_dependencies", "execute_code":
 		return "sandbox_agent"
-	case "framework_research", "paper_parse", "general_research":
+	case "framework_research", "paper_parse", "claim_rubric_extract", "general_research":
 		return "librarian_agent"
-	case "framework_recommendation", "ablation_design", "paper_compare", "result_visualization", "verify_result", "render_plot", "general_synthesis":
+	case "framework_recommendation", "ablation_design", "paper_compare", "claim_evidence_build", "result_visualization", "verify_result", "render_plot", "general_synthesis":
 		return "data_agent"
 	default:
 		return bp.AssignedTo
@@ -362,6 +368,12 @@ func normalizePlannerAssignedTo(bp plannerNodeBlueprint) string {
 
 func applyPlannerNodeDefaults(bp plannerNodeBlueprint) plannerNodeBlueprint {
 	switch bp.Type {
+	case "claim_rubric_extract":
+		bp.RequiredArtifacts = ensureArtifacts(bp.RequiredArtifacts, "parsed_paper")
+		bp.OutputArtifacts = ensureArtifacts(bp.OutputArtifacts, "claim_rubric", "claim_rubric_report")
+	case "claim_evidence_build":
+		bp.RequiredArtifacts = ensureArtifacts(bp.RequiredArtifacts, "claim_rubric", "parsed_paper", "repo_manifest", "reproduction_mode_report", "dependency_install_report", "run_metrics", "paper_debug_report", "paper_patch_manifest", "comparison_report")
+		bp.OutputArtifacts = ensureArtifacts(bp.OutputArtifacts, "claim_evidence_graph", "claim_verification_report")
 	case "repo_discovery":
 		bp.RequiredArtifacts = ensureArtifacts(bp.RequiredArtifacts, "parsed_paper")
 		bp.OutputArtifacts = ensureArtifacts(bp.OutputArtifacts, "candidate_repositories", "repo_validation_report", "repo_url")

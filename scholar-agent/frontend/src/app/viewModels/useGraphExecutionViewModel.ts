@@ -54,6 +54,7 @@ export function useGraphExecutionViewModel(options: UseGraphExecutionViewModelOp
           executionLogs: runtime.state.selectedTaskState.logs,
           executionResult: runtime.state.selectedTaskState.result,
           executionCode: runtime.state.selectedTaskState.code,
+          executionStructuredData: runtime.state.selectedTaskState.structuredData,
           executionImage: runtime.state.selectedTaskState.imageBase64 || '',
           logsEndRef,
           onClose: runtime.actions.closeTaskPanel,

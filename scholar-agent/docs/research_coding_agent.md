@@ -9,6 +9,83 @@
 
 底层 `CoderAgent` 继续提供通用代码生成、依赖解析和沙箱能力；Research Coding Agent 负责仓库级诊断、受控写入、重跑和证据闭环。它不会把一次代码运行成功解释成论文结论已经复现。
 
+## 总体架构
+
+Research Coding Agent 不是独立调度器，也不负责从零完成整条论文复现。它是 Scheduler 后面的专用执行器：Planner 把仓库级调试或 Benchmark 节点分配给 `research_coding_agent`，Scheduler 汇集上游 Artifact 后调用统一入口，Agent 再按 `task.type` 进入论文调试或 Benchmark harness。
+
+```mermaid
+flowchart LR
+    P["Planner<br/>生成任务和 Artifact 契约"] --> S["Scheduler<br/>依赖、租约、重试、Artifact Relay"]
+    S --> D["ResearchCodingAgent.ExecuteTask<br/>按 task.type 分发"]
+
+    R["Repository Nodes<br/>确定性发现仓库、准备工作区"] -->|"workspace_path / repo_manifest"| S
+    C["CoderAgent<br/>通用代码生成、依赖解析"] -->|"dependency_spec"| S
+    E["Sandbox Agent<br/>运行时准备、依赖安装"] -->|"prepared_runtime"| S
+
+    D --> PH["Paper Debug Harness<br/>诊断、受限补丁、重跑、回滚"]
+    D --> BH["Benchmark Harness<br/>数据分析、适配、预检、执行、校验"]
+
+    PH --> X["Sandbox Service<br/>执行真实仓库入口"]
+    BH --> X
+    PH --> A["Artifact Store<br/>运行、补丁和调试证据"]
+    BH --> A
+    A --> DA["DataAgent<br/>论文对比、结果分析、报告"]
+```
+
+### 代码组件
+
+| 组件 | 文件 | 责任 |
+|---|---|---|
+| Agent 入口 | [`research_coding_agent.go`](../backend/internal/agent/research_coding_agent.go) | 注入 Chat Model 和 Sandbox Client；校验任务类型并分发 |
+| 论文调试 harness | [`paper_debug_harness.go`](../backend/internal/agent/paper_debug_harness.go) | 收集错误上下文、请求最小补丁、校验并写入、重跑、回滚、生成证据 |
+| 数据分析 | [`benchmark_dataset.go`](../backend/internal/agent/benchmark_dataset.go) | 确定性读取上传数据并建立 `dataset_manifest` |
+| 适配器生成 | [`benchmark_adapter.go`](../backend/internal/agent/benchmark_adapter.go) | 选择仓库入口方案、生成受控适配器并执行静态策略检查 |
+| Benchmark harness | [`benchmark_harness.go`](../backend/internal/agent/benchmark_harness.go) | 小样本预检、有限修复、正式运行、输出检查和指标重算 |
+| Prompt 契约 | [`prompts.go`](../backend/internal/prompts/prompts.go) | 约束模型返回结构、修复范围和禁止行为 |
+| 计划路由 | [`planner.go`](../backend/internal/planner/planner.go) | 生成 `paper_code_execute`、`fix_and_rerun` 和 Benchmark 节点 |
+| 运行时路由 | [`executor.go`](../backend/internal/scheduler/executor.go) | 把上游 Artifact 转为任务输入，并将 Agent 输出写回计划 Artifact |
+
+`ResearchCodingAgent` 本身只保存两个共享依赖：Chat Model 和 Sandbox Client。每个任务的运行次数、备份、诊断和补丁记录都保存在当前调用的局部状态中；跨节点数据通过 Artifact 传递，不依赖 Agent 内存中的隐藏会话。
+
+### 任务入口
+
+统一入口 `ExecuteTask` 只接受下面 7 类任务：
+
+| Task type | 必要上游输入 | 执行模块 | 主要输出 |
+|---|---|---|---|
+| `paper_code_execute` | `workspace_path`、`code_file_path`、`prepared_runtime`、`repo_manifest` | Paper Debug Harness | `run_metrics`、`paper_debug_report`、`paper_patch_manifest` |
+| `fix_and_rerun` | 上述输入，加 `run_metrics`、`paper_debug_report`、`comparison_report` | Paper Debug Harness | `rerun_metrics`、`rerun_report`、`gap_debug_report`、`gap_patch_manifest` |
+| `dataset_profile` | 上传文件及列映射 | Dataset Profiler | `dataset_manifest` |
+| `benchmark_adapter_generate` | `dataset_manifest`、`workspace_path`、`repo_manifest` | Adapter Generator | 方案、适配器 spec 和代码 |
+| `benchmark_adapter_preflight` | 适配器、数据契约、`prepared_runtime` | Benchmark Harness | 冻结后的适配器和预检报告 |
+| `benchmark_execute` | 已通过预检的适配器和运行时 | Benchmark Harness | 经逐样本重算的指标、预测路径、运行清单 |
+| `benchmark_validate` | 数据契约、指标和运行清单 | Evidence Validator | 数据哈希、样本数、数值范围复核报告 |
+
+不在白名单中的任务会直接失败，不会回退到通用模型执行。
+
+### 与其他 Agent 的边界
+
+| 角色 | 负责 | 不负责 |
+|---|---|---|
+| Repository Nodes | 确定性发现仓库、克隆并准备工作区 | 生成或修复仓库代码 |
+| `CoderAgent` | 通用代码生成、依赖解析；当前也承载 `sandbox_agent` 的运行时实现 | 根据论文运行错误修改仓库源码 |
+| `Sandbox Agent` | 作为逻辑角色创建隔离运行时、安装解析后的依赖 | 决定该改哪段论文代码 |
+| `ResearchCodingAgent` | 在已有工作区和运行时中诊断、受控修改、重跑、回滚和记录证据 | 论文检索、容器生命周期、最终科研结论判断 |
+| `DataAgent` | 对比论文声明、分析指标、选择受限消融、生成报告 | 写入或修复仓库源码 |
+
+因此，环境搭建错误先由依赖安装链处理；进入 `paper_code_execute` 后仍然失败，且证据指向仓库代码缺陷时，才进入源码调试链。缺数据、checkpoint、凭证、硬件或论文口径不一致不属于代码补丁可以解决的问题。
+
+### 控制流与证据流
+
+1. Planner 为节点声明 `required_artifacts` 和 `output_artifacts`。
+2. Scheduler 只在依赖完成后创建运行时 Task，并把上游 Artifact 放入 `task.inputs`。
+3. Research Coding Agent 校验工作区、入口和 `prepared_runtime`，再执行对应 harness。
+4. 模型只能提出结构化方案或完整文件替换内容，不能直接访问文件系统。
+5. Go harness 负责路径校验、策略校验、备份和真实写入；Sandbox Service 只执行通过校验的工作区。
+6. 结果通过 `task.metadata.artifact_values` 返回，Scheduler 再写入计划级 Artifact Store，供 DataAgent 或后续节点消费。
+
+这个设计把“模型判断”“文件修改”“代码执行”“结果认定”拆开：模型负责提出候选修复，Go 代码负责执行边界，沙箱负责隔离运行，确定性校验器负责接受或拒绝结果。
+
 ## 论文代码调试
 
 论文复现的 baseline 节点使用 `paper_code_execute`，由 Research Coding Agent 负责执行。若入口运行失败，系统会：
@@ -17,7 +94,38 @@
 2. 最多向模型请求 2 轮最小修复，每轮最多修改 3 个已存在且已提供给模型的 Python 文件。
 3. 在同一个 `prepared_runtime` 中重跑，总运行次数最多 3 次。
 4. 每次运行前后检查仓库源码指纹，拒绝执行期间发生的未授权源码修改。
-5. 成功时记录补丁路径、原因和前后 SHA-256；修复预算耗尽时恢复所有原文件。
+5. 成功时记录补丁路径、原因和前后 SHA-256；修复预算耗尽时恢复所有被 Agent 修改的原文件。
+
+### 执行状态机
+
+```mermaid
+flowchart TD
+    V["校验工作区、Python 入口和 prepared_runtime"] --> M{"任务模式"}
+    M -->|"paper_code_execute"| R["执行 baseline"]
+    M -->|"fix_and_rerun"| G["读取 comparison_report<br/>先判断是否有代码修复依据"]
+    G -->|"no_change / unsupported"| N["保留原指标并输出诊断"]
+    G -->|"patched"| P["校验、备份并应用补丁"]
+    P --> R
+    R -->|"exit code = 0 且源码指纹不变"| O["输出运行、指纹和补丁证据"]
+    R -->|"失败"| B{"修复预算是否剩余"}
+    B -->|"是"| C["收集有限源码和 traceback 上下文"]
+    C --> L["模型返回 patched / no_change / unsupported"]
+    L -->|"patched"| P
+    L -->|"停止"| F["恢复 Agent 修改过的原文件并失败"]
+    B -->|"否"| F
+```
+
+baseline 模式先运行再诊断；结果差异模式先读取 `comparison_report` 判断补丁是否合理。两种模式共用同一套路径校验、补丁策略、备份、源码指纹和 Artifact 输出逻辑。
+
+### 内部步骤
+
+1. **入口校验**：工作区必须是普通目录；入口必须是工作区内现有、非符号链接的 `.py` 文件；运行时 ID 必须来自上游 `prepared_runtime`。
+2. **真实执行**：在已挂载工作区中执行 `python3 <entry>`，stdout/stderr 实时回传。
+3. **上下文收集**：按顺序读取入口、traceback 命中文件、`repo_manifest` 候选和入口同目录 Python 文件。
+4. **修复提议**：模型返回 `patched`、`no_change` 或 `unsupported`，以及诊断、文件路径、完整替换内容和逐文件原因。
+5. **Go 端校验**：目标必须是模型已看到的现有文件；拒绝越界路径、符号链接、空补丁、重复路径和禁止构造。
+6. **写入与重跑**：首次修改前保存内容和权限，原子替换文件后在同一运行时重跑。
+7. **成功提交或失败回滚**：成功保留补丁并写入哈希；失败恢复所有被 Agent 修改的文件。
 
 如果用户明确要求排查“结果与论文不一致”，Planner 会增加 `fix_and_rerun` 节点。该节点消费 `comparison_report`、原始指标和前一次调试报告，只有证据支持代码缺陷时才生成补丁；缺少数据、checkpoint、凭证、算力或科学口径不一致时返回 `no_change` 或 `unsupported`，不会通过伪造指标来“修好”结果。
 
@@ -32,13 +140,35 @@
 | `rerun_report` / `gap_debug_report` | 结果差异诊断和重跑报告 |
 | `gap_patch_manifest` | 结果差异阶段应用的补丁证据 |
 
+报告状态与任务状态的关系：
+
+| 报告状态 | 含义 | 任务结果 |
+|---|---|---|
+| `passed` | 首次或未改代码的运行成功 | `completed`，发布运行 Artifact |
+| `repaired` | 应用至少一个受控补丁后运行成功 | `completed`，发布运行与补丁 Artifact |
+| `no_change` | 结果差异证据不足以支持代码修改 | `fix_and_rerun` 完成并保留原指标 |
+| `unsupported` | 问题需要缺失的数据、模型、凭证、硬件或人工判断 | `fix_and_rerun` 完成并记录原因 |
+| `failed` | baseline 无法修复、补丁非法、执行异常或预算耗尽 | 任务失败；回滚 Agent 补丁，报告保存在任务 `result/error`，不发布成功 Artifact |
+
 ### 调试边界
 
 - 只修改临时克隆工作区中的现有 Python 文件，不修改原始远端仓库。
 - 不允许补丁引入 `pip install`、shell 安装、mock/fake 论文方法、硬编码指标或凭证。
 - 单文件最多 96 KiB，模型源码上下文最多 8 个文件、总计 256 KiB。
-- 失败时恢复 Agent 首次修改前的内容；工作区内保留结构化失败报告。
+- 失败时恢复 Agent 首次修改前的内容；任务结果中保留结构化失败报告。
 - 代码修复只能证明该执行错误被消除，不能证明论文方法、数据和指标已经完整复现。
+
+固定预算来自代码常量，不由模型决定：
+
+| 边界 | 当前值 |
+|---|---:|
+| 总执行次数 | 3 |
+| 总修复轮数 | 2 |
+| 每轮最多修改文件 | 3 |
+| 模型最多读取源码文件 | 8 |
+| 单文件上限 | 96 KiB |
+| 总源码上下文上限 | 256 KiB |
+| 单次 stdout/stderr 报告预览 | 4000 bytes |
 
 ## 自有数据 Benchmark
 

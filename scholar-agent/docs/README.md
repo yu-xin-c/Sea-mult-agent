@@ -8,9 +8,11 @@
 - [backend_planner_models_reference.md](backend_planner_models_reference.md)：后端规划与调度模型说明
 - [agent_runtime_p0_p1.md](agent_runtime_p0_p1.md)：P0/P1 可靠性、安全、治理与运维说明
 - [tot_ablation_and_uploads.md](tot_ablation_and_uploads.md)：受限 ToT 消融设计、预算选择和文件上传
-- [research_coding_agent.md](research_coding_agent.md)：论文仓库代码调试、受限补丁与重跑、自有数据 Benchmark 适配
+- [research_coding_agent.md](research_coding_agent.md)：科研 Coding 智能体组件架构、任务路由、论文调试状态机与自有数据 Benchmark 契约
+- [claim_evidence_graph.md](claim_evidence_graph.md)：分层论文主张、冻结 Rubric、运行证据绑定、判定边界与前端可视化
 - [user_manual.md](user_manual.md)：产品使用说明
 - [../examples/](../examples/)：可运行示例、成功条件与已验证结果
+- [../test/claim-evidence/](../test/claim-evidence/)：Claim-to-Evidence 真实 harness golden test、稳定图 JSON 和截图
 
 ## Interface Preview
 

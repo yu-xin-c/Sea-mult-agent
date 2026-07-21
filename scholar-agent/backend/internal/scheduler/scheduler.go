@@ -556,6 +556,7 @@ func (s *Scheduler) markTaskCompleted(planID, taskID, executionID, leaseOwner st
 		task.Status = models.StatusCompleted
 		task.Result = result.Result
 		task.Code = result.Code
+		task.StructuredData = result.StructuredData
 		task.ImageBase64 = result.ImageBase64
 		task.Error = ""
 		task.ExecutionID = ""
@@ -598,10 +599,11 @@ func (s *Scheduler) markTaskCompleted(planID, taskID, executionID, leaseOwner st
 		TaskStatus:  string(models.StatusCompleted),
 		ExecutionID: executionID,
 		Payload: map[string]any{
-			"result_summary": result.Result,
-			"result":         result.Result,
-			"code":           result.Code,
-			"image_base64":   result.ImageBase64,
+			"result_summary":  result.Result,
+			"result":          result.Result,
+			"code":            result.Code,
+			"structured_data": result.StructuredData,
+			"image_base64":    result.ImageBase64,
 		},
 		Timestamp: now,
 	})

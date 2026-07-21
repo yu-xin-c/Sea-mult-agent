@@ -18,6 +18,7 @@ type LibrarianAgent struct {
 	Name         string
 	SystemPrompt string
 	EinoChain    compose.Runnable[string, string]
+	ChatModel    *openai.ChatModel
 }
 
 type librarianContextKey string
@@ -48,6 +49,7 @@ func (a *LibrarianAgent) initEinoChain() {
 	if err != nil {
 		log.Fatalf("初始化文献分析模型失败: %v", err)
 	}
+	a.ChatModel = chatModel
 
 	graph := compose.NewGraph[string, string]()
 
@@ -87,6 +89,9 @@ func (a *LibrarianAgent) initEinoChain() {
 
 func (a *LibrarianAgent) ExecuteTask(ctx context.Context, task *models.Task, sharedContext map[string]interface{}) error {
 	logToContext(ctx, "[%s] 开始执行任务: %s", a.Name, task.Name)
+	if task != nil && task.Type == "claim_rubric_extract" {
+		return a.executeClaimRubricExtraction(ctx, task)
+	}
 
 	input := task.Description
 	if task != nil && len(task.Inputs) > 0 {

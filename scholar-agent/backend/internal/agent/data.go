@@ -95,6 +95,9 @@ func (a *DataAgent) ExecuteTask(ctx context.Context, task *models.Task, sharedCo
 	if task != nil && task.Type == "ablation_design" {
 		return a.executeAblationDesign(ctx, task)
 	}
+	if task != nil && task.Type == "claim_evidence_build" {
+		return a.executeClaimEvidenceBuild(ctx, task)
+	}
 
 	input := task.Description
 	if task != nil && len(task.Inputs) > 0 {

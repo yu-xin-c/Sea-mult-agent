@@ -31,6 +31,12 @@ export interface Task {
   Status: string;
   Dependencies: string[];
   Inputs?: Record<string, unknown>;
+  RequiredArtifacts?: string[];
+  OutputArtifacts?: string[];
+  Result?: string;
+  Code?: string;
+  StructuredData?: string;
+  ImageBase64?: string;
 }
 
 export interface GraphTask {
@@ -61,6 +67,7 @@ export interface GraphTask {
   };
   result?: string;
   code?: string;
+  structured_data?: string;
   image_base64?: string;
   image_base_64?: string;
   error?: string;
@@ -125,6 +132,7 @@ export interface NodeExecutionState {
   logs: string;
   result: string;
   code: string;
+  structuredData: string;
   imageBase64?: string;
 }
 
@@ -195,6 +203,7 @@ export interface ExecuteTaskPayload {
 export interface ExecuteTaskResultEvent {
   result?: string;
   code?: string;
+  structured_data?: string;
   image_base64?: string;
   image_base_64?: string;
 }

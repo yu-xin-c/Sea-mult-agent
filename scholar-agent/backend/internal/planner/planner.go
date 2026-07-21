@@ -140,18 +140,22 @@ func (p *Planner) GeneratePlan(intent string, intentType string) (*models.Plan, 
 		plan.Tasks[t7.ID] = t7
 	} else if intentType == "Paper_Reproduction" {
 		t1 := createMockTask("Parse Paper & Extract Algorithm Details", "librarian_agent", nil, intent)
+		tRubric := createMockTask("Freeze Hierarchical Claim Rubric", "librarian_agent", []string{t1.ID}, intent)
 		t2 := createMockTask("Find/Clone Open Source Repository", "coder_agent", []string{t1.ID}, intent)
 		t3 := createMockTask("Setup Sandbox Environment (Install Dependencies)", "sandbox_agent", []string{t2.ID}, intent)
 		t4 := createMockTask("Execute Baseline Code", "sandbox_agent", []string{t3.ID}, intent)
 		t5 := createMockTask("Compare Results with Paper", "data_agent", []string{t4.ID}, intent)
 		t6 := createMockTask("Debug/Refine Code if Results Mismatch", "research_coding_agent", []string{t5.ID}, intent)
+		tEvidence := createMockTask("Build Claim-to-Evidence Graph", "data_agent", []string{tRubric.ID, t6.ID}, intent)
 
 		plan.Tasks[t1.ID] = t1
+		plan.Tasks[tRubric.ID] = tRubric
 		plan.Tasks[t2.ID] = t2
 		plan.Tasks[t3.ID] = t3
 		plan.Tasks[t4.ID] = t4
 		plan.Tasks[t5.ID] = t5
 		plan.Tasks[t6.ID] = t6
+		plan.Tasks[tEvidence.ID] = tEvidence
 	} else if intentType == "Code_Execution" {
 		t1 := createMockTask("Generate & Run Code", "coder_agent", nil, intent)
 		t2 := createMockTask("Verify Results", "data_agent", []string{t1.ID}, intent)
@@ -796,6 +800,16 @@ func buildPaperReproductionNodesV2(intent models.IntentContext) []*models.TaskNo
 	if uploadedFiles, ok := intent.Entities["uploaded_files"]; ok {
 		t1.Inputs["uploaded_files"] = uploadedFiles
 	}
+	claimRubric := newNode(
+		"Freeze Hierarchical Claim Rubric",
+		"claim_rubric_extract",
+		"librarian_agent",
+		[]string{t1.ID},
+		[]string{"parsed_paper"},
+		[]string{"claim_rubric", "claim_rubric_report"},
+		true,
+		context,
+	)
 	t2 := newRepoDiscoveryNode([]string{t1.ID}, context, intent)
 	repoPrepareDependencies := []string{t2.ID}
 	repoPrepareArtifacts := []string{"repo_url", "candidate_repositories", "repo_validation_report"}
@@ -823,7 +837,7 @@ func buildPaperReproductionNodesV2(intent models.IntentContext) []*models.TaskNo
 	t7 := newNode("Execute And Debug Baseline", "paper_code_execute", "research_coding_agent", []string{t6.ID}, []string{"workspace_path", "code_file_path", "generated_code", "prepared_runtime", "repo_manifest"}, []string{"run_metrics", "paper_debug_report", "paper_patch_manifest"}, false, context)
 	t8 := newNode("Compare With Paper Claims", "paper_compare", "data_agent", []string{t7.ID}, []string{"run_metrics", "paper_debug_report", "parsed_paper", "repo_manifest", "reproduction_mode_report"}, []string{"comparison_report"}, false, context)
 
-	nodes := []*models.TaskNode{t1, t2}
+	nodes := []*models.TaskNode{t1, claimRubric, t2}
 	if ablationDesign != nil {
 		nodes = append(nodes, ablationDesign)
 	}
@@ -849,7 +863,36 @@ func buildPaperReproductionNodesV2(intent models.IntentContext) []*models.TaskNo
 	if needsPlot {
 		visualize := newNode("Visualize Reproduction Results", "result_visualization", "data_agent", []string{lastID}, []string{lastArtifact}, []string{"result_plot"}, true, context)
 		nodes = append(nodes, visualize)
+		lastID = visualize.ID
 	}
+	evidenceArtifacts := []string{
+		"claim_rubric",
+		"parsed_paper",
+		"repo_manifest",
+		"reproduction_mode_report",
+		"dependency_install_report",
+		"run_metrics",
+		"paper_debug_report",
+		"paper_patch_manifest",
+		"comparison_report",
+	}
+	if needsFix {
+		evidenceArtifacts = append(evidenceArtifacts, "rerun_metrics", "rerun_report", "gap_debug_report", "gap_patch_manifest")
+	}
+	if needsPlot {
+		evidenceArtifacts = append(evidenceArtifacts, "result_plot")
+	}
+	claimEvidence := newNode(
+		"Build Claim-to-Evidence Graph",
+		"claim_evidence_build",
+		"data_agent",
+		[]string{claimRubric.ID, lastID},
+		evidenceArtifacts,
+		[]string{"claim_evidence_graph", "claim_verification_report"},
+		false,
+		context,
+	)
+	nodes = append(nodes, claimEvidence)
 	return nodes
 }
 
@@ -1216,6 +1259,8 @@ func exactTaskNameTranslations() map[string]string {
 		"Execute Baseline":                                              "执行基线实验",
 		"Execute And Debug Baseline":                                    "执行并调试基线实验",
 		"Compare With Paper Claims":                                     "对比论文声明结果",
+		"Freeze Hierarchical Claim Rubric":                              "冻结分层主张验收标准",
+		"Build Claim-to-Evidence Graph":                                 "构建主张证据图",
 		"Visualize Reproduction Results":                                "可视化复现实验结果",
 		"Fix Gaps And Rerun":                                            "修复问题并重新运行",
 		"Debug Result Gap And Rerun":                                    "调试结果差异并重新运行",
@@ -1320,6 +1365,8 @@ func validateCriticalNodeContracts(intent models.IntentContext, nodes []*models.
 	hasInstallDependencies := false
 	hasExecuteCode := false
 	hasPaperParse := false
+	hasClaimRubric := false
+	hasClaimEvidence := false
 	hasRepoDiscovery := false
 	hasRepoPrepare := false
 
@@ -1341,6 +1388,25 @@ func validateCriticalNodeContracts(intent models.IntentContext, nodes []*models.
 			}
 			if !containsArtifact(node.OutputArtifacts, "parsed_paper") {
 				return fmt.Errorf("paper_parse node %q must output parsed_paper", node.Name)
+			}
+		case "claim_rubric_extract":
+			hasClaimRubric = true
+			if node.AssignedTo != "librarian_agent" {
+				return fmt.Errorf("claim_rubric_extract node %q must be assigned to librarian_agent", node.Name)
+			}
+			if !containsArtifact(node.RequiredArtifacts, "parsed_paper") || !containsArtifact(node.OutputArtifacts, "claim_rubric") {
+				return fmt.Errorf("claim_rubric_extract node %q must consume parsed_paper and output claim_rubric", node.Name)
+			}
+		case "claim_evidence_build":
+			hasClaimEvidence = true
+			if node.AssignedTo != "data_agent" {
+				return fmt.Errorf("claim_evidence_build node %q must be assigned to data_agent", node.Name)
+			}
+			if !containsArtifact(node.RequiredArtifacts, "claim_rubric") || !containsArtifact(node.RequiredArtifacts, "run_metrics") || !containsArtifact(node.RequiredArtifacts, "comparison_report") {
+				return fmt.Errorf("claim_evidence_build node %q must consume claim_rubric, run_metrics, and comparison_report", node.Name)
+			}
+			if !containsArtifact(node.OutputArtifacts, "claim_evidence_graph") || !containsArtifact(node.OutputArtifacts, "claim_verification_report") {
+				return fmt.Errorf("claim_evidence_build node %q must output claim_evidence_graph and claim_verification_report", node.Name)
 			}
 		case "ablation_design":
 			if node.AssignedTo != "data_agent" {
@@ -1432,7 +1498,7 @@ func validateCriticalNodeContracts(intent models.IntentContext, nodes []*models.
 		}
 	}
 	if intent.IntentType == "Paper_Reproduction" {
-		if !hasPaperParse || !hasRepoDiscovery || !hasRepoPrepare || !hasResolveDependencies || !hasPrepareRuntime || !hasInstallDependencies || !hasExecuteCode {
+		if !hasPaperParse || !hasClaimRubric || !hasClaimEvidence || !hasRepoDiscovery || !hasRepoPrepare || !hasResolveDependencies || !hasPrepareRuntime || !hasInstallDependencies || !hasExecuteCode {
 			return fmt.Errorf("paper reproduction plan is missing one or more required canonical nodes")
 		}
 	}

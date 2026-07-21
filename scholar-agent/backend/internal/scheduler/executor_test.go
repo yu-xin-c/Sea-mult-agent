@@ -50,3 +50,14 @@ func TestRoutedExecutorUsesResearchCodingRunner(t *testing.T) {
 		t.Fatal("research coding task was not routed to its dedicated runner")
 	}
 }
+
+func TestClaimArtifactsUseJSONType(t *testing.T) {
+	for _, key := range []string{"claim_rubric", "claim_evidence_graph"} {
+		if got := inferArtifactType(key, &models.Task{}); got != "json" {
+			t.Fatalf("inferArtifactType(%q)=%q, want json", key, got)
+		}
+	}
+	if got := inferArtifactType("claim_verification_report", &models.Task{}); got != "report" {
+		t.Fatalf("claim verification report type=%q, want report", got)
+	}
+}

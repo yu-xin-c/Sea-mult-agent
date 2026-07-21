@@ -138,9 +138,11 @@ func TestPaperReproductionRoutesRepositoryDebugToResearchCodingAgent(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	var baseline, gapDebug, compare, visualize *models.TaskNode
+	var rubric, baseline, gapDebug, compare, visualize, evidence *models.TaskNode
 	for _, node := range plan.Nodes {
 		switch node.Type {
+		case "claim_rubric_extract":
+			rubric = node
 		case "paper_code_execute":
 			baseline = node
 		case "fix_and_rerun":
@@ -149,10 +151,12 @@ func TestPaperReproductionRoutesRepositoryDebugToResearchCodingAgent(t *testing.
 			compare = node
 		case "result_visualization":
 			visualize = node
+		case "claim_evidence_build":
+			evidence = node
 		}
 	}
-	if baseline == nil || gapDebug == nil || compare == nil || visualize == nil {
-		t.Fatalf("missing repository debug flow: baseline=%v gap=%v compare=%v visualize=%v", baseline != nil, gapDebug != nil, compare != nil, visualize != nil)
+	if rubric == nil || baseline == nil || gapDebug == nil || compare == nil || visualize == nil || evidence == nil {
+		t.Fatalf("missing claim-aware repository debug flow: rubric=%v baseline=%v gap=%v compare=%v visualize=%v evidence=%v", rubric != nil, baseline != nil, gapDebug != nil, compare != nil, visualize != nil, evidence != nil)
 	}
 	if baseline.AssignedTo != "research_coding_agent" || gapDebug.AssignedTo != "research_coding_agent" {
 		t.Fatalf("paper debugging was not routed to research coding agent")
@@ -165,5 +169,19 @@ func TestPaperReproductionRoutesRepositoryDebugToResearchCodingAgent(t *testing.
 	}
 	if len(visualize.Dependencies) != 1 || visualize.Dependencies[0] != gapDebug.ID || !containsArtifact(visualize.RequiredArtifacts, "rerun_metrics") {
 		t.Fatalf("visualization does not consume rerun evidence: %#v", visualize)
+	}
+	if !containsArtifact(rubric.RequiredArtifacts, "parsed_paper") || !containsArtifact(rubric.OutputArtifacts, "claim_rubric") {
+		t.Fatalf("claim rubric contract is incomplete: %#v", rubric)
+	}
+	if len(evidence.Dependencies) != 2 || evidence.Dependencies[0] != rubric.ID || evidence.Dependencies[1] != visualize.ID {
+		t.Fatalf("claim graph is not the final evidence join: %#v", evidence.Dependencies)
+	}
+	for _, artifact := range []string{"claim_rubric", "run_metrics", "comparison_report", "rerun_metrics", "result_plot"} {
+		if !containsArtifact(evidence.RequiredArtifacts, artifact) {
+			t.Fatalf("claim graph is missing required evidence %s: %#v", artifact, evidence.RequiredArtifacts)
+		}
+	}
+	if !containsArtifact(evidence.OutputArtifacts, "claim_evidence_graph") || !containsArtifact(evidence.OutputArtifacts, "claim_verification_report") {
+		t.Fatalf("claim graph outputs are incomplete: %#v", evidence.OutputArtifacts)
 	}
 }

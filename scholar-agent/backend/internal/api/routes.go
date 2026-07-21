@@ -346,10 +346,11 @@ func SetupRoutes(r *gin.Engine) {
 								task.Result = task.Result[:50000] + "\n...[Truncated]..."
 							}
 							c.SSEvent("result", gin.H{
-								"result":        task.Result,
-								"code":          task.Code,
-								"image_base_64": task.ImageBase64,
-								"outputs":       buildExecuteOutputs(task),
+								"result":          task.Result,
+								"code":            task.Code,
+								"structured_data": task.StructuredData,
+								"image_base_64":   task.ImageBase64,
+								"outputs":         buildExecuteOutputs(task),
 							})
 						}
 						return false // Close stream
@@ -500,6 +501,9 @@ func buildExecuteOutputs(task *models.Task) map[string]any {
 	}
 	if strings.TrimSpace(task.Code) != "" {
 		outputs["generated_code"] = task.Code
+	}
+	if strings.TrimSpace(task.StructuredData) != "" {
+		outputs["structured_data"] = task.StructuredData
 	}
 	if strings.TrimSpace(task.ImageBase64) != "" {
 		outputs["image_base64"] = task.ImageBase64

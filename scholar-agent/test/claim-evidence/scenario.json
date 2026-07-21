@@ -1,0 +1,53 @@
+{
+  "paper_title": "Tiny Reproduction Study",
+  "parsed_paper": "Tiny Reproduction Study. Table 1 reports that the method reaches accuracy 0.80 on TinyBench test split using 100 examples. The accepted reproduction tolerance is +/-0.01.",
+  "repo_manifest": "{\"repository\":\"https://github.com/example/tiny-reproduction\",\"entrypoint\":\"evaluate.py\",\"revision\":\"abc123\"}",
+  "reproduction_mode_report": "{\"requested_mode\":\"smoke\",\"effective_mode\":\"smoke\",\"dataset\":\"TinyBench test\"}",
+  "dependency_install_report": "{\"status\":\"completed\",\"python\":\"3.11\",\"attempts\":1}",
+  "run_metrics": "{\"exit_code\":0,\"accuracy\":0.80,\"sample_count\":100,\"seed\":7,\"dataset\":\"TinyBench test\"}",
+  "paper_debug_report": "{\"status\":\"completed\",\"run_attempts\":1,\"patch_rounds\":0}",
+  "paper_patch_manifest": "{\"patches\":[]}",
+  "comparison_report": "Observed accuracy 0.80 matches the paper target 0.80 within tolerance +/-0.01 on the named TinyBench test split.",
+  "rubric_response": {
+    "paper_title": "Tiny Reproduction Study",
+    "claims": [
+      {
+        "title": "Accuracy claim",
+        "statement": "The method reaches accuracy 0.80 on the TinyBench test split.",
+        "source_locator": "Table 1",
+        "claim_type": "quantitative",
+        "importance": 0.9,
+        "criteria": [
+          {
+            "description": "Evaluate accuracy on the TinyBench test split with 100 examples and accept values within +/-0.01 of 0.80.",
+            "metric_name": "accuracy",
+            "expected_value": 0.8,
+            "tolerance": 0.01,
+            "unit": "ratio",
+            "required_evidence": ["paper", "run", "metric", "comparison"]
+          }
+        ]
+      }
+    ]
+  },
+  "evidence_response": {
+    "findings": [
+      {
+        "claim_id": "claim-001",
+        "criterion_id": "claim-001.criterion-01",
+        "status": "verified",
+        "confidence": 0.98,
+        "observed_value": "accuracy=0.80, sample_count=100, seed=7",
+        "evidence_keys": ["run_metrics", "comparison_report"],
+        "reason": "The recorded run uses the named test split and sample count; observed accuracy 0.80 is within the frozen tolerance."
+      }
+    ]
+  },
+  "expected": {
+    "status": "assessed",
+    "verified_claims": 1,
+    "total_claims": 1,
+    "total_criteria": 1,
+    "criterion_evidence_coverage": 1.0
+  }
+}

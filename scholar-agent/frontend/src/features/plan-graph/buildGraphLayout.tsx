@@ -53,6 +53,12 @@ export const graphTaskToTask = (task: GraphTask): Task => ({
   Status: task.status,
   Dependencies: task.dependencies ?? [],
   Inputs: task.inputs,
+  RequiredArtifacts: task.required_artifacts,
+  OutputArtifacts: task.output_artifacts,
+  Result: task.result,
+  Code: task.code,
+  StructuredData: task.structured_data,
+  ImageBase64: task.image_base64 || task.image_base_64,
 });
 
 export const buildGraphLayout = (planGraph: PlanGraph): { nodes: Node[]; edges: Edge[] } => {

@@ -222,9 +222,9 @@ Artifact 同时承担数据接口和可追踪证据的作用。例如 `repo_url`
 | Agent | 当前实现 |
 |---|---|
 | `ChatAgent` | 通用问答；代码型问题可委托 Coder |
-| `LibrarianAgent` | 论文解析、资料归纳和方法声明提取 |
+| `LibrarianAgent` | 论文解析、资料归纳、方法声明提取和实验前冻结 Claim Rubric |
 | `CoderAgent` | 代码生成、依赖解析、运行时准备、安装、执行与修复 |
-| `DataAgent` | 指标分析、论文对比、报告和受限消融设计 |
+| `DataAgent` | 指标分析、论文对比、Claim-to-Evidence 判定、报告和受限消融设计 |
 | `ResearchCodingAgent` | 论文仓库代码调试、受限补丁和重跑，以及数据契约分析、Benchmark 适配与证据校验 |
 
 Librarian、Coder、Data 和 Chat 使用 Eino 编排 OpenAI-compatible Chat Model。模型地址、模型名和密钥通过环境变量或配置文件提供。
@@ -250,13 +250,32 @@ ReAct 用于局部故障修复，不用于全局拓扑搜索：
 
 这种划分保持了“全局方案选择有预算，局部修复有次数，正式结果不漂移”。
 
+### 7.3 Research Coding Agent 的内部架构
+
+Research Coding Agent 是 Scheduler 后面的仓库级专用执行器，不是另一套 Planner。`RoutedTaskExecutor` 把节点输入和上游 Artifact 组装成运行时 Task，再交给 `ResearchCodingAgent.ExecuteTask` 按任务类型分发：
+
+```text
+Planner TaskNode
+    -> Scheduler / Artifact Relay
+        -> ResearchCodingAgent.ExecuteTask
+            -> Paper Debug Harness
+                -> 有限上下文 -> 模型补丁提议 -> Go 校验与备份 -> Sandbox 重跑 -> 补丁证据
+            -> Benchmark Harness
+                -> 数据契约 -> 适配器 -> 预检修复 -> 正式运行 -> Go 指标重算
+```
+
+它在启动时复用 Coder 的 Chat Model 和 Sandbox Client，但不复用 Coder 的任务状态。每次调试的运行次数、文件备份和补丁清单都只存在于当前任务内，跨节点状态通过显式 Artifact 传递。模型只能提出结构化方案或代码内容；路径检查、写入、回滚、源码指纹和结果校验都由 Go harness 完成。
+
+完整组件图、任务入口、状态机和 Artifact 契约见 [`research_coding_agent.md`](research_coding_agent.md)。
+
 ## 8. 论文复现流程
 
 标准论文复现主链如下：
 
 ```mermaid
 flowchart LR
-    P["解析论文"] --> R["发现仓库"]
+    P["解析论文"] --> F["冻结分层 Claim Rubric"]
+    P --> R["发现仓库"]
     P --> A["可选 ToT 消融设计"]
     R --> W["准备工作区"]
     A --> W
@@ -266,6 +285,8 @@ flowchart LR
     I --> E["Research Coding 执行并调试 baseline"]
     E --> C["对比论文声明"]
     C --> V["可选可视化或修复重跑"]
+    V --> G["构建 Claim-to-Evidence Graph"]
+    F --> G
 ```
 
 关键实现边界：
@@ -276,6 +297,8 @@ flowchart LR
 - 系统根据用户请求和本机 CPU、内存、磁盘、GPU 探测选择 `smoke` 或 `full`。
 - `full` 模式或部署强制审批时，计划进入 `awaiting_approval`，未批准不能执行。
 - `smoke` 是结构和执行链验证，不等同于完整数据训练或论文指标复现。
+- `claim_rubric_extract` 在运行前冻结主张和独立判定准则；`claim_evidence_build` 在末端绑定指标、对照、补丁和图表 Artifact。没有直接运行证据时，准则不能标记为已验证。
+- 前端通过 `structured_data` 接收图 JSON，以“主张 -> 准则 -> 证据”三泳道展示状态、理由和证据哈希。完整契约见 [`claim_evidence_graph.md`](claim_evidence_graph.md)。
 
 ## 9. 自有数据 Benchmark 流程
 
@@ -478,6 +501,7 @@ make eval
 - [Agent Runtime P0/P1](agent_runtime_p0_p1.md)
 - [受限 ToT 消融与文件上传](tot_ablation_and_uploads.md)
 - [Research Coding Agent](research_coding_agent.md)
+- [Claim-to-Evidence Graph](claim_evidence_graph.md)
 - [后端规划与模型参考](backend_planner_models_reference.md)
 - [项目目录速查](project_structure_frontend_backend.md)
 - [用户手册](user_manual.md)
