@@ -10,6 +10,11 @@
 - [tot_ablation_and_uploads.md](tot_ablation_and_uploads.md)：受限 ToT 消融设计、预算选择和文件上传
 - [research_coding_agent.md](research_coding_agent.md)：科研 Coding 智能体组件架构、任务路由、论文调试状态机与自有数据 Benchmark 契约
 - [claim_evidence_graph.md](claim_evidence_graph.md)：分层论文主张、冻结 Rubric、运行证据绑定、判定边界与前端可视化
+- [intent/02_dual_model_finetuning_guide.md](intent/02_dual_model_finetuning_guide.md)：CPU BERT 与 GPU Qwen 双配置、共用数据、微调流程、路由仲裁和 V100 实践
+- [intent/03_bert_cpu_architecture.md](intent/03_bert_cpu_architecture.md)：BERT/BGE 编码器、自注意力、分类头、微调与 CPU 部署原理
+- [intent/04_qwen_gpu_architecture.md](intent/04_qwen_gpu_architecture.md)：Qwen3-0.6B 因果解码器、GQA、RoPE、RMSNorm、LoRA 与结构化生成原理
+- [intent/05_dual_model_training_record_20260722.md](intent/05_dual_model_training_record_20260722.md)：V100 双模型真实训练参数、数据哈希、指标、失败样例与评测修复
+- [intent/06_interview_dual_intent_router_story.md](intent/06_interview_dual_intent_router_story.md)：可用于面试的 30 秒、2 分钟和 STAR 表达，以及技术追问与边界说明
 - [user_manual.md](user_manual.md)：产品使用说明
 - [../examples/](../examples/)：可运行示例、成功条件与已验证结果
 - [../test/claim-evidence/](../test/claim-evidence/)：Claim-to-Evidence 真实 harness golden test、稳定图 JSON 和截图
