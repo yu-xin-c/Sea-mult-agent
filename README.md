@@ -10,7 +10,7 @@
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Status](https://img.shields.io/badge/status-research%20prototype-orange)](#project-status)
 
-[快速开始](#quick-start) · [系统架构](#architecture) · [API](#api) · [实验记录](#reproduction) · [贡献指南](scholar-agent/docs/CONTRIBUTING.md)
+[快速开始](#quick-start) · [AutoResearch](#run-bounded-autoresearch) · [系统架构](#architecture) · [API](#api) · [实验记录](#reproduction) · [贡献指南](scholar-agent/docs/CONTRIBUTING.md)
 
 </div>
 
@@ -35,6 +35,7 @@ Sea-Mult-Agent 面向论文阅读、代码仓库发现、环境准备、受控�
 | **研究材料上传** | 在工作台附加论文、配置、笔记和小型数据文件，按用户隔离并传入复现流程 |
 | **科研仓库 Coding Agent** | 对论文代码做受限调试、补丁回滚和重跑，也能为自有数据生成仓库 Benchmark 适配器 |
 | **自有数据仓库评测** | Research Coding Agent 生成受限适配器，经 8 条预检、ReAct 修复和指标重算后运行用户数据 |
+| **受限 AutoResearch 循环** | 冻结声明的评测器与数据，只允许修改白名单文件；逐轮 Keep/Reject、退化回滚，并重复复验最佳候选及记录执行资源 |
 | **逐主张复现验收** | 实验前冻结分层 Rubric，实验后把论文主张、判定准则与真实 Artifact 绑定成可视化证据图 |
 | **实时可观测执行** | SSE 推送计划、节点、日志和 Artifact 事件，前端同步展示执行状态 |
 | **可靠执行与治理** | 任务租约、迟到结果隔离、取消/重试、持久化恢复、预算和人工审批 |
@@ -113,6 +114,23 @@ Attention Is All You Need，使用 smoke 模式运行轻量注意力消融，
 
 系统会分析数据契约、克隆仓库、生成独立适配器，并在正式运行前用最多 8 条样本预检。分类和回归指标会根据逐样本预测由 Go harness 重算。论文代码运行失败时，同一 Agent 还能在有限源码上下文中生成最小补丁并重跑。组件架构、状态机、Artifact 契约和限制见 [Research Coding Agent](scholar-agent/docs/research_coding_agent.md)。
 
+### Run Bounded AutoResearch
+
+仓库中准备 `autoresearch.spec/v1` 配置后，在 Web UI 输入：
+
+```text
+用 https://github.com/OWNER/REPOSITORY 做 AutoResearch，
+按 autoresearch.json 运行，最多 3 轮，总时长不超过 15 分钟，独立复验 3 次。
+```
+
+系统会冻结 ResearchSpec，先记录 baseline，再让 Research Coding Agent 生成白名单内的小改动。只有主指标达到最小提升才保留候选；退化候选会回滚。循环结束后，同一冻结评测器可启动 1 至 5 次独立进程复验，并输出逐次分数、均值、标准差、失败率以及搜索/验证命令资源摘要。项目如何借鉴 `karpathy/autoresearch`、ReAct、Tree of Thoughts、PaperBench、CORE-Bench、MLE-bench 和 R&D-Agent，见 [AutoResearch 项目介绍](scholar-agent/docs/autoresearch/00_project_introduction.md)；无需第三方 Python 依赖的可运行样例与三次实测记录见 [Intent Router AutoResearch](scholar-agent/examples/autoresearch/intent_router/)，实现边界见 [AutoResearch 模块文档](scholar-agent/docs/autoresearch/)。
+
+![ScholarAgent AutoResearch architecture](scholar-agent/docs/assets/autoresearch-architecture.png)
+
+架构图的可编辑矢量源文件见 [autoresearch-architecture.svg](scholar-agent/docs/assets/autoresearch-architecture.svg)。模型只负责提出候选；固定 Planner、ResearchSpec、Go policy gate、Docker 沙箱和重复独立验证共同掌握执行与接受边界。重复进程不等于多 seed，统计规则和资源口径见 [重复验证与执行资源证据](scholar-agent/docs/autoresearch/07_repeated_validation_and_resource_evidence.md)。
+
+![AutoResearch trial ledger view](scholar-agent/docs/assets/autoresearch-trial-view.jpg)
+
 ## Interface
 
 执行图仅突出主控制链和必要的数据依赖，重复连线会自动合并。节点编号、Agent 类型和状态共同建立阅读顺序；长链使用紧凑蛇形布局，移动端可在“对话 / 流程”视图间切换。
@@ -161,7 +179,7 @@ React Workbench -- REST --> Go API / Intent Router
 | **Coder** | 仓库发现、代码准备、依赖分析和修复 |
 | **Sandbox** | 运行时准备、依赖安装与隔离实验执行 |
 | **Data** | 指标汇总、论文声明对比、证据图判定、报告与图表生成 |
-| **Research Coding** | 论文仓库代码调试、受限补丁与重跑，以及自有数据 Benchmark 适配和证据校验 |
+| **Research Coding** | 论文仓库代码调试、受限补丁与重跑、自有数据 Benchmark 适配，以及冻结规格驱动的 AutoResearch 循环 |
 | **Chat** | 通用问答与轻量任务入口 |
 
 ## API
@@ -282,6 +300,8 @@ Sea-mult-agent/
 - [Agent Runtime P0/P1](scholar-agent/docs/agent_runtime_p0_p1.md)
 - [受限 ToT 消融与文件上传](scholar-agent/docs/tot_ablation_and_uploads.md)
 - [Research Coding Agent](scholar-agent/docs/research_coding_agent.md)
+- [AutoResearch 项目介绍](scholar-agent/docs/autoresearch/00_project_introduction.md)
+- [AutoResearch 模块文档](scholar-agent/docs/autoresearch/)
 - [Claim-to-Evidence Graph](scholar-agent/docs/claim_evidence_graph.md)
 - [Claim-to-Evidence 可运行验收](scholar-agent/test/claim-evidence/)
 - [论文仓库发现](scholar-agent/docs/papers_with_code/)

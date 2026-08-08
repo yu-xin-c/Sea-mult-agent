@@ -1,0 +1,206 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-labelledby="title desc">
+  <title id="title">ScholarAgent AutoResearch Architecture</title>
+  <desc id="desc">Four-column architecture showing deterministic orchestration, a frozen research contract, bounded execution in a Docker sandbox, and auditable evidence outputs.</desc>
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#0f172a" flood-opacity="0.08"/>
+    </filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+    </marker>
+    <marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#15803d"/>
+    </marker>
+    <style>
+      .font { font-family: Inter, "PingFang SC", "Microsoft YaHei", Arial, sans-serif; }
+      .panel-title { font-size: 17px; font-weight: 700; letter-spacing: 0; }
+      .node-title { font-size: 19px; font-weight: 700; fill: #0f172a; letter-spacing: 0; }
+      .node-body { font-size: 14px; font-weight: 400; fill: #475569; letter-spacing: 0; }
+      .micro { font-size: 13px; font-weight: 600; fill: #64748b; letter-spacing: 0; }
+      .connector { fill: none; stroke: #64748b; stroke-width: 2.2; marker-end: url(#arrow); }
+      .connector-blue { fill: none; stroke: #2563eb; stroke-width: 2.4; marker-end: url(#arrowBlue); }
+      .connector-green { fill: none; stroke: #15803d; stroke-width: 2.4; marker-end: url(#arrowGreen); }
+    </style>
+  </defs>
+
+  <rect width="1600" height="900" fill="#f8fafc"/>
+  <rect x="24" y="24" width="1552" height="852" rx="12" fill="#ffffff" stroke="#e2e8f0"/>
+
+  <g class="font">
+    <text x="70" y="62" font-size="14" font-weight="700" fill="#0891b2">SCHOLARAGENT / AUTORESEARCH</text>
+    <text x="70" y="105" font-size="36" font-weight="760" fill="#0f172a">受限自动实验架构</text>
+    <text x="70" y="136" font-size="17" fill="#475569">冻结评测契约，有限生成候选，用真实指标 Keep / Reject，并重复复验最佳结果</text>
+    <rect x="1300" y="70" width="230" height="46" rx="8" fill="#ecfeff" stroke="#a5f3fc"/>
+    <circle cx="1326" cy="93" r="7" fill="#0891b2"/>
+    <text x="1344" y="99" font-size="15" font-weight="700" fill="#155e75">autoresearch.spec/v1</text>
+
+    <!-- Panel 1: Orchestration -->
+    <g filter="url(#shadow)">
+      <rect x="55" y="175" width="300" height="620" rx="10" fill="#ffffff" stroke="#bfdbfe" stroke-width="1.5"/>
+      <rect x="55" y="175" width="300" height="58" rx="10" fill="#eff6ff"/>
+      <path d="M55 223 H355" stroke="#bfdbfe"/>
+    </g>
+    <circle cx="86" cy="204" r="15" fill="#2563eb"/>
+    <text x="81.5" y="210" font-size="16" font-weight="800" fill="#ffffff">1</text>
+    <text x="111" y="210" class="panel-title" fill="#1e3a8a">确定性编排</text>
+    <text x="80" y="263" class="micro">ORCHESTRATION</text>
+
+    <rect x="80" y="282" width="250" height="82" rx="7" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="101" y="315" class="node-title">用户目标与仓库</text>
+    <text x="101" y="341" class="node-body">URL · ResearchSpec · 上传附件</text>
+
+    <path d="M205 364 V393" class="connector"/>
+    <rect x="80" y="398" width="250" height="82" rx="7" fill="#eff6ff" stroke="#93c5fd"/>
+    <text x="101" y="431" class="node-title">意图识别</text>
+    <text x="101" y="457" class="node-body">明确识别 AutoResearch 入口</text>
+
+    <path d="M205 480 V509" class="connector"/>
+    <rect x="80" y="514" width="250" height="100" rx="7" fill="#dbeafe" stroke="#60a5fa"/>
+    <text x="101" y="547" class="node-title">固定 8 节点 Planner</text>
+    <text x="101" y="574" class="node-body">仓库 · 规格 · 运行时 · 搜索</text>
+    <text x="101" y="596" class="node-body">验证与报告不可被模型省略</text>
+
+    <path d="M205 614 V643" class="connector"/>
+    <rect x="80" y="648" width="250" height="112" rx="7" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="101" y="681" class="node-title">Scheduler + Artifact</text>
+    <text x="101" y="708" class="node-body">依赖、租约、预算、SSE 日志</text>
+    <text x="101" y="732" class="node-body">只在上游证据就绪后执行</text>
+
+    <!-- Panel 2: Frozen contract -->
+    <g filter="url(#shadow)">
+      <rect x="385" y="175" width="300" height="620" rx="10" fill="#ffffff" stroke="#a5f3fc" stroke-width="1.5"/>
+      <rect x="385" y="175" width="300" height="58" rx="10" fill="#ecfeff"/>
+      <path d="M385 223 H685" stroke="#a5f3fc"/>
+    </g>
+    <circle cx="416" cy="204" r="15" fill="#0891b2"/>
+    <text x="411.5" y="210" font-size="16" font-weight="800" fill="#ffffff">2</text>
+    <text x="441" y="210" class="panel-title" fill="#155e75">冻结研究契约</text>
+    <text x="410" y="263" class="micro">FROZEN CONTRACT</text>
+
+    <rect x="410" y="282" width="250" height="96" rx="7" fill="#ecfeff" stroke="#67e8f9"/>
+    <text x="431" y="315" class="node-title">ResearchSpec</text>
+    <text x="431" y="342" class="node-body">版本化目标、命令与指标</text>
+    <text x="431" y="363" class="node-body">模型无权在搜索中修改</text>
+
+    <rect x="410" y="406" width="250" height="82" rx="7" fill="#f8fafc" stroke="#cbd5e1"/>
+    <rect x="426" y="422" width="6" height="50" rx="3" fill="#2563eb"/>
+    <text x="448" y="439" class="node-title">文件边界</text>
+    <text x="448" y="465" class="node-body">editable 白名单 · 每轮最多 3 个</text>
+
+    <rect x="410" y="512" width="250" height="96" rx="7" fill="#fff7ed" stroke="#fdba74"/>
+    <rect x="426" y="528" width="6" height="64" rx="3" fill="#d97706"/>
+    <text x="448" y="545" class="node-title">完整性保护</text>
+    <text x="448" y="571" class="node-body">evaluator / data / spec 哈希</text>
+    <text x="448" y="593" class="node-body">非 editable 工作区指纹</text>
+
+    <rect x="410" y="632" width="250" height="106" rx="7" fill="#f0fdf4" stroke="#86efac"/>
+    <rect x="426" y="648" width="6" height="74" rx="3" fill="#15803d"/>
+    <text x="448" y="665" class="node-title">接受规则与预算</text>
+    <text x="448" y="691" class="node-body">metric · direction · min_delta</text>
+    <text x="448" y="713" class="node-body">最大轮数 + 最长运行时间</text>
+
+    <!-- Panel 3: Bounded execution -->
+    <g filter="url(#shadow)">
+      <rect x="715" y="175" width="500" height="620" rx="10" fill="#ffffff" stroke="#fed7aa" stroke-width="1.5"/>
+      <rect x="715" y="175" width="500" height="58" rx="10" fill="#fff7ed"/>
+      <path d="M715 223 H1215" stroke="#fed7aa"/>
+    </g>
+    <circle cx="746" cy="204" r="15" fill="#d97706"/>
+    <text x="741.5" y="210" font-size="16" font-weight="800" fill="#ffffff">3</text>
+    <text x="771" y="210" class="panel-title" fill="#9a3412">受限沙箱执行</text>
+    <text x="740" y="263" class="micro">RESEARCH CODING AGENT · DOCKER SANDBOX</text>
+
+    <rect x="742" y="282" width="208" height="80" rx="7" fill="#f8fafc" stroke="#cbd5e1"/>
+    <text x="763" y="314" class="node-title">Baseline</text>
+    <text x="763" y="340" class="node-body">先运行 guard + evaluator</text>
+
+    <path d="M950 322 H975" class="connector"/>
+    <rect x="980" y="282" width="208" height="80" rx="7" fill="#ecfeff" stroke="#22d3ee"/>
+    <text x="1001" y="314" class="node-title">候选生成</text>
+    <text x="1001" y="340" class="node-body">假设 + 结构化完整文件内容</text>
+
+    <path d="M1084 362 V391" class="connector"/>
+    <rect x="980" y="396" width="208" height="90" rx="7" fill="#fff7ed" stroke="#fb923c"/>
+    <text x="1001" y="429" class="node-title">Go Policy Gate</text>
+    <text x="1001" y="455" class="node-body">路径、大小、策略、原子写入</text>
+
+    <path d="M980 441 H955" class="connector"/>
+    <rect x="742" y="396" width="208" height="90" rx="7" fill="#eef2ff" stroke="#818cf8"/>
+    <text x="763" y="429" class="node-title">Guard + Evaluator</text>
+    <text x="763" y="455" class="node-body">冻结命令 · 真实指标 · 耗时</text>
+
+    <path d="M846 486 V512" class="connector"/>
+    <path d="M846 515 L930 560 L846 605 L762 560 Z" fill="#ffffff" stroke="#475569" stroke-width="2"/>
+    <text x="809" y="554" font-size="17" font-weight="700" fill="#0f172a">提升达到</text>
+    <text x="810" y="577" font-size="15" font-weight="600" fill="#475569">min_delta ?</text>
+
+    <path d="M930 560 H968" class="connector-green"/>
+    <text x="940" y="548" font-size="13" font-weight="700" fill="#15803d">是</text>
+    <rect x="975" y="520" width="213" height="78" rx="7" fill="#f0fdf4" stroke="#4ade80"/>
+    <text x="996" y="551" class="node-title" fill="#166534">Keep</text>
+    <text x="996" y="576" class="node-body">更新最佳快照与分数</text>
+
+    <path d="M846 605 V629" class="connector"/>
+    <text x="856" y="623" font-size="13" font-weight="700" fill="#be123c">否</text>
+    <rect x="742" y="636" width="208" height="78" rx="7" fill="#fff1f2" stroke="#fb7185"/>
+    <text x="763" y="667" class="node-title" fill="#9f1239">Reject</text>
+    <text x="763" y="692" class="node-body">恢复上一个最佳版本</text>
+
+    <rect x="975" y="636" width="213" height="78" rx="7" fill="#f8fafc" stroke="#94a3b8"/>
+    <text x="996" y="667" class="node-title">预算检查</text>
+    <text x="996" y="692" class="node-body">轮数 · 墙钟时间 · 取消状态</text>
+
+    <path d="M1081 598 V631" class="connector"/>
+    <path d="M950 675 H970" class="connector"/>
+    <path d="M1081 714 V750 H1198 V322 H1193" fill="none" stroke="#0891b2" stroke-width="2" stroke-dasharray="7 6" marker-end="url(#arrowBlue)"/>
+    <text x="934" y="773" font-size="13" font-weight="700" fill="#0e7490">预算内继续，始终从当前最佳状态提出下一候选</text>
+
+    <!-- Panel 4: Evidence -->
+    <g filter="url(#shadow)">
+      <rect x="1245" y="175" width="300" height="620" rx="10" fill="#ffffff" stroke="#bbf7d0" stroke-width="1.5"/>
+      <rect x="1245" y="175" width="300" height="58" rx="10" fill="#f0fdf4"/>
+      <path d="M1245 223 H1545" stroke="#bbf7d0"/>
+    </g>
+    <circle cx="1276" cy="204" r="15" fill="#15803d"/>
+    <text x="1271.5" y="210" font-size="16" font-weight="800" fill="#ffffff">4</text>
+    <text x="1301" y="210" class="panel-title" fill="#166534">证据与产品界面</text>
+    <text x="1270" y="263" class="micro">EVIDENCE · VALIDATION · UI</text>
+
+    <rect x="1270" y="282" width="250" height="100" rx="7" fill="#eff6ff" stroke="#93c5fd"/>
+    <text x="1291" y="315" class="node-title">TrialLedger</text>
+    <text x="1291" y="342" class="node-body">假设、命令、指标、决策</text>
+    <text x="1291" y="364" class="node-body">耗时、资源汇总与文件 SHA-256</text>
+
+    <path d="M1395 382 V411" class="connector"/>
+    <rect x="1270" y="416" width="250" height="112" rx="7" fill="#f0fdf4" stroke="#4ade80"/>
+    <text x="1291" y="449" class="node-title">重复独立复验</text>
+    <text x="1291" y="476" class="node-body">不调用候选模型，核对哈希</text>
+    <text x="1291" y="498" class="node-body">1–5 次 guard + evaluator</text>
+
+    <path d="M1395 528 V557" class="connector"/>
+    <rect x="1270" y="562" width="250" height="88" rx="7" fill="#ecfeff" stroke="#67e8f9"/>
+    <text x="1291" y="595" class="node-title">Validated Metrics</text>
+    <text x="1291" y="622" class="node-body">均值 · 标准差 · 失败率</text>
+
+    <path d="M1395 650 V679" class="connector"/>
+    <rect x="1270" y="684" width="250" height="78" rx="7" fill="#fff7ed" stroke="#fdba74"/>
+    <text x="1291" y="715" class="node-title">Trial UI 与证据图</text>
+    <text x="1291" y="740" class="node-body">趋势 · Keep/Reject · 资源证据</text>
+
+    <!-- Cross-panel contracts -->
+    <path d="M355 555 H380" class="connector-blue"/>
+    <text x="359" y="543" font-size="12" font-weight="700" fill="#2563eb">freeze</text>
+    <path d="M685 555 H710" class="connector-blue"/>
+    <text x="688" y="543" font-size="12" font-weight="700" fill="#2563eb">authorize</text>
+    <path d="M1215 555 H1240" class="connector-green"/>
+    <text x="1218" y="543" font-size="12" font-weight="700" fill="#15803d">emit</text>
+
+    <!-- Footer -->
+    <rect x="55" y="822" width="1490" height="38" rx="7" fill="#0f172a"/>
+    <text x="78" y="847" font-size="14" font-weight="600" fill="#e2e8f0">可信边界</text>
+    <text x="170" y="847" font-size="14" fill="#cbd5e1">显式 ResearchSpec · 已有可运行 baseline · 不自动改 evaluator · 不自动提交远端代码 · 指标提升不等于论文结论成立</text>
+  </g>
+</svg>

@@ -223,6 +223,15 @@ func normalizePlannerTaskType(bp plannerNodeBlueprint) string {
 
 	switch bp.AssignedTo {
 	case "research_coding_agent":
+		if containsAny(context, "autoresearch_spec", "freeze autoresearch", "research spec", "research contract") {
+			return "autoresearch_spec"
+		}
+		if containsAny(context, "autoresearch_validate", "validate autoresearch", "independent evaluator", "validation report") {
+			return "autoresearch_validate"
+		}
+		if containsAny(context, "autoresearch_run", "autoresearch loop", "trial ledger", "keep reject") {
+			return "autoresearch_run"
+		}
 		if containsAny(context, "dataset_profile", "profile dataset", "inspect dataset", "uploaded dataset") {
 			return "dataset_profile"
 		}
@@ -302,7 +311,7 @@ func normalizePlannerTaskType(bp plannerNodeBlueprint) string {
 	}
 
 	switch rawType {
-	case "framework_research", "framework_recommendation", "generate_code", "resolve_dependencies", "prepare_runtime", "install_dependencies", "execute_code", "paper_code_execute", "paper_parse", "claim_rubric_extract", "repo_discovery", "repo_prepare", "ablation_design", "paper_compare", "claim_evidence_build", "result_visualization", "fix_and_rerun", "verify_result", "render_plot", "general_research", "general_synthesis", "general_process", "dataset_profile", "benchmark_adapter_generate", "benchmark_adapter_preflight", "benchmark_execute", "benchmark_validate":
+	case "framework_research", "framework_recommendation", "generate_code", "resolve_dependencies", "prepare_runtime", "install_dependencies", "execute_code", "paper_code_execute", "paper_parse", "claim_rubric_extract", "repo_discovery", "repo_prepare", "ablation_design", "paper_compare", "claim_evidence_build", "result_visualization", "fix_and_rerun", "verify_result", "render_plot", "general_research", "general_synthesis", "general_process", "dataset_profile", "benchmark_adapter_generate", "benchmark_adapter_preflight", "benchmark_execute", "benchmark_validate", "autoresearch_spec", "autoresearch_run", "autoresearch_validate":
 		return rawType
 	}
 
@@ -351,7 +360,7 @@ func containsAny(s string, keywords ...string) bool {
 
 func normalizePlannerAssignedTo(bp plannerNodeBlueprint) string {
 	switch bp.Type {
-	case "dataset_profile", "benchmark_adapter_generate", "benchmark_adapter_preflight", "benchmark_execute", "benchmark_validate", "paper_code_execute", "fix_and_rerun":
+	case "dataset_profile", "benchmark_adapter_generate", "benchmark_adapter_preflight", "benchmark_execute", "benchmark_validate", "paper_code_execute", "fix_and_rerun", "autoresearch_spec", "autoresearch_run", "autoresearch_validate":
 		return "research_coding_agent"
 	case "generate_code", "resolve_dependencies", "repo_discovery", "repo_prepare":
 		return "coder_agent"
@@ -389,6 +398,15 @@ func applyPlannerNodeDefaults(bp plannerNodeBlueprint) plannerNodeBlueprint {
 	case "fix_and_rerun":
 		bp.RequiredArtifacts = ensureArtifacts(bp.RequiredArtifacts, "workspace_path", "code_file_path", "generated_code", "prepared_runtime", "repo_manifest", "run_metrics", "paper_debug_report", "comparison_report")
 		bp.OutputArtifacts = ensureArtifacts(bp.OutputArtifacts, "rerun_metrics", "rerun_report", "gap_debug_report", "gap_patch_manifest")
+	case "autoresearch_spec":
+		bp.RequiredArtifacts = ensureArtifacts(bp.RequiredArtifacts, "workspace_path", "repo_manifest")
+		bp.OutputArtifacts = ensureArtifacts(bp.OutputArtifacts, "research_spec", "research_spec_report", "dependency_spec")
+	case "autoresearch_run":
+		bp.RequiredArtifacts = ensureArtifacts(bp.RequiredArtifacts, "workspace_path", "prepared_runtime", "research_spec")
+		bp.OutputArtifacts = ensureArtifacts(bp.OutputArtifacts, "research_trial_ledger", "research_best_candidate", "research_run_report")
+	case "autoresearch_validate":
+		bp.RequiredArtifacts = ensureArtifacts(bp.RequiredArtifacts, "workspace_path", "prepared_runtime", "research_spec", "research_trial_ledger", "research_best_candidate")
+		bp.OutputArtifacts = ensureArtifacts(bp.OutputArtifacts, "research_validation_report", "research_best_metrics")
 	}
 	return bp
 }

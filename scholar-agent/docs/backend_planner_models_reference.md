@@ -1,369 +1,188 @@
-# 规划与调度后端专项文档
+# Planner、Scheduler 与数据模型参考
+
+本文以当前生产路径为准，说明 `POST /api/plan` 如何形成可执行 DAG，并重点记录 AutoResearch 新增的规划与数据契约。最后核对日期：2026-08-06。
+
+## 1. 代码入口
+
+| 模块 | 文件 | 责任 |
+|---|---|---|
+| API 计划入口 | [`plan_runtime.go`](../backend/internal/api/plan_runtime.go) | 规则意图、附件、计划持久化、审批和执行 API |
+| 基础路由 | [`routes.go`](../backend/internal/api/routes.go) | `DetectIntentType`、单节点兼容入口、健康检查 |
+| Planner | [`planner.go`](../backend/internal/planner/planner.go) | 确定性模板、DAG/Artifact 契约和关键节点校验 |
+| Planner Agent | [`agent_planner.go`](../backend/internal/planner/agent_planner.go) | 非关键流程的 LLM DAG 提议、归一化和模板回退 |
+| Scheduler | [`scheduler.go`](../backend/internal/scheduler/scheduler.go) | Ready 判定、并发、重试、租约、预算和失败传播 |
+| Executor | [`executor.go`](../backend/internal/scheduler/executor.go) | 合并 Artifact、路由 Agent、标准化执行结果 |
+| 图模型 | [`graph.go`](../backend/internal/models/graph.go) | `PlanGraph`、`TaskNode`、`TaskEdge` |
+| 运行契约 | [`runtime.go`](../backend/internal/models/runtime.go) | `TaskContract`、审批和计划预算 |
+| AutoResearch 模型 | [`autoresearch.go`](../backend/internal/models/autoresearch.go) | ResearchSpec、TrialLedger、最佳候选和验证报告 |
+
+旧的 `Planner.GeneratePlan` 和 `/api/execute` 仍用于兼容或测试；正式完整执行路径是 `BuildPlan -> PlanStore -> Scheduler.ExecutePlan`。
+
+## 2. 创建和执行链
+
+```mermaid
+flowchart LR
+    U["POST /api/plan"] --> I["buildRuleIntentContext"]
+    I --> P["Planner.BuildPlan"]
+    P --> V["DAG / Artifact 校验"]
+    V --> S["PlanStore.SavePlan"]
+    S --> E["POST /api/plans/:id/execute"]
+    E --> SCH["Scheduler"]
+    SCH --> R["RoutedTaskExecutor"]
+    R --> A["Specialized Agent or deterministic node"]
+    A --> AR["Artifact Store + Event History"]
+    AR --> SCH
+```
+
+Scheduler 只把同时满足以下条件的节点设为 `ready`：
+
+1. 所有 `dependencies` 已完成。
+2. 所有 `required_artifacts` 已由上游产生。
+3. 计划未取消、未超预算，节点没有有效的其他执行租约。
+
+节点完成时，Executor 从 `task.metadata.artifact_values` 读取显式值，并按 `output_artifacts` 写回计划级 Artifact。下游不会从自然语言日志猜测输入。
 
-## 1. 作用范围
+## 3. Planner 决策顺序
 
-这份文档只覆盖 `backend/` 中的“规划与调度后端”部分，供后续修改时快速定位代码。
+`BuildPlan` 的顺序是：
 
-适用范围：
+1. `Custom_Benchmark` 或携带数据集的明确 Benchmark：固定 11 节点流程。
+2. `AutoResearch`：固定 8 节点流程。
+3. 其他意图在模型可用时调用 Planner Agent。
+4. 模型拓扑经过 task type、Agent、Artifact 和关键节点校验。
+5. 模型不可用或结果不合法时使用确定性模板。
 
-- Planner 任务规划
-- Plan / Task 数据模型
-- 任务状态定义
-- `/api/plan` 请求入口
-- 规划结果如何流向前端和执行链路
+把 Benchmark 和 AutoResearch 放在 LLM Planner 之前，是为了避免模型省略冻结评测、重复验证或数据证据节点。
 
-不覆盖：
+## 4. 当前意图与典型拓扑
 
-- 前端渲染细节
-- `ai-services/` 的 Python 意图识别实现
-- `docker-sandbox/` 的底层容器执行实现
+| Intent type | 规划策略 | 主要节点 |
+|---|---|---|
+| `Paper_Reproduction` | 模板或校验后的 Planner Agent | 论文解析、Claim Rubric、仓库、环境、调试 baseline、对比、证据图 |
+| `Framework_Evaluation` | 模板或校验后的 Planner Agent | 框架研究、隔离分支、各自运行时、统一报告 |
+| `Code_Execution` | 模板或校验后的 Planner Agent | 生成代码、依赖、运行时、执行、验证 |
+| `Custom_Benchmark` | 固定模板 | 数据画像、仓库适配、预检、正式评测、指标重算 |
+| `AutoResearch` | 固定模板 | 仓库、ResearchSpec、运行时、Keep/Reject、重复复验、资源证据、报告 |
+| `General` | 模板或 Planner Agent | 通用研究、综合或回答 |
 
----
+规则分类器会优先识别 AutoResearch，再识别论文复现、框架评估和代码执行。原因是自动实验请求常同时包含“代码、运行、评测、论文”等低特异性词。
 
-## 2. 当前技术栈
+## 5. `PlanGraph`
 
-- 语言：Go
-- Go 版本：`1.26.1`
-- Web 框架：Gin
+关键字段：
 
-代码依据：
+| 字段 | 作用 |
+|---|---|
+| `id` / `trace_id` | 计划标识和事件追踪 |
+| `intent_type` / `user_intent` | 归一化类型和原始请求 |
+| `owner_id` / `session_id` | 本地会话所有权 |
+| `status` / `approval` | 计划状态和审批记录 |
+| `budget` / `usage` | 总尝试、总时长和实际使用 |
+| `nodes` / `edges` | 执行节点和控制/数据边 |
+| `artifacts` | 跨节点命名产物 |
+| `meta` | 各状态节点数量 |
 
-- [backend/go.mod](/D:/mygo/Sea-mult-agent/scholar-agent/backend/go.mod)
-- [backend/cmd/api/main.go](/D:/mygo/Sea-mult-agent/scholar-agent/backend/cmd/api/main.go)
+## 6. `TaskNode` 与 `TaskContract`
 
----
+`TaskNode` 同时声明控制依赖和数据依赖：
 
-## 3. 代码位置总览
+- `dependencies`：上游 task ID。
+- `required_artifacts`：执行前必须存在的命名产物。
+- `output_artifacts`：成功后必须发布的产物。
+- `assigned_to`：逻辑 Agent。
+- `type`：Agent 内部确定性分发键。
+- `parallelizable`、`priority`、`retry_limit`、`timeout_seconds`：调度约束。
+- `execution_id`、`execution_epoch`、lease 字段：防止迟到结果覆盖。
 
-### 3.1 规划入口
+每个节点还包含 `contract.version=v1`：
 
-- [backend/internal/api/routes.go](/D:/mygo/Sea-mult-agent/scholar-agent/backend/internal/api/routes.go)
+```json
+{
+  "version": "v1",
+  "input_artifacts": ["workspace_path"],
+  "output_artifacts": ["research_spec"],
+  "allowed_tools": ["repository.read", "metrics.validate"]
+}
+```
 
-关键位置：
+当前 `allowed_tools` 是可审计声明，尚不是独立 capability token 系统。真正的文件和命令权限仍由 Agent harness 与沙箱校验。
 
-- `SetupRoutes`
-  - 初始化 `p := planner.NewPlanner()`
-  - 注册 `POST /api/plan`
-- `/api/plan` handler
-  - 接收前端的 `intent`
-  - 基于关键词推断 `intentType`
-  - 调用 `p.GeneratePlan(payload.Intent, intentType)`
-  - 返回 `plan`
+## 7. AutoResearch 规划契约
 
-### 3.2 规划器实现
+固定节点顺序：
 
-- [backend/internal/planner/planner.go](/D:/mygo/Sea-mult-agent/scholar-agent/backend/internal/planner/planner.go)
+```text
+repo_discovery
+repo_prepare
+autoresearch_spec
+prepare_runtime
+install_dependencies
+autoresearch_run
+autoresearch_validate
+verify_result
+```
 
-关键对象：
+`validateCriticalNodeContracts` 要求：
 
-- `type Planner struct {}`
-- `func NewPlanner() *Planner`
-- `func (p *Planner) GeneratePlan(intent string, intentType string) (*models.Plan, error)`
-- `func createMockTask(name, agent string, deps []string, context string) *models.Task`
+- 仓库节点存在且 `repo_prepare` 输出工作区。
+- `autoresearch_spec` 由 `research_coding_agent` 执行，消费工作区并输出 `research_spec` 与 `dependency_spec`。
+- 运行时和依赖安装节点存在。
+- `autoresearch_run` 消费工作区、`prepared_runtime`、spec，并输出 TrialLedger 和最佳候选。
+- `autoresearch_validate` 消费冻结证据并输出验证报告。
 
-### 3.3 数据模型
+用户可以写“最多 N 次实验”“总时长 N 分钟”和“独立复验 N 次”。Planner 分别限制为最多 8 次、60 分钟和 5 次；spec 与 Agent 还会再次限幅。未明确请求时，重复验证默认 1 次。验证轮次共享模板节点的 600 秒上限；计划总时长在研究循环预算之上增加 900 秒，用于克隆、建环境、验证和报告。
 
-- [backend/internal/models/task.go](/D:/mygo/Sea-mult-agent/scholar-agent/backend/internal/models/task.go)
+## 8. AutoResearch 数据模型
 
-关键对象：
+### `ResearchSpec`
 
-- `type TaskStatus string`
-- `const StatusPending / StatusInProgress / StatusCompleted / StatusFailed`
-- `type Task struct`
-- `type Plan struct`
+控制面事实：editable/protected 文件、guard/eval 命令、指标键、方向、最小提升、Trial/时长预算、验证次数、依赖、保护文件哈希和非 editable 工作区指纹。
 
----
+### `ResearchTrial`
 
-## 4. 结构化映射
+实验事实：编号、假设、补丁哈希、命令 exit code 与有限输出、指标、相对最佳值变化、Keep/Reject 决策和时间。
 
-### 4.1 Planner
+### `ResearchTrialLedger`
 
-职责：
+聚合事实：spec hash、baseline、最佳分数、接受次数、最终文件哈希、全部 Trial、停止原因与可重算的命令资源摘要。
 
-- 根据 `intent` 和 `intentType` 生成一个 `Plan`
-- 将复杂任务拆成多个 `Task`
-- 为每个 `Task` 设置：
-  - 名称
-  - 描述
-  - 执行 Agent
-  - 前置依赖 `Dependencies`
-  - 初始状态
+### `ResearchValidationReport`
 
-当前实现方式：
+最终证据：spec/ledger hash、期望分数、逐次观察分数、均值、总体标准差、失败率、保护文件和最佳候选完整性、逐轮命令结果、资源摘要与验证状态。
 
-- 不是动态 LLM 规划
-- 是按 `intentType` 走固定模板生成 mock DAG
+完整字段见 [AutoResearch Planner 与契约](autoresearch/02_planner_and_contracts.md)。
 
-代码入口：
+## 9. 修改指引
 
-- [planner.go](/D:/mygo/Sea-mult-agent/scholar-agent/backend/internal/planner/planner.go)
+### 新增普通 Task type
 
-要修改规划逻辑时优先看：
+1. 在 Planner Agent prompt 的 canonical type 白名单中加入类型。
+2. 在 `normalizePlannerTaskType` 和 `normalizePlannerAssignedTo` 注册。
+3. 在 `applyPlannerNodeDefaults` 补 Artifact 默认值。
+4. 在目标 Agent 或 Executor 中实现执行分支。
+5. 补 Planner、Agent、Artifact 和失败路径测试。
 
-1. `GeneratePlan`
-2. `createMockTask`
+### 修改安全关键流程
 
-### 4.2 Models
+Paper Reproduction、Custom Benchmark 和 AutoResearch 不应只修改 Planner prompt。先修改确定性模板和 `validateCriticalNodeContracts`，再调整 Agent harness 和模型契约。
 
-职责：
+### 新增 AutoResearch 字段
 
-- 统一定义 Plan 与 Task 的结构
-- 定义任务状态枚举
-- 作为规划结果、执行输入、执行状态流转的公共数据结构
+需要同时考虑：
 
-代码入口：
+1. `ResearchSpec` JSON 版本兼容。
+2. spec 归一化和硬上限。
+3. Planner 输入预算是否可被用户扩大。
+4. TrialLedger 是否记录实际执行值。
+5. 独立验证是否重新检查该字段。
+6. 示例、单测和模块文档是否同步。
 
-- [task.go](/D:/mygo/Sea-mult-agent/scholar-agent/backend/internal/models/task.go)
+## 10. 验证
 
-要修改数据结构时优先看：
+```bash
+cd scholar-agent/backend
+go test ./internal/planner ./internal/scheduler ./internal/api
+go test ./internal/agent -run AutoResearch -v
+```
 
-1. `TaskStatus`
-2. `Task`
-3. `Plan`
-
----
-
-## 5. 真实调用链
-
-### 5.1 规划请求链路
-
-1. 前端请求 `POST /api/plan`
-2. 进入 [routes.go](/D:/mygo/Sea-mult-agent/scholar-agent/backend/internal/api/routes.go) 的 `/api/plan` handler
-3. handler 根据关键词推断 `intentType`
-4. 调用 [planner.go](/D:/mygo/Sea-mult-agent/scholar-agent/backend/internal/planner/planner.go) 里的 `GeneratePlan`
-5. `GeneratePlan` 构造 [task.go](/D:/mygo/Sea-mult-agent/scholar-agent/backend/internal/models/task.go) 中定义的 `Plan` 和 `Task`
-6. 规划结果作为 JSON 返回前端
-
-### 5.2 执行衔接链路
-
-当前 `Plan` 本身只用于前端展示和节点选择，不是由后端统一调度执行器自动消费。
-
-实际执行时：
-
-1. 前端从 DAG 中拿到某个 `Task`
-2. 前端单独请求 `POST /api/execute`
-3. 后端重新构造一个 `models.Task`
-4. 再按 `AssignedTo` 分发给不同 Agent
-
-这意味着：
-
-- `Plan` 是“规划产物”
-- `/api/execute` 是“单任务执行入口”
-- 目前还没有一个完整的“按 DAG 自动调度执行全部任务”的后端调度器
-
-这个结论后面改代码时很重要，避免误以为 `Planner` 已经接管完整调度闭环
-
----
-
-## 6. 当前 Planner 的分支逻辑
-
-文件：
-
-- [planner.go](/D:/mygo/Sea-mult-agent/scholar-agent/backend/internal/planner/planner.go)
-
-### `Framework_Evaluation`
-
-生成任务序列：
-
-1. 检索文档与最佳实践
-2. 为框架 A 生成环境与集成代码
-3. 为框架 B 生成环境与集成代码
-4. 在沙箱中执行 A/B 测试
-5. 分析指标并生成报告
-
-### `Paper_Reproduction`
-
-生成任务序列：
-
-1. 解析论文并提取算法细节
-2. 查找/克隆开源仓库
-3. 配置沙箱环境和依赖
-4. 执行 baseline 代码
-5. 对比论文结果
-6. 如果结果不一致则调试/修正代码
-
-### `Code_Execution`
-
-生成任务序列：
-
-1. 生成并运行代码
-2. 校验结果
-
-### 默认分支
-
-生成任务序列：
-
-1. 通用请求处理
-
----
-
-## 7. Models 字段说明
-
-文件：
-
-- [task.go](/D:/mygo/Sea-mult-agent/scholar-agent/backend/internal/models/task.go)
-
-### `TaskStatus`
-
-当前状态枚举：
-
-- `pending`
-- `in_progress`
-- `completed`
-- `failed`
-
-### `Task`
-
-字段说明：
-
-- `ID`
-  - 任务唯一标识
-
-- `Name`
-  - 任务名称
-
-- `Description`
-  - 任务描述
-
-- `AssignedTo`
-  - 分配给哪个 Agent
-  - 当前代码中常见值：
-    - `librarian_agent`
-    - `coder_agent`
-    - `sandbox_agent`
-    - `data_agent`
-    - `general_agent`
-
-- `Status`
-  - 任务状态
-
-- `Dependencies`
-  - 前置任务 ID 列表
-  - 用来表达 DAG 边关系
-
-- `Result`
-  - 执行结果文本
-
-- `Code`
-  - 生成的代码
-
-- `ImageBase64`
-  - 生成图片的 Base64 内容
-
-- `Error`
-  - 错误信息
-
-- `CreatedAt`
-  - 创建时间
-
-- `UpdatedAt`
-  - 更新时间
-
-### `Plan`
-
-字段说明：
-
-- `ID`
-  - 计划唯一标识
-
-- `UserIntent`
-  - 用户原始意图文本
-
-- `Tasks`
-  - `map[string]*Task`
-  - 以任务 ID 为 key 的任务集合
-
-- `Status`
-  - 计划状态
-
-- `CreatedAt`
-  - 创建时间
-
-- `UpdatedAt`
-  - 更新时间
-
----
-
-## 8. 修改指引
-
-### 8.1 如果要改“意图到任务流”的映射
-
-改这里：
-
-- [backend/internal/api/routes.go](/D:/mygo/Sea-mult-agent/scholar-agent/backend/internal/api/routes.go)
-- [backend/internal/planner/planner.go](/D:/mygo/Sea-mult-agent/scholar-agent/backend/internal/planner/planner.go)
-
-通常涉及：
-
-- 关键词如何映射到 `intentType`
-- 某个 `intentType` 应该生成什么 DAG
-- 每个任务的 `AssignedTo`
-- 依赖关系 `Dependencies`
-
-### 8.2 如果要改 Task / Plan 的字段
-
-改这里：
-
-- [backend/internal/models/task.go](/D:/mygo/Sea-mult-agent/scholar-agent/backend/internal/models/task.go)
-
-通常还要联动检查：
-
-- [backend/internal/planner/planner.go](/D:/mygo/Sea-mult-agent/scholar-agent/backend/internal/planner/planner.go)
-- [backend/internal/api/routes.go](/D:/mygo/Sea-mult-agent/scholar-agent/backend/internal/api/routes.go)
-- [frontend/src/App.tsx](/D:/mygo/Sea-mult-agent/scholar-agent/frontend/src/App.tsx)
-
-因为前端直接依赖 `Task` / `Plan` 返回结构来渲染 DAG
-
-### 8.3 如果要增加新的任务状态
-
-先改这里：
-
-- [backend/internal/models/task.go](/D:/mygo/Sea-mult-agent/scholar-agent/backend/internal/models/task.go)
-
-再联动检查：
-
-- [backend/internal/api/routes.go](/D:/mygo/Sea-mult-agent/scholar-agent/backend/internal/api/routes.go)
-- [backend/internal/agent/*.go](/D:/mygo/Sea-mult-agent/scholar-agent/backend/internal/agent)
-- [frontend/src/App.tsx](/D:/mygo/Sea-mult-agent/scholar-agent/frontend/src/App.tsx)
-
-因为执行状态展示和节点颜色可能依赖状态值
-
-### 8.4 如果要把 mock 规划升级成真实规划器
-
-优先改这里：
-
-- [backend/internal/planner/planner.go](/D:/mygo/Sea-mult-agent/scholar-agent/backend/internal/planner/planner.go)
-
-建议保持这几个边界稳定：
-
-- 输入仍然是 `intent`、`intentType`
-- 输出仍然是 `*models.Plan`
-- `Task.Dependencies` 继续承担 DAG 边关系
-
-这样能最大程度减少对前端和 API 的破坏
-
----
-
-## 9. 后续修改时的默认定位规则
-
-以后凡是涉及“规划与调度后端”，默认按下面顺序定位：
-
-1. 先看 [backend/internal/api/routes.go](/D:/mygo/Sea-mult-agent/scholar-agent/backend/internal/api/routes.go) 确认请求入口和调用位置
-2. 再看 [backend/internal/planner/planner.go](/D:/mygo/Sea-mult-agent/scholar-agent/backend/internal/planner/planner.go) 确认 DAG 生成逻辑
-3. 最后看 [backend/internal/models/task.go](/D:/mygo/Sea-mult-agent/scholar-agent/backend/internal/models/task.go) 确认字段和状态定义
-
-如果改动影响返回结构，再补查：
-
-- [frontend/src/App.tsx](/D:/mygo/Sea-mult-agent/scholar-agent/frontend/src/App.tsx)
-
----
-
-## 10. 给后续修改留的结论
-
-当前这部分代码的本质是：
-
-- `routes.go` 负责接收规划请求
-- `planner.go` 负责按模板生成 DAG
-- `task.go` 负责定义 Plan / Task / Status
-
-也就是说，后面如果你说“改规划逻辑”“改任务结构”“加状态”“加依赖字段”“加新意图类型”，我都应该先从这份文档列出的 3 个文件开始找，而不是到整个仓库里盲找。
+前端和完整仓库验证见 [`docs/autoresearch/05_example_and_acceptance.md`](autoresearch/05_example_and_acceptance.md)。

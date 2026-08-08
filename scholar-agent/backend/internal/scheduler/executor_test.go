@@ -52,7 +52,7 @@ func TestRoutedExecutorUsesResearchCodingRunner(t *testing.T) {
 }
 
 func TestClaimArtifactsUseJSONType(t *testing.T) {
-	for _, key := range []string{"claim_rubric", "claim_evidence_graph"} {
+	for _, key := range []string{"claim_rubric", "claim_evidence_graph", "research_spec", "research_trial_ledger", "research_best_candidate", "research_validation_report"} {
 		if got := inferArtifactType(key, &models.Task{}); got != "json" {
 			t.Fatalf("inferArtifactType(%q)=%q, want json", key, got)
 		}

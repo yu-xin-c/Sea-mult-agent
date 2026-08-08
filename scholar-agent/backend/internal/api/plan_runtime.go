@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -102,7 +103,7 @@ func (r *planRuntime) createPlan(c *gin.Context) {
 		return
 	}
 	if len(attachments) > 0 {
-		if hasBenchmarkDatasetAttachment(attachments) && containsAny(payload.Intent, []string{"benchmark", "基准测试", "评测", "测评", "跑分"}) {
+		if shouldRouteUploadedCustomBenchmark(intentContext.IntentType, payload.Intent, attachments) {
 			intentContext.IntentType = "Custom_Benchmark"
 			intentContext.Entities["needs_custom_benchmark"] = true
 			removeAttachmentTextExcerpts(attachments)
@@ -405,6 +406,12 @@ func buildRuleIntentContext(rawIntent string) models.IntentContext {
 	if repoURL := routeGitHubRepoURLRe.FindString(rawIntent); repoURL != "" {
 		context.Entities["preferred_repo_url"] = strings.TrimSuffix(repoURL, ".git")
 	}
+	if intentType == "AutoResearch" {
+		context.Entities["needs_autoresearch"] = true
+		if match := regexp.MustCompile(`(?i)([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+\.json|autoresearch\.json)`).FindStringSubmatch(rawIntent); len(match) > 1 {
+			context.Entities["autoresearch_spec_path"] = match[1]
+		}
+	}
 	if intentType == "Paper_Reproduction" {
 		for key, value := range collectPaperSearchFields(context, rawIntent) {
 			context.Entities[key] = value
@@ -424,6 +431,12 @@ func buildRuleIntentContext(rawIntent string) models.IntentContext {
 		}
 	}
 	return context
+}
+
+func shouldRouteUploadedCustomBenchmark(intentType, rawIntent string, attachments []map[string]any) bool {
+	return intentType != "AutoResearch" &&
+		hasBenchmarkDatasetAttachment(attachments) &&
+		containsAny(rawIntent, []string{"benchmark", "基准测试", "评测", "测评", "跑分"})
 }
 
 func hasBenchmarkDatasetAttachment(attachments []map[string]any) bool {

@@ -1,0 +1,26 @@
+# AutoResearch 项目介绍证据表
+
+最后核验：2026-08-07。
+
+这张表只记录项目介绍中实际使用的来源。`借鉴类型` 分为直接方法、方向启发、工程对照和路线图依据；它们不表示 ScholarAgent 复刻了对应项目，也不表示本项目拥有原工作的全部能力。
+
+| Source ID | 一手来源 | 来源类型 | 可使用的事实 | 支持的项目表述 | 本地落点 | 借鉴类型与风险 |
+|---|---|---|---|---|---|---|
+| AR-01 | [karpathy/autoresearch](https://github.com/karpathy/autoresearch) | 官方仓库 README | Agent 修改单个训练文件，以固定 5 分钟预算运行，用单一验证指标比较并 Keep/Discard，持续记录实验 | AutoResearch 的最小闭环来自“小修改、固定预算、真实指标、保留或丢弃” | [`agent/autoresearch.go`](../../../backend/internal/agent/autoresearch.go)、[`03_research_coding_harness.md`](../03_research_coding_harness.md) | 直接方法；ScholarAgent 扩展为跨仓库规格、多个白名单文件和独立复验 |
+| AR-02 | [The AI Scientist](https://arxiv.org/abs/2408.06292) | 论文与官方代码 | 把想法生成、代码编写、实验、可视化、论文写作和模拟评审串为开放式科研流程 | 自动实验可以作为更长科研链的一环 | [`project_architecture.md`](../../project_architecture.md) | 方向启发；本项目没有宣称全自动科学发现，也不把自动评审当科学真值 |
+| AR-03 | [Agent Laboratory](https://arxiv.org/abs/2501.04227) | 论文与官方代码 | 文献、实验和报告由工作流协作完成，允许用户在阶段间提供反馈；论文报告人工介入改善整体质量 | 采用专业 Agent 分工，并把人工检查点列为高优先级治理能力 | [`research_coding_agent.md`](../../research_coding_agent.md)、[`06_research_basis_and_roadmap.md`](../06_research_basis_and_roadmap.md) | 方向启发；AutoResearch 的规格冻结审批尚未实现 |
+| AR-04 | [PaperBench](https://arxiv.org/abs/2504.01848) | 论文与官方研究项目 | 以分层 rubric 将 20 篇论文复现拆成 8,316 个可独立评分任务，rubric 由论文作者参与编写 | 复现验收不应只有“代码能运行”，而应按冻结主张、准则和证据逐项判断 | [`claim_evidence_graph.md`](../../claim_evidence_graph.md)、[`planner.go`](../../../backend/internal/planner/planner.go) | 直接评测启发；Claim-to-Evidence 属于 ScholarAgent 复现链，不是每轮搜索的接受函数 |
+| AR-05 | [CORE-Bench](https://arxiv.org/abs/2409.11363) | 论文与官方 benchmark | 以真实论文代码和数据构造计算复现任务，并同时评测通用 AutoGPT 与任务专用 CORE-Agent | 为科研仓库设置专用 Research Coding Agent、真实运行环境和可复查 Artifact | [`research_coding_agent.go`](../../../backend/internal/agent/research_coding_agent.go)、[`research_coding_agent.md`](../../research_coding_agent.md) | 直接任务建模启发；尚未完成公开 CORE-Bench 全量对照 |
+| AR-06 | [ReAct](https://arxiv.org/abs/2210.03629) | 论文 | 交错使用推理、动作和环境观察，以更新计划并处理异常 | 安装依赖和 Benchmark 预检采用“错误观察 -> 结构化修复动作 -> 重跑”的有限循环 | [`coder.go`](../../../backend/internal/agent/coder.go)、[`research_coding_agent.md`](../../research_coding_agent.md) | 直接方法；本地实现是有动作白名单和次数上限的工程化子集，不记录隐藏思维链 |
+| AR-07 | [Tree of Thoughts](https://arxiv.org/abs/2305.10601) | 论文 | 同时探索多个候选路径，自评估并支持选择或回溯 | 轻量消融先扩展候选，再按信息增益、相关性、可复现性、成本和风险选预算内组合 | [`ablation_tot.go`](../../../backend/internal/agent/ablation_tot.go)、[`tot_ablation_and_uploads.md`](../../tot_ablation_and_uploads.md) | 直接方法；只用于消融设计，不接管 AutoResearch 每轮 Keep/Reject |
+| AR-08 | [SWE-agent](https://arxiv.org/abs/2405.15793) | 论文与官方项目 | 专门设计的 Agent-Computer Interface 支持仓库导航、代码编辑和测试执行，接口设计会影响 Agent 行为 | Research Coding Agent 采用仓库级、受限读写和测试反馈，而不是只让模型一次性输出代码 | [`research_coding_agent.md`](../../research_coding_agent.md) | 工程对照；没有移植 SWE-agent 的 ACI 或声称达到其 benchmark 结果 |
+| AR-09 | [Life After Benchmark Saturation: A Case Study of CORE-Bench](https://arxiv.org/abs/2606.26158) | 论文 | 将 Agent 评估扩展到构念有效性、OOD 泛化、效率、可靠性、模型与 scaffold 作用、人机协作 | 重复进程验证和命令资源摘要覆盖可靠性/效率的一小部分；多 seed、GPU 成本、OOD 与人工协作继续进入路线图 | [`06_research_basis_and_roadmap.md`](../06_research_basis_and_roadmap.md)、[`07_repeated_validation_and_resource_evidence.md`](../07_repeated_validation_and_resource_evidence.md) | 路线图依据；不能据此声称完成全面评估 |
+| AR-10 | [MLE-bench](https://arxiv.org/abs/2410.07095) | 论文与官方 benchmark | 使用 75 个 Kaggle 任务评测机器学习工程 Agent，并研究不同形式的资源扩展 | 把命令执行次数与耗时作为正式 Artifact 字段，为比较效果与运行投入提供基础 | [`models/autoresearch.go`](../../../backend/internal/models/autoresearch.go)、[`07_repeated_validation_and_resource_evidence.md`](../07_repeated_validation_and_resource_evidence.md) | 评价维度启发；当前资源摘要不是 MLE-bench 指标，也不包含 GPU/费用 |
+| AR-11 | [Microsoft R&D-Agent](https://github.com/microsoft/RD-Agent) | 官方仓库与技术报告入口 | 将 Research 与 Development 分工；官方 README 对部分 MLE-bench 结果报告 5/6 次独立 seed 的均值和标准差 | 最佳候选支持重复独立进程验证，报告逐次结果、均值、总体标准差和失败率 | [`agent/autoresearch.go`](../../../backend/internal/agent/autoresearch.go)、[`07_repeated_validation_and_resource_evidence.md`](../07_repeated_validation_and_resource_evidence.md) | 工程与报告方式借鉴；当前不会自动切换 seed，不能称为等价多 seed 评测 |
+
+## 本地实现核对原则
+
+1. 外部来源只支持“方法或评价维度来自哪里”，本地代码和测试决定“当前是否实现”。
+2. `karpathy/autoresearch` 是最直接的循环原型；其余来源主要补足科研编排、错误修复、实验设计和可信评测。
+3. PaperBench 的 Rubric、CORE-Bench 的复现任务与 AutoResearch 的指标接受函数处在不同层次，介绍中不得混写。
+4. SWE-agent 只作为仓库级 Coding Agent 的工程对照，不声称代码继承或等价实现。

@@ -1,0 +1,33 @@
+[
+  {"text": "用这个仓库做 AutoResearch，最多跑 3 轮", "label": "AutoResearch"},
+  {"text": "启动自动实验循环，指标提升才保留", "label": "AutoResearch"},
+  {"text": "持续实验并自动优化这个模型", "label": "AutoResearch"},
+  {"text": "做自主研究，退化候选自动回滚", "label": "AutoResearch"},
+  {"text": "run an auto research loop on this repository", "label": "AutoResearch"},
+  {"text": "keep or reject code changes by validation score", "label": "AutoResearch"},
+
+  {"text": "复现 Attention Is All You Need 论文", "label": "Paper_Reproduction"},
+  {"text": "把 arXiv 论文代码跑通并核对指标", "label": "Paper_Reproduction"},
+  {"text": "replicate the paper results with its official repository", "label": "Paper_Reproduction"},
+  {"text": "论文环境报错，修复后重新跑实验", "label": "Paper_Reproduction"},
+
+  {"text": "用上传的 reviews.csv 给这个仓库跑 benchmark", "label": "Custom_Benchmark"},
+  {"text": "evaluate this model on my JSONL dataset", "label": "Custom_Benchmark"},
+  {"text": "拿我自己的数据做基准测试", "label": "Custom_Benchmark"},
+  {"text": "上传测试集后生成可信 Benchmark", "label": "Custom_Benchmark"},
+
+  {"text": "对比 LangChain 和 LlamaIndex 哪个框架更合适", "label": "Framework_Evaluation"},
+  {"text": "compare Haystack vs LangGraph for RAG", "label": "Framework_Evaluation"},
+  {"text": "评估两个 Agent 框架的延迟和吞吐", "label": "Framework_Evaluation"},
+  {"text": "做一个框架选型报告", "label": "Framework_Evaluation"},
+
+  {"text": "写一段 Python 代码计算斐波那契数列", "label": "Code_Execution"},
+  {"text": "运行这段代码并画出损失曲线", "label": "Code_Execution"},
+  {"text": "execute this script and show its stdout", "label": "Code_Execution"},
+  {"text": "用 numpy 分析这组数字", "label": "Code_Execution"},
+
+  {"text": "解释一下什么是注意力机制", "label": "General"},
+  {"text": "帮我整理今天的研究思路", "label": "General"},
+  {"text": "what are the limitations of this approach", "label": "General"},
+  {"text": "给我一个简短的项目介绍", "label": "General"}
+]

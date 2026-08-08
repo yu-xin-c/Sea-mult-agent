@@ -449,6 +449,16 @@ func buildServiceHealth(ctx context.Context, sandboxURL string) gin.H {
 
 // detectIntentType 根据用户意图文本判断任务类型
 func DetectIntentType(intent string) string {
+	// AutoResearch 同时会出现“代码、实验、评测”等通用词，必须在论文复现和代码执行前识别。
+	autoResearchKeywords := []string{
+		"autoresearch", "auto research", "自主研究", "自动研究", "自动实验", "持续实验", "实验循环", "keep/reject",
+	}
+	autoResearchContext := []string{"实验", "试验", "指标", "评测", "仓库", "模型", "repo", "trial", "metric", "benchmark"}
+	if containsAny(intent, autoResearchKeywords) ||
+		(containsAny(intent, []string{"自动优化"}) && containsAny(intent, autoResearchContext)) {
+		return "AutoResearch"
+	}
+
 	// 论文复现类需要优先于“对比/评估”类判断。
 	// 论文复现需求常包含“与论文指标对比”等词，如果先命中“对比”会被误路由到框架评测。
 	reproKeywords := []string{"复现", "reproduce", "replicate", "论文", "paper", "papers with code", "arxiv", "实现算法"}

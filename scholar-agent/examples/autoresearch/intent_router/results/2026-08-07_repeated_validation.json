@@ -1,0 +1,49 @@
+{
+  "version": "autoresearch.example-result/v1",
+  "experiment": "intent-router-repeated-validation",
+  "recorded_at": "2026-08-07T08:29:12Z",
+  "requested_runs": 3,
+  "completed_runs": 3,
+  "passed_runs": 3,
+  "failed_runs": 0,
+  "failure_rate": 0.0,
+  "mean_macro_f1": 0.672875816993464,
+  "population_stddev": 0.0,
+  "min_macro_f1": 0.672875816993464,
+  "max_macro_f1": 0.672875816993464,
+  "runs": [
+    {
+      "number": 1,
+      "exit_code": 0,
+      "duration_ms": 47.463,
+      "macro_f1": 0.672875816993464,
+      "accuracy": 0.6538461538461539,
+      "sample_count": 26,
+      "dataset_sha256": "331ecf7f1a1d7356c3d9217ed0f657668b44f77f413191ccf030d2050694068f",
+      "candidate_sha256": "7d39da592567260604ed6f411fcdbaadde0becab5ca3a8c55485ba301ee3deba",
+      "status": "ok"
+    },
+    {
+      "number": 2,
+      "exit_code": 0,
+      "duration_ms": 36.696,
+      "macro_f1": 0.672875816993464,
+      "accuracy": 0.6538461538461539,
+      "sample_count": 26,
+      "dataset_sha256": "331ecf7f1a1d7356c3d9217ed0f657668b44f77f413191ccf030d2050694068f",
+      "candidate_sha256": "7d39da592567260604ed6f411fcdbaadde0becab5ca3a8c55485ba301ee3deba",
+      "status": "ok"
+    },
+    {
+      "number": 3,
+      "exit_code": 0,
+      "duration_ms": 42.75,
+      "macro_f1": 0.672875816993464,
+      "accuracy": 0.6538461538461539,
+      "sample_count": 26,
+      "dataset_sha256": "331ecf7f1a1d7356c3d9217ed0f657668b44f77f413191ccf030d2050694068f",
+      "candidate_sha256": "7d39da592567260604ed6f411fcdbaadde0becab5ca3a8c55485ba301ee3deba",
+      "status": "ok"
+    }
+  ]
+}

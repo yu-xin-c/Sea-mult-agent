@@ -333,7 +333,7 @@ func inferArtifactType(key string, runtimeTask *models.Task) string {
 	_ = runtimeTask
 	lowerKey := strings.ToLower(key)
 	switch {
-	case lowerKey == "claim_rubric" || lowerKey == "claim_evidence_graph":
+	case lowerKey == "claim_rubric" || lowerKey == "claim_evidence_graph" || lowerKey == "research_spec" || lowerKey == "research_validation_report" || strings.Contains(lowerKey, "trial_ledger") || strings.Contains(lowerKey, "best_candidate"):
 		return "json"
 	case strings.Contains(lowerKey, "plot") || strings.Contains(lowerKey, "image"):
 		return "image_base64"

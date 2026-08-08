@@ -61,7 +61,9 @@ func executeRepoPrepare(ctx context.Context, runtimeTask *models.Task) error {
 	selectedCodeFile := choosePreferredCodeFile(codeCandidates)
 	reproEntryKind := ""
 	modeDecision := decideReproductionMode(runtimeTask, workspacePath)
-	if modeDecision.EffectiveMode == reproductionModeFull {
+	if taskBoolInput(runtimeTask, "skip_reproduction_smoke_runner") {
+		reproEntryKind = "repository_workspace"
+	} else if modeDecision.EffectiveMode == reproductionModeFull {
 		reproEntryKind = "repository_full_experiment"
 	} else {
 		if smokeFile, smokeKind, createErr := maybeCreateReproductionSmokeRunner(workspacePath, runtimeTask); createErr != nil {

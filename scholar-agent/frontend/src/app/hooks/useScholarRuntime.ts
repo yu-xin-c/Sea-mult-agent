@@ -15,9 +15,11 @@ export type ExecutionDisplayMode =
   | 'code'
   | 'plot'
   | 'evidence'
+  | 'trials'
   | 'report-expanded'
   | 'plot-expanded'
-  | 'evidence-expanded';
+  | 'evidence-expanded'
+  | 'trials-expanded';
 
 interface ExecutionState {
   selectedTask: Task | null;
@@ -66,6 +68,7 @@ const updateNodeStatus = (node: Node, status: string): Node => {
 
 const detectBestDisplayMode = (task: Task, state: NodeExecutionState): ExecutionDisplayMode => {
   if (task.Type === 'claim_evidence_build' && state.structuredData) return 'evidence';
+  if (task.Type === 'autoresearch_run' && (state.structuredData || state.result)) return 'trials';
   if (state.imageBase64) return 'plot';
   if (state.code && !state.result) return 'code';
   if (state.result && isReportAgent(task.AssignedTo)) return 'report';
@@ -412,6 +415,8 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
 
               if (task.Type === 'claim_evidence_build' && structuredData) {
                 dispatchExecution({ type: 'set-display-mode', mode: 'evidence' });
+              } else if (task.Type === 'autoresearch_run' && (structuredData || finalResult)) {
+                dispatchExecution({ type: 'set-display-mode', mode: 'trials' });
               } else if (imageBase64) dispatchExecution({ type: 'set-display-mode', mode: 'plot' });
               else if (isReportAgent(task.AssignedTo)) {
                 dispatchExecution({ type: 'set-display-mode', mode: 'report' });

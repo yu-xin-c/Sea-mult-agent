@@ -9,6 +9,8 @@
 - [agent_runtime_p0_p1.md](agent_runtime_p0_p1.md)：P0/P1 可靠性、安全、治理与运维说明
 - [tot_ablation_and_uploads.md](tot_ablation_and_uploads.md)：受限 ToT 消融设计、预算选择和文件上传
 - [research_coding_agent.md](research_coding_agent.md)：科研 Coding 智能体组件架构、任务路由、论文调试状态机与自有数据 Benchmark 契约
+- [autoresearch/00_project_introduction.md](autoresearch/00_project_introduction.md)：AutoResearch 项目定位、架构、核心能力，以及与相关项目和论文的借鉴关系
+- [autoresearch/](autoresearch/)：AutoResearch Planner/ResearchSpec、Keep/Reject harness、冻结评测器、证据边界、真实示例与研究路线图
 - [claim_evidence_graph.md](claim_evidence_graph.md)：分层论文主张、冻结 Rubric、运行证据绑定、判定边界与前端可视化
 - [intent/02_dual_model_finetuning_guide.md](intent/02_dual_model_finetuning_guide.md)：CPU BERT 与 GPU Qwen 双配置、共用数据、微调流程、路由仲裁和 V100 实践
 - [intent/03_bert_cpu_architecture.md](intent/03_bert_cpu_architecture.md)：BERT/BGE 编码器、自注意力、分类头、微调与 CPU 部署原理
@@ -17,6 +19,7 @@
 - [intent/06_interview_dual_intent_router_story.md](intent/06_interview_dual_intent_router_story.md)：可用于面试的 30 秒、2 分钟和 STAR 表达，以及技术追问与边界说明
 - [user_manual.md](user_manual.md)：产品使用说明
 - [../examples/](../examples/)：可运行示例、成功条件与已验证结果
+- [../examples/autoresearch/intent_router/](../examples/autoresearch/intent_router/)：无需第三方依赖的 AutoResearch 意图路由验收示例
 - [../test/claim-evidence/](../test/claim-evidence/)：Claim-to-Evidence 真实 harness golden test、稳定图 JSON 和截图
 
 ## Interface Preview

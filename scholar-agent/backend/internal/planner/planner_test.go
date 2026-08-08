@@ -122,6 +122,61 @@ func TestCustomDatasetBenchmarkBuildsBoundedAdapterHarness(t *testing.T) {
 	}
 }
 
+func TestAutoResearchBuildsDeterministicBoundedHarness(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	intent := models.IntentContext{
+		RawIntent:  "用 https://github.com/example/research-repo 做 AutoResearch，使用 examples/autoresearch/intent_router/autoresearch.json，最多 4 次实验，总时长 20 分钟，独立复验 3 次",
+		IntentType: "AutoResearch",
+		Entities: map[string]any{
+			"needs_autoresearch":     true,
+			"preferred_repo_url":     "https://github.com/example/research-repo",
+			"autoresearch_spec_path": "examples/autoresearch/intent_router/autoresearch.json",
+		},
+	}
+	plan, err := NewPlanner().BuildPlan(t.Context(), intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantedTypes := []string{
+		"repo_discovery", "repo_prepare", "autoresearch_spec", "prepare_runtime",
+		"install_dependencies", "autoresearch_run", "autoresearch_validate", "verify_result",
+	}
+	if plan.IntentType != "AutoResearch" || len(plan.Nodes) != len(wantedTypes) {
+		t.Fatalf("unexpected AutoResearch graph: intent=%s nodes=%d", plan.IntentType, len(plan.Nodes))
+	}
+	for index, taskType := range wantedTypes {
+		if plan.Nodes[index].Type != taskType {
+			t.Fatalf("node %d type=%s, want %s", index, plan.Nodes[index].Type, taskType)
+		}
+	}
+	if err := validateCriticalNodeContracts(intent, plan.Nodes); err != nil {
+		t.Fatal(err)
+	}
+	freeze := plan.Nodes[2]
+	if plan.Nodes[1].Inputs["skip_reproduction_smoke_runner"] != true {
+		t.Fatalf("AutoResearch workspace must not generate a paper smoke runner: %#v", plan.Nodes[1].Inputs)
+	}
+	if freeze.Inputs["autoresearch_max_trials"] != 4 || freeze.Inputs["autoresearch_max_wall_seconds"] != 1200 {
+		t.Fatalf("unexpected AutoResearch budget: %#v", freeze.Inputs)
+	}
+	if freeze.Inputs["autoresearch_validation_runs"] != 3 {
+		t.Fatalf("unexpected AutoResearch validation runs: %#v", freeze.Inputs)
+	}
+	if freeze.Inputs["autoresearch_spec_path"] != "examples/autoresearch/intent_router/autoresearch.json" {
+		t.Fatalf("spec path not propagated: %#v", freeze.Inputs)
+	}
+	run := plan.Nodes[5]
+	if run.AssignedTo != "research_coding_agent" || run.TimeoutSeconds != 1230 {
+		t.Fatalf("unexpected AutoResearch runner: %#v", run)
+	}
+	if !containsArtifact(run.RequiredArtifacts, "research_spec") || !containsArtifact(run.OutputArtifacts, "research_trial_ledger") {
+		t.Fatalf("AutoResearch evidence contract is incomplete: %#v", run)
+	}
+	if plan.Budget.MaxDurationSec != 2100 {
+		t.Fatalf("plan duration budget=%d, want wall budget plus setup allowance", plan.Budget.MaxDurationSec)
+	}
+}
+
 func TestPaperReproductionRoutesRepositoryDebugToResearchCodingAgent(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 	intent := models.IntentContext{

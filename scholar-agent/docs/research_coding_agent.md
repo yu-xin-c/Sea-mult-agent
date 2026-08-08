@@ -2,10 +2,11 @@
 
 ## 目标与职责
 
-`research_coding_agent` 是一个面向科研仓库的受限 Coding Sub-Agent，负责两类需要真实阅读、修改和验证代码的工作：
+`research_coding_agent` 是一个面向科研仓库的受限 Coding Sub-Agent，负责三类需要真实阅读、修改和验证代码的工作：
 
 1. 论文仓库代码运行失败或结果差异明显时，定位有限源码上下文，生成最小补丁并在同一沙箱中重跑。
 2. 用户上传自有数据后，为指定公开仓库生成独立 Benchmark 适配器，完成预检、修复、正式评测和证据校验。
+3. 根据冻结的 `ResearchSpec` 执行有预算的 AutoResearch 循环，用真实指标 Keep/Reject 候选，回滚退化修改并重复独立复验最佳结果。
 
 底层 `CoderAgent` 继续提供通用代码生成、依赖解析和沙箱能力；Research Coding Agent 负责仓库级诊断、受控写入、重跑和证据闭环。它不会把一次代码运行成功解释成论文结论已经复现。
 
@@ -24,11 +25,14 @@ flowchart LR
 
     D --> PH["Paper Debug Harness<br/>诊断、受限补丁、重跑、回滚"]
     D --> BH["Benchmark Harness<br/>数据分析、适配、预检、执行、校验"]
+    D --> AH["AutoResearch Harness<br/>冻结规格、Baseline、Keep/Reject、复验"]
 
     PH --> X["Sandbox Service<br/>执行真实仓库入口"]
     BH --> X
+    AH --> X
     PH --> A["Artifact Store<br/>运行、补丁和调试证据"]
     BH --> A
+    AH --> A
     A --> DA["DataAgent<br/>论文对比、结果分析、报告"]
 ```
 
@@ -41,15 +45,17 @@ flowchart LR
 | 数据分析 | [`benchmark_dataset.go`](../backend/internal/agent/benchmark_dataset.go) | 确定性读取上传数据并建立 `dataset_manifest` |
 | 适配器生成 | [`benchmark_adapter.go`](../backend/internal/agent/benchmark_adapter.go) | 选择仓库入口方案、生成受控适配器并执行静态策略检查 |
 | Benchmark harness | [`benchmark_harness.go`](../backend/internal/agent/benchmark_harness.go) | 小样本预检、有限修复、正式运行、输出检查和指标重算 |
+| AutoResearch harness | [`autoresearch.go`](../backend/internal/agent/autoresearch.go) | 冻结研究规格、候选白名单写入、Keep/Reject、回滚、TrialLedger、重复复验和资源汇总 |
+| AutoResearch 模型 | [`models/autoresearch.go`](../backend/internal/models/autoresearch.go) | `ResearchSpec`、Trial、Ledger、最佳候选和验证报告版本化契约 |
 | Prompt 契约 | [`prompts.go`](../backend/internal/prompts/prompts.go) | 约束模型返回结构、修复范围和禁止行为 |
-| 计划路由 | [`planner.go`](../backend/internal/planner/planner.go) | 生成 `paper_code_execute`、`fix_and_rerun` 和 Benchmark 节点 |
+| 计划路由 | [`planner.go`](../backend/internal/planner/planner.go) | 生成论文调试、Benchmark 和固定 AutoResearch DAG |
 | 运行时路由 | [`executor.go`](../backend/internal/scheduler/executor.go) | 把上游 Artifact 转为任务输入，并将 Agent 输出写回计划 Artifact |
 
 `ResearchCodingAgent` 本身只保存两个共享依赖：Chat Model 和 Sandbox Client。每个任务的运行次数、备份、诊断和补丁记录都保存在当前调用的局部状态中；跨节点数据通过 Artifact 传递，不依赖 Agent 内存中的隐藏会话。
 
 ### 任务入口
 
-统一入口 `ExecuteTask` 只接受下面 7 类任务：
+统一入口 `ExecuteTask` 只接受下面 10 类任务：
 
 | Task type | 必要上游输入 | 执行模块 | 主要输出 |
 |---|---|---|---|
@@ -60,6 +66,9 @@ flowchart LR
 | `benchmark_adapter_preflight` | 适配器、数据契约、`prepared_runtime` | Benchmark Harness | 冻结后的适配器和预检报告 |
 | `benchmark_execute` | 已通过预检的适配器和运行时 | Benchmark Harness | 经逐样本重算的指标、预测路径、运行清单 |
 | `benchmark_validate` | 数据契约、指标和运行清单 | Evidence Validator | 数据哈希、样本数、数值范围复核报告 |
+| `autoresearch_spec` | `workspace_path`、`repo_manifest`、显式或上传 spec | AutoResearch Harness | `research_spec`、spec 报告、`dependency_spec` |
+| `autoresearch_run` | `workspace_path`、`prepared_runtime`、冻结 `research_spec` | AutoResearch Harness | `research_trial_ledger`、最佳候选和运行报告 |
+| `autoresearch_validate` | spec、TrialLedger、最佳候选和同一运行时 | AutoResearch Harness | 重复验证统计、资源证据和最佳指标 |
 
 不在白名单中的任务会直接失败，不会回退到通用模型执行。
 
@@ -70,7 +79,7 @@ flowchart LR
 | Repository Nodes | 确定性发现仓库、克隆并准备工作区 | 生成或修复仓库代码 |
 | `CoderAgent` | 通用代码生成、依赖解析；当前也承载 `sandbox_agent` 的运行时实现 | 根据论文运行错误修改仓库源码 |
 | `Sandbox Agent` | 作为逻辑角色创建隔离运行时、安装解析后的依赖 | 决定该改哪段论文代码 |
-| `ResearchCodingAgent` | 在已有工作区和运行时中诊断、受控修改、重跑、回滚和记录证据 | 论文检索、容器生命周期、最终科研结论判断 |
+| `ResearchCodingAgent` | 在已有工作区和运行时中诊断、受控修改、重跑、回滚、AutoResearch 筛选和记录证据 | 论文检索、容器生命周期、自动定义科研真值、最终科研结论判断 |
 | `DataAgent` | 对比论文声明、分析指标、选择受限消融、生成报告 | 写入或修复仓库源码 |
 
 因此，环境搭建错误先由依赖安装链处理；进入 `paper_code_execute` 后仍然失败，且证据指向仓库代码缺陷时，才进入源码调试链。缺数据、checkpoint、凭证、硬件或论文口径不一致不属于代码补丁可以解决的问题。
@@ -85,6 +94,48 @@ flowchart LR
 6. 结果通过 `task.metadata.artifact_values` 返回，Scheduler 再写入计划级 Artifact Store，供 DataAgent 或后续节点消费。
 
 这个设计把“模型判断”“文件修改”“代码执行”“结果认定”拆开：模型负责提出候选修复，Go 代码负责执行边界，沙箱负责隔离运行，确定性校验器负责接受或拒绝结果。
+
+## AutoResearch 实验循环
+
+AutoResearch 与论文故障调试不同：论文调试以“消除运行错误”为目标；AutoResearch 要求 baseline 已经可运行，再以冻结主指标筛选一系列小修改。Planner 为它生成固定的 8 节点 DAG，不允许 LLM Planner 删除规格冻结或重复验证节点。
+
+### 冻结契约
+
+`autoresearch_spec` 从仓库内 `autoresearch.json`、用户指定相对路径或上传的 JSON 中读取 `autoresearch.spec/v1`。Go 端冻结：
+
+- 最多 8 个已有 editable 文件，单文件最多 96 KiB。
+- evaluator、benchmark、配置和 spec 等 protected 文件及 SHA-256，以及非 editable 源码/关键配置整体指纹。
+- 参数数组形式的 guard/eval 命令。
+- `metric_key`、最大化/最小化方向和 `min_delta`。
+- 最多 8 个 Trial、最长 3600 秒的硬预算。
+- 默认 1 次、最多 5 次的最终独立进程验证预算。
+- 需要预装的有限依赖列表。
+
+### Keep/Reject 与回滚
+
+baseline 在模型第一次调用前运行。每轮模型只能返回一个假设和最多 3 个 editable 文件的完整替换；Go 端校验路径、符号链接、文件大小和禁止策略后才原子写入。guard/evaluator 真实运行后：
+
+- 指标相对当前最佳值按正确方向提升，且达到 `min_delta`：`kept`，更新最佳快照。
+- 运行失败、guard 失败、指标非法、退化或提升不足：`rejected`，恢复上一个最佳快照。
+- protected 文件缺失或哈希变化：`compromised`，恢复保护文件和最佳候选并终止任务。
+
+循环结束后，`autoresearch_validate` 不再调用候选模型，而是核对 spec、Ledger、保护文件和最佳文件哈希，再按 `validation_runs` 重跑全部命令。只有请求的每一轮都完成、文件完整且观察分数与账本最佳分数一致，状态才是 `validated`；报告同时给出逐次结果、均值、总体标准差、失败率和验证资源摘要。重复进程不等于多 seed。
+
+### AutoResearch Artifact
+
+| Artifact | 内容 |
+|---|---|
+| `research_spec` | 已规范并带保护文件哈希的冻结研究契约 |
+| `research_spec_report` | 文件范围、预算和 spec hash 摘要 |
+| `research_trial_ledger` | baseline 与每轮假设、补丁哈希、命令、指标、Keep/Reject、停止原因和资源摘要 |
+| `research_best_candidate` | 最佳分数、接受次数和最终 editable 文件哈希 |
+| `research_run_report` | 搜索轮数、基线/最佳值和停止原因摘要 |
+| `research_validation_report` | spec/ledger hash、完整性、逐次观察值、统计量、资源摘要和最终状态 |
+| `research_best_metrics` | 经全部请求轮次复验的主指标、稳定性统计与证据 hash |
+
+完整规格、状态机、安全边界和可运行示例见 [`docs/autoresearch/`](autoresearch/)。
+
+前端对 `research_trial_ledger` 使用专用视图，而不是把它作为通用 JSON 展示。类型解析与异常降级位于 [`trialLedger.ts`](../frontend/src/features/autoresearch/trialLedger.ts)，[`AutoResearchTrialView.tsx`](../frontend/src/features/autoresearch/AutoResearchTrialView.tsx) 展示 baseline/best、指标趋势、Keep/Reject、耗时、假设、补丁哈希和命令资源摘要；用户可从执行侧栏切换“实验”页签并进入全屏视图。当前账本不保存每轮完整源码，因此界面不会生成不可验证的逐行 diff。
 
 ## 论文代码调试
 
