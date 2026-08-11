@@ -1,0 +1,137 @@
+{
+  "claims": [
+    {
+      "claim_id": "claim-001",
+      "claim_type": "quantitative",
+      "confidence": 0.98,
+      "criteria": [
+        {
+          "confidence": 0.98,
+          "criterion_id": "claim-001.criterion-01",
+          "description": "Evaluate accuracy on the TinyBench test split with 100 examples and accept values within +/-0.01 of 0.80.",
+          "evidence_ids": [
+            "evidence-run-metrics",
+            "evidence-comparison-report"
+          ],
+          "observed_value": "accuracy=0.80, sample_count=100, seed=7",
+          "reason": "The recorded run uses the named test split and sample count; observed accuracy 0.80 is within the frozen tolerance.",
+          "status": "verified"
+        }
+      ],
+      "source_locator": "Table 1",
+      "statement": "The method reaches accuracy 0.80 on the TinyBench test split.",
+      "status": "verified",
+      "title": "Accuracy claim"
+    }
+  ],
+  "evidence": [
+    {
+      "artifact_key": "parsed_paper",
+      "available": true,
+      "evidence_type": "paper",
+      "id": "evidence-parsed-paper",
+      "sha256": "930322b3070353db9229ceb7ccfc6c0f68b849424b14eba288a578bc13bae315",
+      "summary": "Tiny Reproduction Study. Table 1 reports that the method reaches accuracy 0.80 on TinyBench test split using 100 examples. The accepted reproduction tolerance is +/-0.01."
+    },
+    {
+      "artifact_key": "repo_manifest",
+      "available": true,
+      "evidence_type": "repository",
+      "id": "evidence-repo-manifest",
+      "sha256": "b7470bbf20b966b7c613705771d459da31429c763e4449145257374549e14b7f",
+      "summary": "{\"repository\":\"https://github.com/example/tiny-reproduction\",\"entrypoint\":\"evaluate.py\",\"revision\":\"abc123\"}"
+    },
+    {
+      "artifact_key": "reproduction_mode_report",
+      "available": true,
+      "evidence_type": "environment",
+      "id": "evidence-reproduction-mode-report",
+      "sha256": "25a8b7fe6e5abaea05a971d887ffc0a108735b43c7389c1646ecfe52bcdea2e1",
+      "summary": "{\"requested_mode\":\"smoke\",\"effective_mode\":\"smoke\",\"dataset\":\"TinyBench test\"}"
+    },
+    {
+      "artifact_key": "dependency_install_report",
+      "available": true,
+      "evidence_type": "environment",
+      "id": "evidence-dependency-install-report",
+      "sha256": "54f72c998feec1af821cfad738b4815bb2c35aeb186f4c9f5c4ef7fe7f9bd573",
+      "summary": "{\"status\":\"completed\",\"python\":\"3.11\",\"attempts\":1}"
+    },
+    {
+      "artifact_key": "run_metrics",
+      "available": true,
+      "evidence_type": "metric",
+      "id": "evidence-run-metrics",
+      "sha256": "54836e0288b723702d4645d12d1abcf85d23d5dc43aeb683c582f5468d3743f7",
+      "summary": "{\"exit_code\":0,\"accuracy\":0.80,\"sample_count\":100,\"seed\":7,\"dataset\":\"TinyBench test\"}"
+    },
+    {
+      "artifact_key": "paper_debug_report",
+      "available": true,
+      "evidence_type": "run",
+      "id": "evidence-paper-debug-report",
+      "sha256": "c1a769444d9f8136a7b6d1d3a9d85d6b53a960e7a3cc9c170c65bb1147312761",
+      "summary": "{\"status\":\"completed\",\"run_attempts\":1,\"patch_rounds\":0}"
+    },
+    {
+      "artifact_key": "paper_patch_manifest",
+      "available": true,
+      "evidence_type": "patch",
+      "id": "evidence-paper-patch-manifest",
+      "sha256": "6142bfcb78f54dfbf5247ae5e463f25bdb8fff1890806e2e45aa81a59c211653",
+      "summary": "{\"patches\":[]}"
+    },
+    {
+      "artifact_key": "comparison_report",
+      "available": true,
+      "evidence_type": "comparison",
+      "id": "evidence-comparison-report",
+      "sha256": "6c026d1ddf119e625cfa023299ebf1dd2587977eeedd636a671f5500e3e042c6",
+      "summary": "Observed accuracy 0.80 matches the paper target 0.80 within tolerance +/-0.01 on the named TinyBench test split."
+    },
+    {
+      "artifact_key": "rerun_metrics",
+      "available": false,
+      "evidence_type": "metric",
+      "id": "evidence-rerun-metrics"
+    },
+    {
+      "artifact_key": "rerun_report",
+      "available": false,
+      "evidence_type": "run",
+      "id": "evidence-rerun-report"
+    },
+    {
+      "artifact_key": "gap_debug_report",
+      "available": false,
+      "evidence_type": "run",
+      "id": "evidence-gap-debug-report"
+    },
+    {
+      "artifact_key": "gap_patch_manifest",
+      "available": false,
+      "evidence_type": "patch",
+      "id": "evidence-gap-patch-manifest"
+    },
+    {
+      "artifact_key": "result_plot",
+      "available": false,
+      "evidence_type": "figure",
+      "id": "evidence-result-plot"
+    }
+  ],
+  "rubric_sha256": "05493a9016643d64632b438f10489270a6b25676586eb1263a6c5873640106ce",
+  "status": "assessed",
+  "status_reason": "all criterion verdicts were produced and validated against the bounded evidence inventory",
+  "summary": {
+    "blocked_by_missing_asset": 0,
+    "contradicted": 0,
+    "criterion_evidence_coverage": 1,
+    "partially_reproduced": 0,
+    "total_claims": 1,
+    "total_criteria": 1,
+    "unverifiable": 0,
+    "verified": 1
+  },
+  "version": "claim.evidence/v1"
+}

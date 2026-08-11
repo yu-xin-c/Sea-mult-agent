@@ -1,0 +1,51 @@
+{
+  "version": "autoresearch.spec/v1",
+  "name": "rank-bm25-boundary-robustness",
+  "repository_revision": "47aa3ddf8dc1ebeb7ef4e65f2b4536af44594099",
+  "objective": "Make every BM25 variant handle empty corpora, all-empty documents, non-positive top_n limits, and invalid batch document indices without changing ordinary ranking behavior.",
+  "editable_files": [
+    "rank_bm25.py"
+  ],
+  "protected_files": [
+    ".scholar/uploads/02-evaluator.py",
+    ".scholar/uploads/03-holdout_evaluator.py"
+  ],
+  "eval_command": [
+    "python3",
+    ".scholar/uploads/02-evaluator.py"
+  ],
+  "holdout_command": [
+    "python3",
+    ".scholar/uploads/03-holdout_evaluator.py"
+  ],
+  "holdout_min_delta": 0.75,
+  "guard_commands": [
+    [
+      "python3",
+      "-m",
+      "py_compile",
+      "rank_bm25.py",
+      ".scholar/uploads/02-evaluator.py"
+    ],
+    [
+      "python3",
+      "-m",
+      "pytest",
+      "-q",
+      "tests"
+    ]
+  ],
+  "metric_key": "metrics.robustness_score",
+  "direction": "maximize",
+  "min_delta": 0.01,
+  "target_score": 1.0,
+  "search_runs": 3,
+  "search_aggregation": "worst",
+  "max_trials": 8,
+  "max_wall_seconds": 300,
+  "validation_runs": 3,
+  "dependencies": [
+    "numpy==2.1.3",
+    "pytest==8.3.5"
+  ]
+}

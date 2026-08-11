@@ -77,6 +77,11 @@ interface ServiceHealth {
     ok?: boolean;
     message?: string;
   };
+  repository?: {
+    ok?: boolean;
+    git_path?: string;
+    message?: string;
+  };
   sandbox?: {
     ok?: boolean;
     url?: string;
@@ -813,10 +818,12 @@ export default function App() {
   };
 
   const backendOk = serviceHealth?.backend?.ok ?? false;
+  const repositoryOk = serviceHealth?.repository?.ok ?? false;
   const sandboxOk = serviceHealth?.sandbox?.ok ?? false;
   const dockerError = serviceHealth?.sandbox?.native_docker?.error || serviceHealth?.sandbox?.message;
-  const statusTone = backendOk && sandboxOk ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : backendOk ? 'bg-amber-50 text-amber-900 border-amber-200' : 'bg-rose-50 text-rose-800 border-rose-200';
-  const statusTitle = backendOk && sandboxOk ? '完整服务已就绪' : backendOk ? '后端可用，沙箱待配置' : '后端服务未连接';
+  const allServicesReady = backendOk && repositoryOk && sandboxOk;
+  const statusTone = allServicesReady ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : backendOk ? 'bg-amber-50 text-amber-900 border-amber-200' : 'bg-rose-50 text-rose-800 border-rose-200';
+  const statusTitle = allServicesReady ? '完整服务已就绪' : backendOk ? '服务可用，部分能力待配置' : '后端服务未连接';
   const pendingTaskCount = nodes.filter(n => n.data.task && n.data.status !== 'completed').length;
   const canExecuteTasks = sandboxOk;
 
@@ -847,12 +854,12 @@ export default function App() {
           <div className="flex items-start justify-between gap-3">
             <div className="flex min-w-0 gap-2">
               <div className="pt-0.5">
-                {backendOk && sandboxOk ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+                {allServicesReady ? <CheckCircle2 className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
               </div>
               <div className="min-w-0">
                 <div className="font-semibold">{healthLoading && !serviceHealth ? '正在检测服务状态...' : statusTitle}</div>
                 <div className="mt-1 truncate">
-                  后端：{backendOk ? '正常' : serviceHealth?.backend?.message || '未检测'} · 沙箱：{sandboxOk ? `正常${serviceHealth?.sandbox?.native_docker?.server_version ? ` (Docker ${serviceHealth.sandbox.native_docker.server_version})` : ''}` : dockerError || '未检测'}
+                  后端：{backendOk ? '正常' : serviceHealth?.backend?.message || '未检测'} · 仓库：{repositoryOk ? '正常' : serviceHealth?.repository?.message || '未检测'} · 沙箱：{sandboxOk ? `正常${serviceHealth?.sandbox?.native_docker?.server_version ? ` (Docker ${serviceHealth.sandbox.native_docker.server_version})` : ''}` : dockerError || '未检测'}
                 </div>
               </div>
             </div>

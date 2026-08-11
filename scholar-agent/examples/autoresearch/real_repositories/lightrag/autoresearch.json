@@ -1,0 +1,41 @@
+{
+  "version": "autoresearch.spec/v1",
+  "name": "lightrag-rerank-aggregation-robustness",
+  "repository_revision": "24ee484864357865b20770e478b177ae68391796",
+  "objective": "Make aggregate_chunk_scores ignore non-finite scores and boolean document indices, deduplicate repeated chunk indices by their best valid score, and reject unknown aggregation modes while preserving max, mean, and first behavior.",
+  "editable_files": [
+    "lightrag/rerank.py"
+  ],
+  "protected_files": [
+    ".scholar/uploads/02-evaluator.py",
+    ".scholar/uploads/03-holdout_evaluator.py"
+  ],
+  "eval_command": [
+    "python3",
+    ".scholar/uploads/02-evaluator.py"
+  ],
+  "holdout_command": [
+    "python3",
+    ".scholar/uploads/03-holdout_evaluator.py"
+  ],
+  "holdout_min_delta": 0.75,
+  "guard_commands": [
+    [
+      "python3",
+      "-m",
+      "py_compile",
+      "lightrag/rerank.py",
+      ".scholar/uploads/02-evaluator.py"
+    ]
+  ],
+  "metric_key": "metrics.aggregation_score",
+  "direction": "maximize",
+  "min_delta": 0.01,
+  "target_score": 1.0,
+  "search_runs": 3,
+  "search_aggregation": "worst",
+  "max_trials": 8,
+  "max_wall_seconds": 300,
+  "validation_runs": 3,
+  "dependencies": []
+}

@@ -122,6 +122,70 @@ func TestCustomDatasetBenchmarkBuildsBoundedAdapterHarness(t *testing.T) {
 	}
 }
 
+func TestAutoResearchBuildsDeterministicBoundedHarness(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	revision := "47aa3ddf8dc1ebeb7ef4e65f2b4536af44594099"
+	intent := models.IntentContext{
+		RawIntent:  "用 https://github.com/example/research-repo 做 AutoResearch，使用 examples/autoresearch/intent_router/autoresearch.json，最多 4 次实验，总时长 20 分钟，独立复验 3 次",
+		IntentType: "AutoResearch",
+		Entities: map[string]any{
+			"needs_autoresearch":     true,
+			"preferred_repo_url":     "https://github.com/example/research-repo",
+			"repository_revision":    revision,
+			"autoresearch_spec_path": "examples/autoresearch/intent_router/autoresearch.json",
+		},
+	}
+	plan, err := NewPlanner().BuildPlan(t.Context(), intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantedTypes := []string{
+		"repo_discovery", "repo_prepare", "autoresearch_spec", "prepare_runtime",
+		"install_dependencies", "autoresearch_run", "autoresearch_validate", "verify_result",
+	}
+	if plan.IntentType != "AutoResearch" || len(plan.Nodes) != len(wantedTypes) {
+		t.Fatalf("unexpected AutoResearch graph: intent=%s nodes=%d", plan.IntentType, len(plan.Nodes))
+	}
+	for index, taskType := range wantedTypes {
+		if plan.Nodes[index].Type != taskType {
+			t.Fatalf("node %d type=%s, want %s", index, plan.Nodes[index].Type, taskType)
+		}
+	}
+	if err := validateCriticalNodeContracts(intent, plan.Nodes); err != nil {
+		t.Fatal(err)
+	}
+	freeze := plan.Nodes[2]
+	if plan.Nodes[1].Inputs["skip_reproduction_smoke_runner"] != true {
+		t.Fatalf("AutoResearch workspace must not generate a paper smoke runner: %#v", plan.Nodes[1].Inputs)
+	}
+	if plan.Nodes[1].Inputs["repository_revision"] != revision {
+		t.Fatalf("repository revision was not propagated: %#v", plan.Nodes[1].Inputs)
+	}
+	if freeze.Inputs["autoresearch_max_trials"] != 4 || freeze.Inputs["autoresearch_max_wall_seconds"] != 1200 {
+		t.Fatalf("unexpected AutoResearch budget: %#v", freeze.Inputs)
+	}
+	if freeze.Inputs["autoresearch_validation_runs"] != 3 {
+		t.Fatalf("unexpected AutoResearch validation runs: %#v", freeze.Inputs)
+	}
+	if freeze.Inputs["autoresearch_spec_path"] != "examples/autoresearch/intent_router/autoresearch.json" {
+		t.Fatalf("spec path not propagated: %#v", freeze.Inputs)
+	}
+	run := plan.Nodes[5]
+	if run.AssignedTo != "research_coding_agent" || run.TimeoutSeconds != 1230 {
+		t.Fatalf("unexpected AutoResearch runner: %#v", run)
+	}
+	if !containsArtifact(run.RequiredArtifacts, "research_spec") || !containsArtifact(run.OutputArtifacts, "research_trial_ledger") {
+		t.Fatalf("AutoResearch evidence contract is incomplete: %#v", run)
+	}
+	validate := plan.Nodes[6]
+	if validate.RetryLimit != 0 {
+		t.Fatalf("deterministic AutoResearch validation must not be retried unchanged: %#v", validate)
+	}
+	if plan.Budget.MaxDurationSec != 2100 {
+		t.Fatalf("plan duration budget=%d, want wall budget plus setup allowance", plan.Budget.MaxDurationSec)
+	}
+}
+
 func TestPaperReproductionRoutesRepositoryDebugToResearchCodingAgent(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 	intent := models.IntentContext{
@@ -138,9 +202,11 @@ func TestPaperReproductionRoutesRepositoryDebugToResearchCodingAgent(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	var baseline, gapDebug, compare, visualize *models.TaskNode
+	var rubric, baseline, gapDebug, compare, visualize, evidence *models.TaskNode
 	for _, node := range plan.Nodes {
 		switch node.Type {
+		case "claim_rubric_extract":
+			rubric = node
 		case "paper_code_execute":
 			baseline = node
 		case "fix_and_rerun":
@@ -149,10 +215,12 @@ func TestPaperReproductionRoutesRepositoryDebugToResearchCodingAgent(t *testing.
 			compare = node
 		case "result_visualization":
 			visualize = node
+		case "claim_evidence_build":
+			evidence = node
 		}
 	}
-	if baseline == nil || gapDebug == nil || compare == nil || visualize == nil {
-		t.Fatalf("missing repository debug flow: baseline=%v gap=%v compare=%v visualize=%v", baseline != nil, gapDebug != nil, compare != nil, visualize != nil)
+	if rubric == nil || baseline == nil || gapDebug == nil || compare == nil || visualize == nil || evidence == nil {
+		t.Fatalf("missing claim-aware repository debug flow: rubric=%v baseline=%v gap=%v compare=%v visualize=%v evidence=%v", rubric != nil, baseline != nil, gapDebug != nil, compare != nil, visualize != nil, evidence != nil)
 	}
 	if baseline.AssignedTo != "research_coding_agent" || gapDebug.AssignedTo != "research_coding_agent" {
 		t.Fatalf("paper debugging was not routed to research coding agent")
@@ -165,5 +233,19 @@ func TestPaperReproductionRoutesRepositoryDebugToResearchCodingAgent(t *testing.
 	}
 	if len(visualize.Dependencies) != 1 || visualize.Dependencies[0] != gapDebug.ID || !containsArtifact(visualize.RequiredArtifacts, "rerun_metrics") {
 		t.Fatalf("visualization does not consume rerun evidence: %#v", visualize)
+	}
+	if !containsArtifact(rubric.RequiredArtifacts, "parsed_paper") || !containsArtifact(rubric.OutputArtifacts, "claim_rubric") {
+		t.Fatalf("claim rubric contract is incomplete: %#v", rubric)
+	}
+	if len(evidence.Dependencies) != 2 || evidence.Dependencies[0] != rubric.ID || evidence.Dependencies[1] != visualize.ID {
+		t.Fatalf("claim graph is not the final evidence join: %#v", evidence.Dependencies)
+	}
+	for _, artifact := range []string{"claim_rubric", "run_metrics", "comparison_report", "rerun_metrics", "result_plot"} {
+		if !containsArtifact(evidence.RequiredArtifacts, artifact) {
+			t.Fatalf("claim graph is missing required evidence %s: %#v", artifact, evidence.RequiredArtifacts)
+		}
+	}
+	if !containsArtifact(evidence.OutputArtifacts, "claim_evidence_graph") || !containsArtifact(evidence.OutputArtifacts, "claim_verification_report") {
+		t.Fatalf("claim graph outputs are incomplete: %#v", evidence.OutputArtifacts)
 	}
 }

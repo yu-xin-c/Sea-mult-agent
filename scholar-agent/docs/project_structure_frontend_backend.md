@@ -31,9 +31,19 @@
 
 ### 前端核心目录
 
+- `frontend/src/app/ScholarApp.tsx`
+  - 当前生产前端主壳
+  - 负责聊天工作区、DAG 工作区和节点执行侧栏的组合
+
+- `frontend/src/features/execution/ExecutionSidebar.tsx`
+  - 节点日志、报告、代码、图表、Claim Evidence 和 AutoResearch Trial 视图入口
+
+- `frontend/src/features/autoresearch/`
+  - `trialLedger.ts` 负责版本化账本解析和视图模型归一化
+  - `AutoResearchTrialView.tsx` 负责指标趋势、Keep/Reject、耗时和修改摘要
+
 - `frontend/src/App.tsx`
-  - 前端主页面
-  - 负责聊天面板、任务触发、DAG 节点展示、执行日志展示、报告/代码/图片切换
+  - 保留的早期单文件页面实现，不是 `main.tsx` 当前挂载入口
   - 会直接请求后端接口：
     - `POST http://localhost:8080/api/chat`
     - `POST http://localhost:8080/api/plan`
@@ -86,6 +96,7 @@
 - 触发节点执行
 - 实时展示 SSE 日志和结果
 - 展示 PDF、分析报告、代码和生成图片
+- 展示 AutoResearch Trial 指标趋势、决策、耗时和补丁哈希摘要
 
 ---
 
@@ -134,10 +145,21 @@
 - `backend/internal/agent/data.go`
   - 数据分析/结果报告相关 Agent
 
+- `backend/internal/agent/research_coding_agent.go`
+  - 科研仓库级 Coding Agent 统一入口
+
+- `backend/internal/agent/autoresearch.go`
+  - AutoResearch 规格冻结、候选执行、Keep/Reject、回滚、公开重放/隐藏 holdout 和资源汇总
+
 #### 模型层
 
 - `backend/internal/models/task.go`
   - 任务结构定义
+
+- `backend/internal/models/autoresearch.go`
+  - `ResearchSpec`、TrialLedger、最佳候选与验证报告契约
+
+AutoResearch 的分模块说明和示例见 [`docs/autoresearch/`](autoresearch/)。
 
 #### 沙箱客户端
 

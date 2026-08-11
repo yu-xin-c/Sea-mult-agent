@@ -2,7 +2,7 @@
 
 本文描述 `scholar-agent/` 当前已经实现并可运行的架构。它以代码为准，重点说明服务边界、核心数据模型、Agent 调度、论文复现、Benchmark Harness、持久化与安全边界。早期设想和尚未接入主链的模块不会被写成现有能力。
 
-最后核对日期：2026-07-21。
+最后核对日期：2026-08-06。
 
 ## 1. 架构目标
 
@@ -34,7 +34,7 @@ flowchart LR
     RX --> LIB["Librarian Agent"]
     RX --> DATA["Data Agent"]
     RX --> CODER["Coder Agent"]
-    RX --> BENCH["Research Coding Agent"]
+    RX --> BENCH["Research Coding Agent<br/>Debug / Benchmark / AutoResearch"]
 
     LIB --> LLM["OpenAI-compatible LLM"]
     DATA --> LLM
@@ -140,7 +140,7 @@ scholar-agent/
 [`planner.go`](../backend/internal/planner/planner.go) 输出 `PlanGraph`。规划顺序如下：
 
 1. API 用规则提取任务类型、仓库 URL、论文信息、复现模式和附件。
-2. 自有数据 Benchmark 始终生成固定的 11 节点 DAG。
+2. 自有数据 Benchmark 始终生成固定的 11 节点 DAG；AutoResearch 始终生成固定的 8 节点 DAG。
 3. 其他任务在配置 LLM 后优先调用 Planner Agent。
 4. 模型输出会经过任务类型归一化、Agent 白名单、Artifact 契约和 DAG 校验。
 5. 模型不可用或输出不合法时，回退到确定性模板。
@@ -153,6 +153,7 @@ scholar-agent/
 | `Framework_Evaluation` | 共同协议、并行框架实现、独立运行和比较报告 |
 | `Code_Execution` | 代码生成、依赖、运行和结果验证 |
 | `Custom_Benchmark` | 用户数据分析、仓库适配、预检、正式评测和证据校验 |
+| `AutoResearch` | 冻结研究契约、baseline、有限候选、Keep/Reject、回滚、公开重放/隐藏 holdout 和资源证据 |
 | `General` | 通用研究或处理节点 |
 
 [`internal/Intent`](../backend/internal/Intent/) 和 Python 意图服务目前不是这条生产路径的一部分。当前 API 使用 [`buildRuleIntentContext`](../backend/internal/api/plan_runtime.go)，Planner Agent 负责后续拓扑生成。
@@ -197,6 +198,9 @@ Scheduler 负责：
 | `TaskContract` | 版本化的输入 Artifact、输出 Artifact 和允许工具边界 |
 | `Artifact` | 节点间传递的命名结果，记录类型、生产者、值和元数据 |
 | `PlanEvent` | 状态、日志、Artifact 和终态事件，带 `trace_id` 与任务 span |
+| `ResearchSpec` | AutoResearch 可编辑/保护文件、命令、指标、方向、阈值、搜索预算与验证次数 |
+| `ResearchTrialLedger` | baseline 和每个候选的补丁哈希、命令、指标、决策、停止原因与资源摘要 |
+| `ResearchValidationReport` | 最佳文件完整性、重复 evaluator 结果、均值、标准差、失败率与资源摘要 |
 
 ```mermaid
 stateDiagram-v2
@@ -222,10 +226,10 @@ Artifact 同时承担数据接口和可追踪证据的作用。例如 `repo_url`
 | Agent | 当前实现 |
 |---|---|
 | `ChatAgent` | 通用问答；代码型问题可委托 Coder |
-| `LibrarianAgent` | 论文解析、资料归纳和方法声明提取 |
+| `LibrarianAgent` | 论文解析、资料归纳、方法声明提取和实验前冻结 Claim Rubric |
 | `CoderAgent` | 代码生成、依赖解析、运行时准备、安装、执行与修复 |
-| `DataAgent` | 指标分析、论文对比、报告和受限消融设计 |
-| `ResearchCodingAgent` | 论文仓库代码调试、受限补丁和重跑，以及数据契约分析、Benchmark 适配与证据校验 |
+| `DataAgent` | 指标分析、论文对比、Claim-to-Evidence 判定、报告和受限消融设计 |
+| `ResearchCodingAgent` | 论文仓库代码调试、数据契约与 Benchmark，以及冻结规格驱动的 AutoResearch Keep/Reject 循环 |
 
 Librarian、Coder、Data 和 Chat 使用 Eino 编排 OpenAI-compatible Chat Model。模型地址、模型名和密钥通过环境变量或配置文件提供。
 
@@ -250,13 +254,34 @@ ReAct 用于局部故障修复，不用于全局拓扑搜索：
 
 这种划分保持了“全局方案选择有预算，局部修复有次数，正式结果不漂移”。
 
+### 7.3 Research Coding Agent 的内部架构
+
+Research Coding Agent 是 Scheduler 后面的仓库级专用执行器，不是另一套 Planner。`RoutedTaskExecutor` 把节点输入和上游 Artifact 组装成运行时 Task，再交给 `ResearchCodingAgent.ExecuteTask` 按任务类型分发：
+
+```text
+Planner TaskNode
+    -> Scheduler / Artifact Relay
+        -> ResearchCodingAgent.ExecuteTask
+            -> Paper Debug Harness
+                -> 有限上下文 -> 模型补丁提议 -> Go 校验与备份 -> Sandbox 重跑 -> 补丁证据
+            -> Benchmark Harness
+                -> 数据契约 -> 适配器 -> 预检修复 -> 正式运行 -> Go 指标重算
+            -> AutoResearch Harness
+                -> ResearchSpec -> baseline -> 候选补丁 -> Keep/Reject -> TrialLedger -> 最终验证
+```
+
+它在启动时复用 Coder 的 Chat Model 和 Sandbox Client，但不复用 Coder 的任务状态。每次调试的运行次数、文件备份和补丁清单都只存在于当前任务内，跨节点状态通过显式 Artifact 传递。模型只能提出结构化方案或代码内容；路径检查、写入、回滚、源码指纹和结果校验都由 Go harness 完成。
+
+完整组件图、任务入口、状态机和 Artifact 契约见 [`research_coding_agent.md`](research_coding_agent.md)。
+
 ## 8. 论文复现流程
 
 标准论文复现主链如下：
 
 ```mermaid
 flowchart LR
-    P["解析论文"] --> R["发现仓库"]
+    P["解析论文"] --> F["冻结分层 Claim Rubric"]
+    P --> R["发现仓库"]
     P --> A["可选 ToT 消融设计"]
     R --> W["准备工作区"]
     A --> W
@@ -266,6 +291,8 @@ flowchart LR
     I --> E["Research Coding 执行并调试 baseline"]
     E --> C["对比论文声明"]
     C --> V["可选可视化或修复重跑"]
+    V --> G["构建 Claim-to-Evidence Graph"]
+    F --> G
 ```
 
 关键实现边界：
@@ -276,6 +303,8 @@ flowchart LR
 - 系统根据用户请求和本机 CPU、内存、磁盘、GPU 探测选择 `smoke` 或 `full`。
 - `full` 模式或部署强制审批时，计划进入 `awaiting_approval`，未批准不能执行。
 - `smoke` 是结构和执行链验证，不等同于完整数据训练或论文指标复现。
+- `claim_rubric_extract` 在运行前冻结主张和独立判定准则；`claim_evidence_build` 在末端绑定指标、对照、补丁和图表 Artifact。没有直接运行证据时，准则不能标记为已验证。
+- 前端通过 `structured_data` 接收图 JSON，以“主张 -> 准则 -> 证据”三泳道展示状态、理由和证据哈希。完整契约见 [`claim_evidence_graph.md`](claim_evidence_graph.md)。
 
 ## 9. 自有数据 Benchmark 流程
 
@@ -305,7 +334,22 @@ Benchmark Harness 的信任边界不是“模型说成功”，而是：
 
 论文调试与 Benchmark 契约见 [`research_coding_agent.md`](research_coding_agent.md)。
 
-## 10. 文件上传与数据流
+## 10. AutoResearch 流程
+
+明确要求 `AutoResearch`、自动实验或持续优化，并提供公开仓库时，系统生成固定主链：
+
+```text
+仓库发现 -> 工作区准备 -> 冻结 ResearchSpec
+    -> 创建运行时 -> 安装规格依赖
+    -> baseline + 有限候选 Keep/Reject
+    -> 公开重放或隐藏 holdout -> 证据报告
+```
+
+它的关键边界是：模型只提出 editable 文件候选，Go harness 冻结 evaluator、benchmark、命令、指标、搜索预算和验证次数；eval/guard 直接引用的小型源码只读进入诊断上下文，数据文件不进入。候选必须给出失败用例到修改点的调用路径诊断。退化候选恢复到上一个最佳版本，最终结果必须按声明的 1 至 5 次重复运行并与 TrialLedger 对齐。当前最多 8 个 Trial、最长 3600 秒，每轮最多修改 3 个已有白名单文件。
+
+前端在现有 DAG、SSE 日志和 Artifact 面板上增加了 AutoResearch “实验”视图：展示 baseline/best、指标趋势、Keep/Reject、耗时、调用路径诊断、假设、候选文件哈希与命令资源摘要，并支持全屏及窄屏布局。重复验证报告还保存逐次分数、均值、总体标准差和失败率；当前不保存完整逐轮源码，所以还没有逐行 diff。完整模块文档见 [`autoresearch/`](autoresearch/)。
+
+## 11. 文件上传与数据流
 
 上传实现在 [`uploads.go`](../backend/internal/api/uploads.go)：
 
@@ -317,7 +361,7 @@ Benchmark Harness 的信任边界不是“模型说成功”，而是：
 
 默认最大单文件 32 MiB。Compose 使用独立 `scholar-upload-data` 卷。当前没有上传删除和自动过期机制，长期部署需要外部生命周期管理。
 
-## 11. 状态、事件与持久化
+## 12. 状态、事件与持久化
 
 `PlanStore` 有两种实现：
 
@@ -346,7 +390,7 @@ task_result_discarded
 plan_completed / plan_failed / plan_canceled
 ```
 
-## 12. Sandbox 执行面
+## 13. Sandbox 执行面
 
 Backend 通过 [`SandboxClient`](../backend/internal/sandbox/opensandbox.go) 调用独立沙箱服务。沙箱服务优先使用原生 Docker；只有显式设置 `ENABLE_OPENSANDBOX_FALLBACK=true` 时才会尝试 OpenSandbox。
 
@@ -367,7 +411,7 @@ Backend 通过 [`SandboxClient`](../backend/internal/sandbox/opensandbox.go) 调
 
 `bridge` 只表示容器网络隔离，不表示离线。对不需要联网的实验，应设置 `SANDBOX_NETWORK_MODE=none`。镜像白名单、只读根文件系统和非 root 用户也需要通过对应环境变量显式开启。
 
-## 13. 安全与信任边界
+## 14. 安全与信任边界
 
 | 边界 | 已有措施 | 当前限制 |
 |---|---|---|
@@ -380,7 +424,7 @@ Backend 通过 [`SandboxClient`](../backend/internal/sandbox/opensandbox.go) 调
 
 最重要的部署风险是 Docker Socket。`docker-sandbox` 挂载 `/var/run/docker.sock`，因此沙箱服务本身拥有较高的宿主机控制能力。不要把 8082 暴露到公网，也不要把当前单机原型当作零信任多租户平台。
 
-## 14. 部署形态
+## 15. 部署形态
 
 ### 本地开发
 
@@ -404,7 +448,7 @@ make run-frontend
 
 GPU 透传要求宿主机安装 NVIDIA Container Toolkit，并设置 `SANDBOX_DOCKER_GPUS=all` 或指定设备。默认沙箱镜像不保证包含 CUDA 和深度学习框架，`SANDBOX_DEFAULT_IMAGE` 仍需选择匹配镜像。
 
-## 15. 可观测性与验证
+## 16. 可观测性与验证
 
 Backend、Sandbox 和单文件应用会同时写 stdout 与本地日志文件：
 
@@ -432,8 +476,9 @@ make eval
 - `backend/evals/`：确定性 Agent 规划评测
 - `docker-sandbox/internal/**/**_test.go`：容器策略与安全
 - `examples/paper-reproduction/`：可运行的论文复现链路验收
+- `examples/autoresearch/intent_router/`：冻结 evaluator 的轻量 AutoResearch 基线
 
-## 16. 扩展方式
+## 17. 扩展方式
 
 ### 新增任务类型
 
@@ -457,7 +502,7 @@ make eval
 
 沙箱层已抽象 Native Docker 与 OpenSandbox。新引擎需要保持创建、删除、Python、命令和流式执行的协议，并继续满足挂载、资源和认证约束。
 
-## 17. 当前限制与演进方向
+## 18. 当前限制与演进方向
 
 当前是可靠性增强后的单机研究原型，不是完整生产平台：
 
@@ -469,15 +514,18 @@ make eval
 - Python 意图微服务尚未接入默认主链。
 - 默认容器可联网，Docker Socket 仍是高权限边界。
 - 论文完整复现和任意仓库 Benchmark 都不保证成功，系统只对实际执行证据负责。
+- AutoResearch 当前要求显式 ResearchSpec；保护文件哈希不能替代隐藏测试集、防数据泄漏评测服务或人工科研判断。
 
 面向生产部署的优先演进顺序应是：强认证与租户隔离、数据库和对象存储、异步任务队列、沙箱服务独立主机化、资源配额与生命周期清理，最后再考虑水平扩展 Planner 和 Agent。
 
-## 18. 相关文档
+## 19. 相关文档
 
 - [本地启动指南](local_startup_guide.md)
 - [Agent Runtime P0/P1](agent_runtime_p0_p1.md)
 - [受限 ToT 消融与文件上传](tot_ablation_and_uploads.md)
 - [Research Coding Agent](research_coding_agent.md)
+- [AutoResearch 模块文档](autoresearch/)
+- [Claim-to-Evidence Graph](claim_evidence_graph.md)
 - [后端规划与模型参考](backend_planner_models_reference.md)
 - [项目目录速查](project_structure_frontend_backend.md)
 - [用户手册](user_manual.md)

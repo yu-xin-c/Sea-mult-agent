@@ -1,0 +1,52 @@
+{
+  "version": "autoresearch.spec/v1",
+  "name": "tenacity-wait-strategy-protocol",
+  "repository_revision": "26f719dc73d3c5612b9c1b8d18a7883837790ad8",
+  "objective": "Make composed and chained Tenacity wait strategies call user-defined WaitBaseT implementations positionally while preserving ordinary retry timing, chaining, addition, and empty-chain validation.",
+  "editable_files": [
+    "tenacity/wait.py"
+  ],
+  "protected_files": [
+    ".scholar/uploads/02-evaluator.py",
+    ".scholar/uploads/03-holdout_evaluator.py"
+  ],
+  "eval_command": [
+    "python3",
+    ".scholar/uploads/02-evaluator.py"
+  ],
+  "holdout_command": [
+    "python3",
+    ".scholar/uploads/03-holdout_evaluator.py"
+  ],
+  "holdout_min_delta": 1.0,
+  "guard_commands": [
+    [
+      "python3",
+      "-m",
+      "py_compile",
+      "tenacity/wait.py",
+      ".scholar/uploads/02-evaluator.py"
+    ],
+    [
+      "python3",
+      "-m",
+      "pytest",
+      "-q",
+      "tests/test_tenacity.py",
+      "-k",
+      "wait_chain or wait_combine"
+    ]
+  ],
+  "metric_key": "metrics.protocol_score",
+  "direction": "maximize",
+  "min_delta": 0.01,
+  "target_score": 1.0,
+  "search_runs": 3,
+  "search_aggregation": "worst",
+  "max_trials": 6,
+  "max_wall_seconds": 240,
+  "validation_runs": 3,
+  "dependencies": [
+    "pytest==8.3.5"
+  ]
+}

@@ -77,6 +77,10 @@ npm run dev
     *   点击 **"执行当前节点 (Execute Node)"** 按钮，系统会唤醒对应的 Agent 开始工作。
     *   **终端日志**：面板下方会以类似命令行的形式，实时打印 Agent 的思考过程、Eino 节点的流转日志，以及 Docker 沙箱中的标准输出（如 `pip install` 的下载进度或代码运行结果）。
 
+### 区域 4：论文主张证据图
+
+论文复现计划完成后，点击末端的 `Build Claim-to-Evidence Graph` 节点，再切换到“证据图”页签。视图按“论文主张 -> 独立判定准则 -> 运行证据”排列，支持缩放、平移、全屏和点击查看详情。绿色表示已验证，黄色表示部分复现，红色表示与证据矛盾，灰色表示不可验证，蓝色表示缺少必要资产。详细判定边界见 [Claim-to-Evidence Graph](claim_evidence_graph.md)。
+
 ---
 
 ## 5. 典型使用场景演示：自动化框架评估
@@ -91,9 +95,26 @@ npm run dev
     *   在日志区，您会看到沙箱内正在自动执行 `git clone` 或 `pip install`。
     *   **最终结果**：沙箱打印出实验对比的输出数据，任务圆满完成。
 
+## 6. AutoResearch：有限自动实验
+
+AutoResearch 适合已经有可运行 baseline 和确定评测命令的仓库。先在仓库中准备 `autoresearch.spec/v1` JSON，声明唯一允许修改的文件、禁止修改的 evaluator/benchmark、评测命令、主指标和预算。内置例子见 [Intent Router AutoResearch](../examples/autoresearch/intent_router/)。
+
+输入示例：
+
+```text
+用 https://github.com/OWNER/REPOSITORY 做 AutoResearch，
+使用 path/to/autoresearch.json，最多 3 次实验，总时长 15 分钟，最终验证 3 次。
+```
+
+生成计划后，前端会显示 8 个节点。执行时先跑 baseline；每个候选只有指标达到规格中的最小提升才会保留，否则自动恢复上一个最佳版本。最后一个验证节点按 `validation_runs` 启动 1 至 5 组新命令进程，逐次核对评测分数和源码哈希，并报告均值、标准差和失败率。未配置 holdout 时界面显示 `search_evaluator_replay`，只表示公开评测器重放；配置模型不可见 holdout 时显示 `hidden_holdout`。重复进程不会自动切换随机种子。
+
+点击 `autoresearch_run` 节点后，“实验”标签会显示 baseline/best、指标趋势、Keep/Reject、耗时、假设、候选文件哈希和命令资源摘要，也可切换全屏。当前没有逐行代码 diff；AutoResearch 只修改后端创建的临时克隆工作区，不会自动向远端仓库提交代码。
+
+详细边界见 [AutoResearch 文档](autoresearch/)。
+
 ---
 
-## 6. 常见问题与排查 (FAQ)
+## 7. 常见问题与排查 (FAQ)
 
 ### Q1: 节点执行失败，提示 "Cannot connect to the Docker daemon"？
 **原因**：Docker Desktop 未启动。

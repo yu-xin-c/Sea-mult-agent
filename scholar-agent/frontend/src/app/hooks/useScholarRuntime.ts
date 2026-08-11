@@ -9,7 +9,17 @@ import { getTaskStyleByStatus } from '../../features/shared/agentVisuals';
 import { createTaskNodeLabel } from '../../features/plan-graph/nodeLabelFactory';
 import { uiText } from '../constants/uiText';
 
-export type ExecutionDisplayMode = 'logs' | 'report' | 'code' | 'plot' | 'report-expanded' | 'plot-expanded';
+export type ExecutionDisplayMode =
+  | 'logs'
+  | 'report'
+  | 'code'
+  | 'plot'
+  | 'evidence'
+  | 'trials'
+  | 'report-expanded'
+  | 'plot-expanded'
+  | 'evidence-expanded'
+  | 'trials-expanded';
 
 interface ExecutionState {
   selectedTask: Task | null;
@@ -28,7 +38,7 @@ type ExecutionAction =
 	| { type: 'set-approval-resolved'; value: boolean }
   | { type: 'reset' };
 
-const initialNodeExecutionState: NodeExecutionState = { logs: '', result: '', code: '', imageBase64: '' };
+const initialNodeExecutionState: NodeExecutionState = { logs: '', result: '', code: '', structuredData: '', imageBase64: '' };
 const reportAgents = new Set(['librarian_agent', 'data_agent', 'research_coding_agent']);
 const isReportAgent = (assignedTo: string) => reportAgents.has(assignedTo);
 
@@ -57,11 +67,21 @@ const updateNodeStatus = (node: Node, status: string): Node => {
 };
 
 const detectBestDisplayMode = (task: Task, state: NodeExecutionState): ExecutionDisplayMode => {
+  if (task.Type === 'claim_evidence_build' && state.structuredData) return 'evidence';
+  if ((task.Type === 'autoresearch_run' || task.Type === 'autoresearch_validate') && (state.structuredData || state.result)) return 'trials';
   if (state.imageBase64) return 'plot';
   if (state.code && !state.result) return 'code';
   if (state.result && isReportAgent(task.AssignedTo)) return 'report';
   return 'logs';
 };
+
+const executionStateFromTask = (task: Task): NodeExecutionState => ({
+  logs: '',
+  result: task.Result || '',
+  code: task.Code || '',
+  structuredData: task.StructuredData || '',
+  imageBase64: task.ImageBase64 || '',
+});
 
 const looksLikePythonCode = (value: string): boolean => {
   const text = value.trim();
@@ -104,10 +124,11 @@ const formatArtifactSummaries = (title: string, rawArtifacts: unknown): string =
   return [`${title}:`, ...lines].join('\n');
 };
 
-const buildDirectExecutionOutputs = (result: string, code: string, imageBase64: string): Record<string, unknown> => {
+const buildDirectExecutionOutputs = (result: string, code: string, structuredData: string, imageBase64: string): Record<string, unknown> => {
   const outputs: Record<string, unknown> = {};
   if (code) outputs.generated_code = code;
   if (result) outputs.result = result;
+  if (structuredData) outputs.structured_data = structuredData;
   if (imageBase64) outputs.image_base64 = imageBase64;
   return outputs;
 };
@@ -115,7 +136,7 @@ const buildDirectExecutionOutputs = (result: string, code: string, imageBase64: 
 const executionReducer = (state: ExecutionState, action: ExecutionAction): ExecutionState => {
   switch (action.type) {
     case 'select-task': {
-      const taskState = action.state ?? initialNodeExecutionState;
+      const taskState = action.state ?? executionStateFromTask(action.task);
       return {
         ...state,
         selectedTask: action.task,
@@ -177,7 +198,7 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
 
   const selectedTaskState = useMemo(() => {
     if (!executionState.selectedTask) return initialNodeExecutionState;
-    return executionState.nodeStates[executionState.selectedTask.ID] ?? initialNodeExecutionState;
+    return executionState.nodeStates[executionState.selectedTask.ID] ?? executionStateFromTask(executionState.selectedTask);
   }, [executionState.selectedTask, executionState.nodeStates]);
 
   const patchNodeState = useCallback((taskId: string, updater: (prev: NodeExecutionState) => NodeExecutionState) => {
@@ -197,10 +218,19 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
           if (!inputs.generated_code && looksLikePythonCode(upstream.result)) inputs.generated_code = upstream.result;
         }
         if (upstream.imageBase64) inputs[`dependency_${dependencyId}_image_base64`] = upstream.imageBase64;
+        if (upstream.structuredData) {
+          inputs[`dependency_${dependencyId}_structured_data`] = upstream.structuredData;
+          const upstreamTask = nodes.find((node) => node.id === dependencyId)?.data.task as Task | undefined;
+          for (const artifactKey of upstreamTask?.OutputArtifacts || []) {
+            if (artifactKey === 'claim_rubric' || artifactKey === 'claim_evidence_graph') {
+              inputs[artifactKey] = upstream.structuredData;
+            }
+          }
+        }
       }
       return inputs;
     },
-    [executionState.nodeStates],
+    [executionState.nodeStates, nodes],
   );
 
   const appendNodeLog = useCallback(
@@ -260,6 +290,7 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
               logs: prev.logs ? `${prev.logs}\n[Plan] task_completed` : '[Plan] task_completed',
               result: String(event.payload?.result || event.payload?.result_summary || prev.result || ''),
               code: String(event.payload?.code || prev.code || ''),
+              structuredData: String(event.payload?.structured_data || prev.structuredData || ''),
               imageBase64: pickImageBase64(event.payload) || prev.imageBase64 || '',
             }));
           }
@@ -314,7 +345,7 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
       const initLog = `[System] 正在唤醒 ${task.AssignedTo}...\n[System] 正在通过 Eino 框架调用 DeepSeek 模型${
         isReportAgent(task.AssignedTo) ? '生成结构化结果' : '生成代码'
       }...\n\n${formatParameterObject('[Params] 本次传入参数', directInputs)}\n`;
-      patchNodeState(task.ID, () => ({ logs: initLog, result: '', code: '', imageBase64: '' }));
+      patchNodeState(task.ID, () => ({ logs: initLog, result: '', code: '', structuredData: '', imageBase64: '' }));
 
       try {
         await executeTaskStream(
@@ -340,23 +371,26 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
             onResult: (rawData) => {
               let finalResult = rawData;
               let generatedCode = '';
+              let structuredData = '';
               let imageBase64 = '';
 
               try {
                 const parsed = JSON.parse(rawData) as ExecuteTaskResultEvent;
                 if (parsed?.result) finalResult = parsed.result;
                 if (parsed?.code) generatedCode = parsed.code;
+                if (parsed?.structured_data) structuredData = parsed.structured_data;
                 imageBase64 = pickImageBase64(parsed);
               } catch {
                 // keep raw fallback
               }
 
-              const directOutputs = buildDirectExecutionOutputs(finalResult, generatedCode, imageBase64);
+              const directOutputs = buildDirectExecutionOutputs(finalResult, generatedCode, structuredData, imageBase64);
 
               patchNodeState(task.ID, (prev) => ({
                 logs: `${prev.logs || ''}\n\n${formatParameterObject('[Params] 将传递给下游的参数', directOutputs)}\n\n[🎉 Agent 思考与执行完毕]`,
                 result: finalResult,
                 code: generatedCode,
+                structuredData,
                 imageBase64,
               }));
 
@@ -379,7 +413,11 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
                 actions: taskActions.length > 0 ? taskActions : undefined,
               });
 
-              if (imageBase64) dispatchExecution({ type: 'set-display-mode', mode: 'plot' });
+              if (task.Type === 'claim_evidence_build' && structuredData) {
+                dispatchExecution({ type: 'set-display-mode', mode: 'evidence' });
+              } else if ((task.Type === 'autoresearch_run' || task.Type === 'autoresearch_validate') && (structuredData || finalResult)) {
+                dispatchExecution({ type: 'set-display-mode', mode: 'trials' });
+              } else if (imageBase64) dispatchExecution({ type: 'set-display-mode', mode: 'plot' });
               else if (isReportAgent(task.AssignedTo)) {
                 dispatchExecution({ type: 'set-display-mode', mode: 'report' });
               }

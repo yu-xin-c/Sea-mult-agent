@@ -1,0 +1,53 @@
+{
+  "counts": {
+    "dev": {
+      "labels": {
+        "Code_Execution": 40,
+        "Framework_Evaluation": 40,
+        "General": 40,
+        "Paper_Reproduction": 40
+      },
+      "total": 160
+    },
+    "test": {
+      "labels": {
+        "Code_Execution": 20,
+        "Framework_Evaluation": 20,
+        "General": 20,
+        "Paper_Reproduction": 20
+      },
+      "total": 80
+    },
+    "train": {
+      "labels": {
+        "Code_Execution": 160,
+        "Framework_Evaluation": 160,
+        "General": 160,
+        "Paper_Reproduction": 160
+      },
+      "total": 640
+    }
+  },
+  "files": {
+    "dev": {
+      "path": "dev.jsonl",
+      "sha256": "f43cae7b0417edf187ef6294d5ebe020213da38a722a307b86a5b576900193c6"
+    },
+    "test": {
+      "path": "test.jsonl",
+      "sha256": "92e3bb8e333b62bd207358cb4e1287dc33ffa9231a9e6a4faa33c5cab176ae18"
+    },
+    "train": {
+      "path": "train.jsonl",
+      "sha256": "fa5ef847da56c7faca06341a95a7d5baa346bed5cf16c782805b373ae6e6f24b"
+    }
+  },
+  "seed": 20260722,
+  "source_test": "/Users/stellarfish/Sea-mult-agent/scholar-agent/docs/intent/benchmarks/2026-04-22_intent_eval_dataset.jsonl",
+  "source_test_sha256": "ea4a8352780e1884257f8c686710d2e014946635bf041372256112d07f61ee62",
+  "split_intersections": {
+    "dev_test": 0,
+    "train_dev": 0,
+    "train_test": 0
+  }
+}

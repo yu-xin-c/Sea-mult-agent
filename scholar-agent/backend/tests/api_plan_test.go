@@ -108,12 +108,12 @@ func TestPlanRoute_PaperReproductionExample(t *testing.T) {
 	if response.Message != "Plan generated successfully" {
 		t.Fatalf("unexpected message: %q", response.Message)
 	}
-	if len(response.Plan.Tasks) != 6 {
-		t.Fatalf("expected 6 paper reproduction tasks, got %d", len(response.Plan.Tasks))
+	if len(response.Plan.Tasks) != 8 {
+		t.Fatalf("expected 8 paper reproduction tasks, got %d", len(response.Plan.Tasks))
 	}
 
 	var librarianCount, coderCount, sandboxCount, dataCount, researchCodingCount int
-	var sawPaperParse, sawRepository, sawPaperCompare bool
+	var sawPaperParse, sawClaimRubric, sawRepository, sawPaperCompare, sawClaimEvidence bool
 	for _, task := range response.Plan.Tasks {
 		switch task.AssignedTo {
 		case "librarian_agent":
@@ -129,15 +129,17 @@ func TestPlanRoute_PaperReproductionExample(t *testing.T) {
 		}
 		name := strings.ToLower(task.Name)
 		sawPaperParse = sawPaperParse || strings.Contains(name, "parse paper") || strings.Contains(task.Name, "解析论文")
+		sawClaimRubric = sawClaimRubric || strings.Contains(name, "claim rubric") || strings.Contains(task.Name, "主张验收")
 		sawRepository = sawRepository || strings.Contains(name, "repository") || strings.Contains(task.Name, "开源仓库")
 		sawPaperCompare = sawPaperCompare || strings.Contains(name, "compare results with paper") || strings.Contains(task.Name, "论文进行对比")
+		sawClaimEvidence = sawClaimEvidence || strings.Contains(name, "claim-to-evidence") || strings.Contains(task.Name, "主张证据")
 	}
 
-	if librarianCount != 1 || coderCount != 1 || sandboxCount != 2 || dataCount != 1 || researchCodingCount != 1 {
+	if librarianCount != 2 || coderCount != 1 || sandboxCount != 2 || dataCount != 2 || researchCodingCount != 1 {
 		t.Fatalf("unexpected task distribution: librarian=%d coder=%d sandbox=%d data=%d research_coding=%d", librarianCount, coderCount, sandboxCount, dataCount, researchCodingCount)
 	}
-	if !sawPaperParse || !sawRepository || !sawPaperCompare {
-		t.Fatalf("paper reproduction plan missing canonical steps: parse=%t repository=%t compare=%t", sawPaperParse, sawRepository, sawPaperCompare)
+	if !sawPaperParse || !sawClaimRubric || !sawRepository || !sawPaperCompare || !sawClaimEvidence {
+		t.Fatalf("paper reproduction plan missing canonical steps: parse=%t rubric=%t repository=%t compare=%t evidence=%t", sawPaperParse, sawClaimRubric, sawRepository, sawPaperCompare, sawClaimEvidence)
 	}
 }
 

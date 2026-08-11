@@ -224,6 +224,46 @@ func TestBuildRuleIntentContextPreservesExplicitSmokeAndPreferredRepository(t *t
 	}
 }
 
+func TestBuildRuleIntentContextRoutesAutoResearchBeforePaperAndCode(t *testing.T) {
+	revision := "47aa3ddf8dc1ebeb7ef4e65f2b4536af44594099"
+	raw := "用 https://github.com/example/research-repo commit " + revision + " 做 AutoResearch 自动实验循环，按 examples/autoresearch/intent_router/autoresearch.json 运行代码和评测"
+	intent := buildRuleIntentContext(raw)
+	if intent.IntentType != "AutoResearch" {
+		t.Fatalf("intent type=%s, want AutoResearch", intent.IntentType)
+	}
+	if intent.Entities["needs_autoresearch"] != true {
+		t.Fatalf("needs_autoresearch=%v", intent.Entities["needs_autoresearch"])
+	}
+	if got := intent.Entities["autoresearch_spec_path"]; got != "examples/autoresearch/intent_router/autoresearch.json" {
+		t.Fatalf("autoresearch_spec_path=%v", got)
+	}
+	if got := intent.Entities["preferred_repo_url"]; got != "https://github.com/example/research-repo" {
+		t.Fatalf("preferred_repo_url=%v", got)
+	}
+	if got := intent.Entities["repository_revision"]; got != revision {
+		t.Fatalf("repository_revision=%v", got)
+	}
+}
+
+func TestDetectIntentTypeRequiresResearchContextForGenericAutoOptimize(t *testing.T) {
+	if got := DetectIntentType("请自动优化这条 SQL 查询"); got == "AutoResearch" {
+		t.Fatalf("generic optimization was incorrectly routed to AutoResearch: %s", got)
+	}
+	if got := DetectIntentType("自动优化这个仓库，每轮按验证指标评测"); got != "AutoResearch" {
+		t.Fatalf("research optimization intent=%s, want AutoResearch", got)
+	}
+}
+
+func TestUploadedAutoResearchSpecDoesNotRerouteAsCustomBenchmark(t *testing.T) {
+	attachments := []map[string]any{{"name": "autoresearch.json"}}
+	if shouldRouteUploadedCustomBenchmark("AutoResearch", "运行 AutoResearch benchmark evaluator", attachments) {
+		t.Fatal("AutoResearch JSON spec was incorrectly treated as a benchmark dataset")
+	}
+	if !shouldRouteUploadedCustomBenchmark("Framework_Evaluation", "用上传 JSON 做 benchmark", attachments) {
+		t.Fatal("ordinary uploaded benchmark JSON should still enter Custom_Benchmark")
+	}
+}
+
 func TestPlanRuntimeRoutesUploadedDatasetToCustomBenchmarkHarness(t *testing.T) {
 	t.Setenv("UPLOAD_ROOT", t.TempDir())
 	owner := "benchmark-owner"

@@ -95,12 +95,13 @@ func (e *RoutedTaskExecutor) ExecuteTask(ctx context.Context, plan *models.PlanG
 			}, nil
 		}
 		return &models.TaskExecutionResult{
-			Status:      runtimeTask.Status,
-			Result:      runtimeTask.Result,
-			Code:        runtimeTask.Code,
-			ImageBase64: runtimeTask.ImageBase64,
-			Error:       runtimeTask.Error,
-			Artifacts:   buildArtifacts(task, runtimeTask),
+			Status:         runtimeTask.Status,
+			Result:         runtimeTask.Result,
+			Code:           runtimeTask.Code,
+			StructuredData: runtimeTask.StructuredData,
+			ImageBase64:    runtimeTask.ImageBase64,
+			Error:          runtimeTask.Error,
+			Artifacts:      buildArtifacts(task, runtimeTask),
 		}, nil
 	}
 	if task.Type == "repo_prepare" {
@@ -112,12 +113,13 @@ func (e *RoutedTaskExecutor) ExecuteTask(ctx context.Context, plan *models.PlanG
 			}, nil
 		}
 		return &models.TaskExecutionResult{
-			Status:      runtimeTask.Status,
-			Result:      runtimeTask.Result,
-			Code:        runtimeTask.Code,
-			ImageBase64: runtimeTask.ImageBase64,
-			Error:       runtimeTask.Error,
-			Artifacts:   buildArtifacts(task, runtimeTask),
+			Status:         runtimeTask.Status,
+			Result:         runtimeTask.Result,
+			Code:           runtimeTask.Code,
+			StructuredData: runtimeTask.StructuredData,
+			ImageBase64:    runtimeTask.ImageBase64,
+			Error:          runtimeTask.Error,
+			Artifacts:      buildArtifacts(task, runtimeTask),
 		}, nil
 	}
 
@@ -139,10 +141,11 @@ func (e *RoutedTaskExecutor) ExecuteTask(ctx context.Context, plan *models.PlanG
 			status = models.StatusFailed
 		}
 		return &models.TaskExecutionResult{
-			Status: status,
-			Result: runtimeTask.Result,
-			Code:   runtimeTask.Code,
-			Error:  chooseNonEmpty(runtimeTask.Error, err.Error()),
+			Status:         status,
+			Result:         runtimeTask.Result,
+			Code:           runtimeTask.Code,
+			StructuredData: runtimeTask.StructuredData,
+			Error:          chooseNonEmpty(runtimeTask.Error, err.Error()),
 		}, nil
 	}
 
@@ -152,12 +155,13 @@ func (e *RoutedTaskExecutor) ExecuteTask(ctx context.Context, plan *models.PlanG
 	}
 
 	return &models.TaskExecutionResult{
-		Status:      status,
-		Result:      runtimeTask.Result,
-		Code:        runtimeTask.Code,
-		ImageBase64: runtimeTask.ImageBase64,
-		Error:       runtimeTask.Error,
-		Artifacts:   buildArtifacts(task, runtimeTask),
+		Status:         status,
+		Result:         runtimeTask.Result,
+		Code:           runtimeTask.Code,
+		StructuredData: runtimeTask.StructuredData,
+		ImageBase64:    runtimeTask.ImageBase64,
+		Error:          runtimeTask.Error,
+		Artifacts:      buildArtifacts(task, runtimeTask),
 	}, nil
 }
 
@@ -329,6 +333,8 @@ func inferArtifactType(key string, runtimeTask *models.Task) string {
 	_ = runtimeTask
 	lowerKey := strings.ToLower(key)
 	switch {
+	case lowerKey == "claim_rubric" || lowerKey == "claim_evidence_graph" || lowerKey == "research_spec" || lowerKey == "research_validation_report" || strings.Contains(lowerKey, "trial_ledger") || strings.Contains(lowerKey, "best_candidate"):
+		return "json"
 	case strings.Contains(lowerKey, "plot") || strings.Contains(lowerKey, "image"):
 		return "image_base64"
 	case strings.Contains(lowerKey, "code"):

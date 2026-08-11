@@ -51,6 +51,8 @@ func (p *Planner) BuildPlan(ctx context.Context, intent models.IntentContext) (*
 	var err error
 	if isCustomDatasetBenchmarkIntent(intent) {
 		nodes = buildCustomDatasetBenchmarkNodes(intent)
+	} else if isAutoResearchIntent(intent) {
+		nodes = buildAutoResearchNodes(intent)
 	} else if p.agent != nil {
 		nodes, err = p.agent.BuildNodes(ctx, intent)
 		if err != nil {
@@ -70,6 +72,8 @@ func (p *Planner) BuildPlan(ctx context.Context, intent models.IntentContext) (*
 			nodes = buildCodeExecutionNodesV2(intent)
 		case "Custom_Benchmark":
 			nodes = buildCustomDatasetBenchmarkNodes(intent)
+		case "AutoResearch":
+			nodes = buildAutoResearchNodes(intent)
 		default:
 			nodes = buildGeneralNodesV2(intent)
 		}
@@ -79,6 +83,12 @@ func (p *Planner) BuildPlan(ctx context.Context, intent models.IntentContext) (*
 	fillInitialStatuses(nodes)
 	plan.Nodes = nodes
 	plan.Edges = edges
+	if isAutoResearchIntent(intent) {
+		inputs := buildAutoResearchInputs(intent)
+		if wallSeconds, ok := inputs["autoresearch_max_wall_seconds"].(int); ok {
+			plan.Budget.MaxDurationSec = wallSeconds + 900
+		}
+	}
 	fillGraphMeta(plan)
 
 	return plan, validatePlanGraph(plan)
@@ -140,18 +150,22 @@ func (p *Planner) GeneratePlan(intent string, intentType string) (*models.Plan, 
 		plan.Tasks[t7.ID] = t7
 	} else if intentType == "Paper_Reproduction" {
 		t1 := createMockTask("Parse Paper & Extract Algorithm Details", "librarian_agent", nil, intent)
+		tRubric := createMockTask("Freeze Hierarchical Claim Rubric", "librarian_agent", []string{t1.ID}, intent)
 		t2 := createMockTask("Find/Clone Open Source Repository", "coder_agent", []string{t1.ID}, intent)
 		t3 := createMockTask("Setup Sandbox Environment (Install Dependencies)", "sandbox_agent", []string{t2.ID}, intent)
 		t4 := createMockTask("Execute Baseline Code", "sandbox_agent", []string{t3.ID}, intent)
 		t5 := createMockTask("Compare Results with Paper", "data_agent", []string{t4.ID}, intent)
 		t6 := createMockTask("Debug/Refine Code if Results Mismatch", "research_coding_agent", []string{t5.ID}, intent)
+		tEvidence := createMockTask("Build Claim-to-Evidence Graph", "data_agent", []string{tRubric.ID, t6.ID}, intent)
 
 		plan.Tasks[t1.ID] = t1
+		plan.Tasks[tRubric.ID] = tRubric
 		plan.Tasks[t2.ID] = t2
 		plan.Tasks[t3.ID] = t3
 		plan.Tasks[t4.ID] = t4
 		plan.Tasks[t5.ID] = t5
 		plan.Tasks[t6.ID] = t6
+		plan.Tasks[tEvidence.ID] = tEvidence
 	} else if intentType == "Code_Execution" {
 		t1 := createMockTask("Generate & Run Code", "coder_agent", nil, intent)
 		t2 := createMockTask("Verify Results", "data_agent", []string{t1.ID}, intent)
@@ -304,10 +318,172 @@ func allowedToolsForAgent(agent string) []string {
 	case "data_agent":
 		return []string{"artifact.read", "metrics.analyze", "report.write"}
 	case "research_coding_agent":
-		return []string{"repository.read", "repository.patch_scoped", "dataset.profile", "workspace.write_scoped", "sandbox.command", "metrics.validate"}
+		return []string{"repository.read", "repository.patch_scoped", "dataset.profile", "workspace.write_scoped", "sandbox.command", "metrics.validate", "research.trial_ledger"}
 	default:
 		return []string{"conversation.respond"}
 	}
+}
+
+func buildAutoResearchNodes(intent models.IntentContext) []*models.TaskNode {
+	context := intent.RawIntent
+	inputs := buildAutoResearchInputs(intent)
+	uploadedFiles := intent.Entities["uploaded_files"]
+
+	discover := newNode(
+		"Retrieve AutoResearch Repository",
+		"repo_discovery",
+		"coder_agent",
+		nil,
+		nil,
+		[]string{"candidate_repositories", "repo_validation_report", "repo_url"},
+		false,
+		context,
+	)
+	discover.Description = "任务目标: 定位用户指定的 AutoResearch 目标仓库 / Retrieve the repository to optimize\n具体要求: 优先采用用户明确提供的 GitHub URL，并输出 candidate_repositories、repo_validation_report、repo_url。\n用户原始意图: " + context
+	discover.Inputs = buildRepoDiscoveryInputs(intent)
+
+	prepare := newNode(
+		"Prepare AutoResearch Workspace",
+		"repo_prepare",
+		"coder_agent",
+		[]string{discover.ID},
+		[]string{"repo_url", "candidate_repositories", "repo_validation_report"},
+		[]string{"workspace_path", "code_file_path", "generated_code", "repo_manifest", "reproduction_mode_report"},
+		false,
+		context,
+	)
+	prepare.Inputs = map[string]any{
+		"requested_reproduction_mode":    "auto",
+		"full_reproduction_requested":    false,
+		"skip_reproduction_smoke_runner": true,
+	}
+	if revision := strings.TrimSpace(stringEntity(intent.Entities, "repository_revision", "")); revision != "" {
+		prepare.Inputs["repository_revision"] = revision
+	}
+	if uploadedFiles != nil {
+		prepare.Inputs["uploaded_files"] = workspaceUploadReferences(uploadedFiles)
+	}
+
+	freeze := newNode(
+		"Freeze AutoResearch Contract",
+		"autoresearch_spec",
+		"research_coding_agent",
+		[]string{prepare.ID},
+		[]string{"workspace_path", "repo_manifest"},
+		[]string{"research_spec", "research_spec_report", "dependency_spec"},
+		false,
+		context,
+	)
+	freeze.Inputs = copyBenchmarkInputs(inputs)
+
+	prepareRuntime := newNode(
+		"Prepare AutoResearch Runtime",
+		"prepare_runtime",
+		"sandbox_agent",
+		[]string{freeze.ID},
+		[]string{"workspace_path", "dependency_spec"},
+		[]string{"runtime_session"},
+		false,
+		context,
+	)
+	install := newNode(
+		"Install AutoResearch Dependencies",
+		"install_dependencies",
+		"sandbox_agent",
+		[]string{prepareRuntime.ID},
+		[]string{"workspace_path", "runtime_session", "dependency_spec"},
+		[]string{"prepared_runtime", "dependency_install_report"},
+		false,
+		context,
+	)
+	run := newNode(
+		"Run Bounded AutoResearch Loop",
+		"autoresearch_run",
+		"research_coding_agent",
+		[]string{install.ID},
+		[]string{"workspace_path", "prepared_runtime", "research_spec"},
+		[]string{"research_trial_ledger", "research_best_candidate", "research_run_report"},
+		false,
+		context,
+	)
+	run.Inputs = copyBenchmarkInputs(inputs)
+	if wallSeconds, ok := inputs["autoresearch_max_wall_seconds"].(int); ok {
+		run.TimeoutSeconds = wallSeconds + 30
+	}
+	validate := newNode(
+		"Validate AutoResearch Candidate",
+		"autoresearch_validate",
+		"research_coding_agent",
+		[]string{run.ID},
+		[]string{"workspace_path", "prepared_runtime", "research_spec", "research_trial_ledger", "research_best_candidate"},
+		[]string{"research_validation_report", "research_best_metrics"},
+		false,
+		context,
+	)
+	validate.RetryLimit = 0
+	report := newNode(
+		"Summarize AutoResearch Evidence",
+		"verify_result",
+		"data_agent",
+		[]string{validate.ID},
+		[]string{"research_spec_report", "research_run_report", "research_trial_ledger", "research_validation_report", "research_best_metrics"},
+		[]string{"evaluation_report"},
+		false,
+		context,
+	)
+	return []*models.TaskNode{discover, prepare, freeze, prepareRuntime, install, run, validate, report}
+}
+
+func isAutoResearchIntent(intent models.IntentContext) bool {
+	if intent.IntentType == "AutoResearch" || boolEntity(intent.Entities, "needs_autoresearch") {
+		return true
+	}
+	normalized := strings.ToLower(intent.RawIntent)
+	if hasAny(normalized, "autoresearch", "auto research", "自主研究", "自动研究", "自动实验", "持续实验", "实验循环") {
+		return true
+	}
+	return strings.Contains(normalized, "自动优化") &&
+		hasAny(normalized, "实验", "试验", "指标", "评测", "仓库", "模型", "repo", "trial", "metric", "benchmark")
+}
+
+func buildAutoResearchInputs(intent models.IntentContext) map[string]any {
+	maxTrials := boundedIntentNumber(intent.RawIntent, []string{
+		`(?i)(?:最多|最大|max(?:imum)?)\s*(\d+)\s*(?:次|轮|个)?\s*(?:试验|实验|trials?|experiments?)`,
+		`(?i)(\d+)\s*(?:次|轮)\s*(?:autoresearch|自动实验|实验循环)`,
+	}, autoResearchPlannerDefaultTrials, 1, autoResearchPlannerMaxTrials)
+	maxWallMinutes := boundedIntentNumber(intent.RawIntent, []string{
+		`(?i)(?:总耗时|总时长|wall(?:[- ]?time)?|预算)\s*(?:不超过|最多|[:：]?)?\s*(\d+)\s*(?:minutes?|分钟)`,
+	}, 15, 1, 60)
+	inputs := map[string]any{
+		"autoresearch_max_trials":       maxTrials,
+		"autoresearch_max_wall_seconds": maxWallMinutes * 60,
+	}
+	if validationRuns, ok := optionalBoundedIntentNumber(intent.RawIntent, []string{
+		`(?i)(?:重复验证|独立复验|重复复验|validation\s+runs?)\s*(?:最多|不超过|[:：=]?)?\s*(\d+)\s*(?:次|轮|runs?)?`,
+		`(?i)(\d+)\s*(?:次|轮|runs?)\s*(?:重复验证|独立复验|重复复验|validation)`,
+	}, 1, 5); ok {
+		inputs["autoresearch_validation_runs"] = validationRuns
+	}
+	if path := autoResearchSpecPath(intent); path != "" {
+		inputs["autoresearch_spec_path"] = path
+	}
+	return inputs
+}
+
+const (
+	autoResearchPlannerDefaultTrials = 3
+	autoResearchPlannerMaxTrials     = 8
+)
+
+func autoResearchSpecPath(intent models.IntentContext) string {
+	if path := strings.TrimSpace(stringEntity(intent.Entities, "autoresearch_spec_path", "")); path != "" {
+		return path
+	}
+	pattern := regexp.MustCompile(`(?i)([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+\.json|autoresearch\.json)`)
+	if match := pattern.FindStringSubmatch(intent.RawIntent); len(match) > 1 {
+		return match[1]
+	}
+	return ""
 }
 
 func buildCustomDatasetBenchmarkNodes(intent models.IntentContext) []*models.TaskNode {
@@ -796,6 +972,16 @@ func buildPaperReproductionNodesV2(intent models.IntentContext) []*models.TaskNo
 	if uploadedFiles, ok := intent.Entities["uploaded_files"]; ok {
 		t1.Inputs["uploaded_files"] = uploadedFiles
 	}
+	claimRubric := newNode(
+		"Freeze Hierarchical Claim Rubric",
+		"claim_rubric_extract",
+		"librarian_agent",
+		[]string{t1.ID},
+		[]string{"parsed_paper"},
+		[]string{"claim_rubric", "claim_rubric_report"},
+		true,
+		context,
+	)
 	t2 := newRepoDiscoveryNode([]string{t1.ID}, context, intent)
 	repoPrepareDependencies := []string{t2.ID}
 	repoPrepareArtifacts := []string{"repo_url", "candidate_repositories", "repo_validation_report"}
@@ -823,7 +1009,7 @@ func buildPaperReproductionNodesV2(intent models.IntentContext) []*models.TaskNo
 	t7 := newNode("Execute And Debug Baseline", "paper_code_execute", "research_coding_agent", []string{t6.ID}, []string{"workspace_path", "code_file_path", "generated_code", "prepared_runtime", "repo_manifest"}, []string{"run_metrics", "paper_debug_report", "paper_patch_manifest"}, false, context)
 	t8 := newNode("Compare With Paper Claims", "paper_compare", "data_agent", []string{t7.ID}, []string{"run_metrics", "paper_debug_report", "parsed_paper", "repo_manifest", "reproduction_mode_report"}, []string{"comparison_report"}, false, context)
 
-	nodes := []*models.TaskNode{t1, t2}
+	nodes := []*models.TaskNode{t1, claimRubric, t2}
 	if ablationDesign != nil {
 		nodes = append(nodes, ablationDesign)
 	}
@@ -849,7 +1035,36 @@ func buildPaperReproductionNodesV2(intent models.IntentContext) []*models.TaskNo
 	if needsPlot {
 		visualize := newNode("Visualize Reproduction Results", "result_visualization", "data_agent", []string{lastID}, []string{lastArtifact}, []string{"result_plot"}, true, context)
 		nodes = append(nodes, visualize)
+		lastID = visualize.ID
 	}
+	evidenceArtifacts := []string{
+		"claim_rubric",
+		"parsed_paper",
+		"repo_manifest",
+		"reproduction_mode_report",
+		"dependency_install_report",
+		"run_metrics",
+		"paper_debug_report",
+		"paper_patch_manifest",
+		"comparison_report",
+	}
+	if needsFix {
+		evidenceArtifacts = append(evidenceArtifacts, "rerun_metrics", "rerun_report", "gap_debug_report", "gap_patch_manifest")
+	}
+	if needsPlot {
+		evidenceArtifacts = append(evidenceArtifacts, "result_plot")
+	}
+	claimEvidence := newNode(
+		"Build Claim-to-Evidence Graph",
+		"claim_evidence_build",
+		"data_agent",
+		[]string{claimRubric.ID, lastID},
+		evidenceArtifacts,
+		[]string{"claim_evidence_graph", "claim_verification_report"},
+		false,
+		context,
+	)
+	nodes = append(nodes, claimEvidence)
 	return nodes
 }
 
@@ -874,6 +1089,13 @@ func buildAblationDesignInputs(intent models.IntentContext) map[string]any {
 }
 
 func boundedIntentNumber(raw string, patterns []string, fallback, minimum, maximum int) int {
+	if value, ok := optionalBoundedIntentNumber(raw, patterns, minimum, maximum); ok {
+		return value
+	}
+	return fallback
+}
+
+func optionalBoundedIntentNumber(raw string, patterns []string, minimum, maximum int) (int, bool) {
 	for _, pattern := range patterns {
 		matches := regexp.MustCompile(pattern).FindStringSubmatch(raw)
 		if len(matches) < 2 {
@@ -884,14 +1106,14 @@ func boundedIntentNumber(raw string, patterns []string, fallback, minimum, maxim
 			continue
 		}
 		if value < minimum {
-			return minimum
+			return minimum, true
 		}
 		if value > maximum {
-			return maximum
+			return maximum, true
 		}
-		return value
+		return value, true
 	}
-	return fallback
+	return 0, false
 }
 
 func buildPaperReproductionInputs(intent models.IntentContext) map[string]any {
@@ -1204,6 +1426,14 @@ func exactTaskNameTranslations() map[string]string {
 		"Execute Custom Dataset Benchmark":                              "执行自定义数据评测",
 		"Validate Benchmark Evidence":                                   "校验评测证据",
 		"Generate Trusted Benchmark Report":                             "生成可信评测报告",
+		"Retrieve AutoResearch Repository":                              "获取 AutoResearch 目标仓库",
+		"Prepare AutoResearch Workspace":                                "准备 AutoResearch 工作区",
+		"Freeze AutoResearch Contract":                                  "冻结 AutoResearch 研究契约",
+		"Prepare AutoResearch Runtime":                                  "准备 AutoResearch 运行环境",
+		"Install AutoResearch Dependencies":                             "安装 AutoResearch 依赖",
+		"Run Bounded AutoResearch Loop":                                 "运行受限 AutoResearch 循环",
+		"Validate AutoResearch Candidate":                               "验收 AutoResearch 候选",
+		"Summarize AutoResearch Evidence":                               "汇总 AutoResearch 证据",
 		"Research Candidate Frameworks":                                 "调研候选框架",
 		"Generate Selection Recommendation":                             "生成选型建议",
 		"Generate Benchmark Report":                                     "生成基准测试报告",
@@ -1216,6 +1446,8 @@ func exactTaskNameTranslations() map[string]string {
 		"Execute Baseline":                                              "执行基线实验",
 		"Execute And Debug Baseline":                                    "执行并调试基线实验",
 		"Compare With Paper Claims":                                     "对比论文声明结果",
+		"Freeze Hierarchical Claim Rubric":                              "冻结分层主张验收标准",
+		"Build Claim-to-Evidence Graph":                                 "构建主张证据图",
 		"Visualize Reproduction Results":                                "可视化复现实验结果",
 		"Fix Gaps And Rerun":                                            "修复问题并重新运行",
 		"Debug Result Gap And Rerun":                                    "调试结果差异并重新运行",
@@ -1310,7 +1542,7 @@ func validateAgentPlannedNodes(intent models.IntentContext, nodes []*models.Task
 }
 
 func validateCriticalNodeContracts(intent models.IntentContext, nodes []*models.TaskNode) error {
-	if intent.IntentType != "Code_Execution" && intent.IntentType != "Framework_Evaluation" && intent.IntentType != "Paper_Reproduction" {
+	if intent.IntentType != "Code_Execution" && intent.IntentType != "Framework_Evaluation" && intent.IntentType != "Paper_Reproduction" && intent.IntentType != "AutoResearch" {
 		return nil
 	}
 
@@ -1320,8 +1552,13 @@ func validateCriticalNodeContracts(intent models.IntentContext, nodes []*models.
 	hasInstallDependencies := false
 	hasExecuteCode := false
 	hasPaperParse := false
+	hasClaimRubric := false
+	hasClaimEvidence := false
 	hasRepoDiscovery := false
 	hasRepoPrepare := false
+	hasAutoResearchSpec := false
+	hasAutoResearchRun := false
+	hasAutoResearchValidation := false
 
 	for _, node := range nodes {
 		if node == nil {
@@ -1342,6 +1579,25 @@ func validateCriticalNodeContracts(intent models.IntentContext, nodes []*models.
 			if !containsArtifact(node.OutputArtifacts, "parsed_paper") {
 				return fmt.Errorf("paper_parse node %q must output parsed_paper", node.Name)
 			}
+		case "claim_rubric_extract":
+			hasClaimRubric = true
+			if node.AssignedTo != "librarian_agent" {
+				return fmt.Errorf("claim_rubric_extract node %q must be assigned to librarian_agent", node.Name)
+			}
+			if !containsArtifact(node.RequiredArtifacts, "parsed_paper") || !containsArtifact(node.OutputArtifacts, "claim_rubric") {
+				return fmt.Errorf("claim_rubric_extract node %q must consume parsed_paper and output claim_rubric", node.Name)
+			}
+		case "claim_evidence_build":
+			hasClaimEvidence = true
+			if node.AssignedTo != "data_agent" {
+				return fmt.Errorf("claim_evidence_build node %q must be assigned to data_agent", node.Name)
+			}
+			if !containsArtifact(node.RequiredArtifacts, "claim_rubric") || !containsArtifact(node.RequiredArtifacts, "run_metrics") || !containsArtifact(node.RequiredArtifacts, "comparison_report") {
+				return fmt.Errorf("claim_evidence_build node %q must consume claim_rubric, run_metrics, and comparison_report", node.Name)
+			}
+			if !containsArtifact(node.OutputArtifacts, "claim_evidence_graph") || !containsArtifact(node.OutputArtifacts, "claim_verification_report") {
+				return fmt.Errorf("claim_evidence_build node %q must output claim_evidence_graph and claim_verification_report", node.Name)
+			}
 		case "ablation_design":
 			if node.AssignedTo != "data_agent" {
 				return fmt.Errorf("ablation_design node %q must be assigned to data_agent", node.Name)
@@ -1354,7 +1610,7 @@ func validateCriticalNodeContracts(intent models.IntentContext, nodes []*models.
 			if node.AssignedTo != "coder_agent" {
 				return fmt.Errorf("repo_discovery node %q must be assigned to coder_agent", node.Name)
 			}
-			if !containsArtifact(node.RequiredArtifacts, "parsed_paper") {
+			if intent.IntentType != "AutoResearch" && !containsArtifact(node.RequiredArtifacts, "parsed_paper") {
 				return fmt.Errorf("repo_discovery node %q must require parsed_paper", node.Name)
 			}
 			if !containsArtifact(node.OutputArtifacts, "candidate_repositories") {
@@ -1423,6 +1679,33 @@ func validateCriticalNodeContracts(intent models.IntentContext, nodes []*models.
 			if !containsArtifact(node.OutputArtifacts, "run_metrics") || !containsArtifact(node.OutputArtifacts, "paper_debug_report") {
 				return fmt.Errorf("paper_code_execute node %q must output run_metrics and paper_debug_report", node.Name)
 			}
+		case "autoresearch_spec":
+			hasAutoResearchSpec = true
+			if node.AssignedTo != "research_coding_agent" {
+				return fmt.Errorf("autoresearch_spec node %q must be assigned to research_coding_agent", node.Name)
+			}
+			if !containsArtifact(node.RequiredArtifacts, "workspace_path") || !containsArtifact(node.OutputArtifacts, "research_spec") || !containsArtifact(node.OutputArtifacts, "dependency_spec") {
+				return fmt.Errorf("autoresearch_spec node %q must consume workspace_path and output research_spec plus dependency_spec", node.Name)
+			}
+		case "autoresearch_run":
+			hasAutoResearchRun = true
+			if node.AssignedTo != "research_coding_agent" {
+				return fmt.Errorf("autoresearch_run node %q must be assigned to research_coding_agent", node.Name)
+			}
+			if !containsArtifact(node.RequiredArtifacts, "workspace_path") || !containsArtifact(node.RequiredArtifacts, "prepared_runtime") || !containsArtifact(node.RequiredArtifacts, "research_spec") {
+				return fmt.Errorf("autoresearch_run node %q is missing frozen workspace/runtime/spec inputs", node.Name)
+			}
+			if !containsArtifact(node.OutputArtifacts, "research_trial_ledger") || !containsArtifact(node.OutputArtifacts, "research_best_candidate") {
+				return fmt.Errorf("autoresearch_run node %q must output a trial ledger and best candidate", node.Name)
+			}
+		case "autoresearch_validate":
+			hasAutoResearchValidation = true
+			if node.AssignedTo != "research_coding_agent" {
+				return fmt.Errorf("autoresearch_validate node %q must be assigned to research_coding_agent", node.Name)
+			}
+			if !containsArtifact(node.RequiredArtifacts, "research_spec") || !containsArtifact(node.RequiredArtifacts, "research_trial_ledger") || !containsArtifact(node.OutputArtifacts, "research_validation_report") {
+				return fmt.Errorf("autoresearch_validate node %q must consume frozen evidence and output validation", node.Name)
+			}
 		}
 	}
 
@@ -1432,8 +1715,13 @@ func validateCriticalNodeContracts(intent models.IntentContext, nodes []*models.
 		}
 	}
 	if intent.IntentType == "Paper_Reproduction" {
-		if !hasPaperParse || !hasRepoDiscovery || !hasRepoPrepare || !hasResolveDependencies || !hasPrepareRuntime || !hasInstallDependencies || !hasExecuteCode {
+		if !hasPaperParse || !hasClaimRubric || !hasClaimEvidence || !hasRepoDiscovery || !hasRepoPrepare || !hasResolveDependencies || !hasPrepareRuntime || !hasInstallDependencies || !hasExecuteCode {
 			return fmt.Errorf("paper reproduction plan is missing one or more required canonical nodes")
+		}
+	}
+	if intent.IntentType == "AutoResearch" {
+		if !hasRepoDiscovery || !hasRepoPrepare || !hasAutoResearchSpec || !hasPrepareRuntime || !hasInstallDependencies || !hasAutoResearchRun || !hasAutoResearchValidation {
+			return fmt.Errorf("AutoResearch plan is missing one or more required canonical nodes")
 		}
 	}
 

@@ -1,0 +1,6 @@
+.gocache/
+bin/
+intent-eval/
+data/
+*.log
+coverage*

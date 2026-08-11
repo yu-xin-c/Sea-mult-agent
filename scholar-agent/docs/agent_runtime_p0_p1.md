@@ -15,12 +15,16 @@
 | P0 | API 与沙箱认证 | 可选静态 Bearer token；沙箱内部 API 单独鉴权 |
 | P0 | Web 安全边界 | CORS allowlist、PDF SSRF 防护、响应类型与大小限制 |
 | P0 | 沙箱资源限制 | CPU、内存、PID、capability、网络、镜像与挂载根限制 |
+| P0 | AutoResearch 冻结研究契约 | evaluator、benchmark、命令、指标、方向、阈值和预算在候选前固定 |
+| P0 | AutoResearch 回滚与完整性 | 退化候选恢复最佳快照；保护文件哈希变化立即终止并恢复 |
 | P1 | 运行预算 | 限制总任务尝试次数和计划执行时长 |
 | P1 | 人工审批 | 全量复现或配置要求时，必须审批后执行 |
 | P1 | 类型化任务契约 | 版本化输入/输出 Artifact 与允许工具集合 |
 | P1 | 追踪上下文 | 计划 `trace_id`，任务事件 `span_id`、`execution_id` |
 | P1 | 前端治理入口 | 支持“审批并运行”、执行中取消和失败节点重试 |
 | P1 | 回归评测 | 固定数据集验证意图路由、DAG 结构与治理元数据 |
+| P1 | 试验证据账本 | TrialLedger 记录补丁哈希、命令、指标、Keep/Reject 和停止原因 |
+| P1 | 最佳候选最终验证 | 搜索后按声明次数执行公开 evaluator 重放或隐藏 holdout，核对 spec/ledger/文件哈希，并输出统计量和资源摘要 |
 | P1 | CI | GitHub Actions 执行 Go、前端与离线示例测试 |
 
 ## 运行时状态
@@ -148,6 +152,20 @@ Compose 仅将沙箱端口绑定到 `127.0.0.1:8082`。注意：沙箱服务仍�
 
 这套契约目前由 Planner 生成并随状态持久化，是后续工具授权、schema 校验和 Agent 兼容性检查的基础。
 
+### AutoResearch 运行契约
+
+AutoResearch 在通用 `TaskContract` 之上增加三个版本化数据结构：
+
+```text
+autoresearch.spec/v1
+autoresearch.ledger/v1
+autoresearch.validation/v1
+```
+
+它们分别冻结研究目标与权限、记录每轮实验事实、验证最终最佳候选。候选模型不能更新这些控制字段，也不能直接写文件；Go harness 负责白名单、原子写入、哈希、Keep/Reject 和回滚。默认 3 个 Trial，硬上限 8；默认搜索 900 秒，硬上限 3600 秒。
+
+计划预算包含仓库克隆和依赖安装时间，研究循环自身还使用独立 context deadline。两层预算任一到期都会停止产生新候选。详情见 [AutoResearch 文档](autoresearch/)。
+
 ## 验证
 
 ```bash
@@ -160,7 +178,7 @@ make build
 docker compose config
 ```
 
-关键回归覆盖：文件存储重开、崩溃恢复、旧租约结果丢弃、审批和所有权、CORS、SSRF、沙箱 token、镜像 allowlist、挂载根和资源参数。
+关键回归覆盖：文件存储重开、崩溃恢复、旧租约结果丢弃、审批和所有权、CORS、SSRF、沙箱 token、镜像 allowlist、挂载根、资源参数，以及 AutoResearch Keep/Reject、退化回滚、保护文件恢复、重复复验、指标漂移和资源摘要校验。
 
 ## 尚未覆盖
 

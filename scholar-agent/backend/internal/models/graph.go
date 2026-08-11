@@ -26,6 +26,7 @@ type TaskNode struct {
 	Inputs            map[string]any `json:"inputs,omitempty"`
 	Result            string         `json:"result,omitempty"`
 	Code              string         `json:"code,omitempty"`
+	StructuredData    string         `json:"structured_data,omitempty"`
 	ImageBase64       string         `json:"image_base64,omitempty"`
 	Error             string         `json:"error,omitempty"`
 	Metadata          map[string]any `json:"metadata,omitempty"`
@@ -75,11 +76,12 @@ type PlanGraph struct {
 
 // TaskExecutionResult is the normalized scheduler-facing result of one task execution.
 type TaskExecutionResult struct {
-	Status      TaskStatus `json:"status"`
-	Result      string     `json:"result,omitempty"`
-	Code        string     `json:"code,omitempty"`
-	ImageBase64 string     `json:"image_base64,omitempty"`
-	Error       string     `json:"error,omitempty"`
-	Logs        []string   `json:"logs,omitempty"`
-	Artifacts   []Artifact `json:"artifacts,omitempty"`
+	Status         TaskStatus `json:"status"`
+	Result         string     `json:"result,omitempty"`
+	Code           string     `json:"code,omitempty"`
+	StructuredData string     `json:"structured_data,omitempty"`
+	ImageBase64    string     `json:"image_base64,omitempty"`
+	Error          string     `json:"error,omitempty"`
+	Logs           []string   `json:"logs,omitempty"`
+	Artifacts      []Artifact `json:"artifacts,omitempty"`
 }

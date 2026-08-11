@@ -1,2 +1,4 @@
 config.toml
 tmp-realtest-logs/
+__pycache__/
+*.py[cod]

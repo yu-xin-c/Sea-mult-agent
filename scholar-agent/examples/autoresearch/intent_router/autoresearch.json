@@ -1,0 +1,31 @@
+{
+  "version": "autoresearch.spec/v1",
+  "name": "intent-router-lightweight",
+  "objective": "Improve macro F1 for the six-way ScholarAgent intent router without changing the frozen evaluator or benchmark.",
+  "editable_files": [
+    "examples/autoresearch/intent_router/candidate.py"
+  ],
+  "protected_files": [
+    "examples/autoresearch/intent_router/evaluator.py",
+    "examples/autoresearch/intent_router/benchmark.json"
+  ],
+  "eval_command": [
+    "python3",
+    "examples/autoresearch/intent_router/evaluator.py"
+  ],
+  "guard_commands": [
+    [
+      "python3",
+      "-m",
+      "py_compile",
+      "examples/autoresearch/intent_router/candidate.py"
+    ]
+  ],
+  "metric_key": "metrics.macro_f1",
+  "direction": "maximize",
+  "min_delta": 0.001,
+  "max_trials": 3,
+  "max_wall_seconds": 300,
+  "validation_runs": 3,
+  "dependencies": []
+}

@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"scholar-agent-backend/internal/agent"
@@ -42,8 +43,9 @@ type ChatPayload struct {
 }
 
 var (
-	routePaperArxivIDRe  = regexp.MustCompile(`\b\d{4}\.\d{4,5}\b`)
-	routeGitHubRepoURLRe = regexp.MustCompile(`https?://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?`)
+	routePaperArxivIDRe       = regexp.MustCompile(`\b\d{4}\.\d{4,5}\b`)
+	routeGitHubRepoURLRe      = regexp.MustCompile(`https?://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?`)
+	routeRepositoryRevisionRe = regexp.MustCompile(`(?i)(?:commit|revision|提交|版本)\s*(?:[:：=]|为|是)?\s*([a-f0-9]{64}|[a-f0-9]{40})\b`)
 )
 
 // CORSMiddleware allows frontend to communicate with backend
@@ -346,10 +348,11 @@ func SetupRoutes(r *gin.Engine) {
 								task.Result = task.Result[:50000] + "\n...[Truncated]..."
 							}
 							c.SSEvent("result", gin.H{
-								"result":        task.Result,
-								"code":          task.Code,
-								"image_base_64": task.ImageBase64,
-								"outputs":       buildExecuteOutputs(task),
+								"result":          task.Result,
+								"code":            task.Code,
+								"structured_data": task.StructuredData,
+								"image_base_64":   task.ImageBase64,
+								"outputs":         buildExecuteOutputs(task),
 							})
 						}
 						return false // Close stream
@@ -400,12 +403,20 @@ func RegisterPlanRoute(apiGroup *gin.RouterGroup, p *planner.Planner) {
 }
 
 func buildServiceHealth(ctx context.Context, sandboxURL string) gin.H {
+	gitPath, gitErr := exec.LookPath("git")
+	repositoryHealth := gin.H{"ok": gitErr == nil}
+	if gitErr == nil {
+		repositoryHealth["git_path"] = gitPath
+	} else {
+		repositoryHealth["message"] = "git is unavailable; external repository workflows cannot run"
+	}
 	health := gin.H{
-		"ok": true,
+		"ok": gitErr == nil,
 		"backend": gin.H{
 			"ok":      true,
 			"message": "backend is reachable",
 		},
+		"repository": repositoryHealth,
 		"sandbox": gin.H{
 			"ok":      false,
 			"url":     sandboxURL,
@@ -448,6 +459,16 @@ func buildServiceHealth(ctx context.Context, sandboxURL string) gin.H {
 
 // detectIntentType 根据用户意图文本判断任务类型
 func DetectIntentType(intent string) string {
+	// AutoResearch 同时会出现“代码、实验、评测”等通用词，必须在论文复现和代码执行前识别。
+	autoResearchKeywords := []string{
+		"autoresearch", "auto research", "自主研究", "自动研究", "自动实验", "持续实验", "实验循环", "keep/reject",
+	}
+	autoResearchContext := []string{"实验", "试验", "指标", "评测", "仓库", "模型", "repo", "trial", "metric", "benchmark"}
+	if containsAny(intent, autoResearchKeywords) ||
+		(containsAny(intent, []string{"自动优化"}) && containsAny(intent, autoResearchContext)) {
+		return "AutoResearch"
+	}
+
 	// 论文复现类需要优先于“对比/评估”类判断。
 	// 论文复现需求常包含“与论文指标对比”等词，如果先命中“对比”会被误路由到框架评测。
 	reproKeywords := []string{"复现", "reproduce", "replicate", "论文", "paper", "papers with code", "arxiv", "实现算法"}
@@ -500,6 +521,9 @@ func buildExecuteOutputs(task *models.Task) map[string]any {
 	}
 	if strings.TrimSpace(task.Code) != "" {
 		outputs["generated_code"] = task.Code
+	}
+	if strings.TrimSpace(task.StructuredData) != "" {
+		outputs["structured_data"] = task.StructuredData
 	}
 	if strings.TrimSpace(task.ImageBase64) != "" {
 		outputs["image_base64"] = task.ImageBase64

@@ -1,0 +1,51 @@
+{
+  "version": "autoresearch.spec/v1",
+  "name": "graphrag-hasher-robustness",
+  "objective": "Make hash_data canonicalize nested heterogeneous mapping keys while preserving ordinary YAML input, arbitrary YAML-serializable object state, aliases, and recursive container behavior.",
+  "editable_files": [
+    "packages/graphrag-common/graphrag_common/hasher/hasher.py"
+  ],
+  "protected_files": [
+    ".scholar/uploads/02-evaluator.py",
+    ".scholar/uploads/03-holdout_evaluator.py"
+  ],
+  "eval_command": [
+    "python3",
+    ".scholar/uploads/02-evaluator.py"
+  ],
+  "holdout_command": [
+    "python3",
+    ".scholar/uploads/03-holdout_evaluator.py"
+  ],
+  "holdout_min_delta": 0.75,
+  "guard_commands": [
+    [
+      "python3",
+      "-m",
+      "py_compile",
+      "packages/graphrag-common/graphrag_common/hasher/hasher.py",
+      ".scholar/uploads/02-evaluator.py"
+    ],
+    [
+      "python3",
+      "-m",
+      "pytest",
+      "-q",
+      "-c",
+      "/dev/null",
+      "-o",
+      "pythonpath=/workspace/packages/graphrag-common",
+      "tests/unit/hasher/test_hasher.py"
+    ]
+  ],
+  "metric_key": "metrics.robustness_score",
+  "direction": "maximize",
+  "min_delta": 0.01,
+  "max_trials": 8,
+  "max_wall_seconds": 300,
+  "validation_runs": 3,
+  "dependencies": [
+    "PyYAML==6.0.2",
+    "pytest==8.3.5"
+  ]
+}

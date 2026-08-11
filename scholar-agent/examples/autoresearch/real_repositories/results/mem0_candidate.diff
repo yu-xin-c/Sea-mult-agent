@@ -1,0 +1,39 @@
+diff --git a/mem0/utils/scoring.py b/mem0/utils/scoring.py
+index e85a9cb..88f366a 100644
+--- a/mem0/utils/scoring.py
++++ b/mem0/utils/scoring.py
+@@ -51,7 +51,13 @@ def normalize_bm25(raw_score: float, midpoint: float, steepness: float) -> float
+     Returns:
+         Normalized score in range [0, 1].
+     """
+-    return 1.0 / (1.0 + math.exp(-steepness * (raw_score - midpoint)))
++    exponent = -steepness * (raw_score - midpoint)
++    # Clip to avoid overflow/underflow in math.exp for extreme values.
++    if exponent > 700:
++        return 0.0
++    if exponent < -700:
++        return 1.0
++    return 1.0 / (1.0 + math.exp(exponent))
+
+
+ ENTITY_BOOST_WEIGHT = 0.5
+@@ -91,6 +97,10 @@ def score_and_rank(
+     Returns:
+         List of scored result dicts sorted by combined score descending.
+     """
++    # Invalid top_k should yield no results.
++    if not isinstance(top_k, int) or top_k <= 0:
++        return []
++
+     has_bm25 = bool(bm25_scores)
+     has_entity = bool(entity_boosts)
+
+@@ -108,6 +118,9 @@ def score_and_rank(
+             continue
+
+         semantic_score = result.get("score") or 0.0
++        # Exclude non-finite semantic scores.
++        if not math.isfinite(semantic_score):
++            continue
+         if semantic_score < threshold:
+             continue

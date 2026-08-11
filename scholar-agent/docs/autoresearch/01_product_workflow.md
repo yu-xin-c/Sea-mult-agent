@@ -1,0 +1,77 @@
+# AutoResearch 产品能力与工作流
+
+## 1. 解决的问题
+
+通用 Agent 通常在一次调用中读代码、给出修改并声称完成。科研优化还需要回答四个问题：评测标准是否在搜索前固定、退化修改是否会被恢复、每个结论能否回到真实运行证据、最终结果能否在公开重放或隐藏 holdout 上重复验证。
+
+ScholarAgent 的 AutoResearch 把这类请求转换成一个有上限的实验循环：先重复测量 baseline，再由模型提出一个小候选；Go harness 使用冻结命令运行，只有聚合主指标达到最小提升才保留，否则恢复上一个最佳版本。Keep 候选达到声明目标后确定性停止，随后运行 1 至 5 次最终验证，并明确标记为公开 evaluator 重放或模型不可见 holdout。
+
+## 2. 项目级创新点
+
+这里的“创新”指项目相对通用 Agent 新增的工程能力，不声称这些思想在学术上首次出现。
+
+| 模块 | 新增能力 | 与一次性 Coding Agent 的差别 |
+|---|---|---|
+| 研究契约 | 搜索前冻结可编辑文件、保护文件、命令、指标、方向和预算 | 模型不能边跑边改目标 |
+| 候选搜索 | 一轮只提交最多 3 个已有白名单文件的完整替换 | 修改范围由宿主代码执行，不由模型自行决定 |
+| 决策 | 主指标达到 `min_delta` 才 Keep | “代码能跑”不等于“研究结果更好” |
+| 回滚 | 失败、退化或非法候选恢复上一个最佳文件 | 搜索过程中始终保留已知最佳状态 |
+| 完整性防线 | evaluator、benchmark 和 spec 纳入 SHA-256 保护集 | 可发现评分规则与声明数据的持久篡改，降低虚假提升风险 |
+| 试验账本 | 每轮记录假设、补丁前后哈希、命令、输出、指标、决策和资源摘要 | 最终结论可以追溯到每一次真实执行及其成本 |
+| 重复最终验证 | 搜索结束后按 `validation_runs` 重跑 guard 和验证命令；模式区分公开重放与隐藏 holdout | 单次偶然输出不能直接成为最终结果，公开满分也不自动等于隐藏泛化 |
+| 仓库适配 | 完整 SHA 精确 checkout、同 SHA 归档回退、隔离的本地 Git cache clone | 弱网络和缓存命中不会改变请求版本或复用上一次可变工作区 |
+| 运行时适配 | 从根 `pyproject.toml` 结构化读取 `requires-python`，只向上选择 Python 镜像 | 不等到 import 失败后才猜版本，也不会降级显式更高镜像 |
+| 产品编排 | AutoResearch 是一条固定 DAG，并复用上传、仓库、沙箱、SSE 和 Artifact | 不是另起一个不可观察的后台脚本 |
+
+## 3. 8 节点 DAG
+
+```mermaid
+flowchart LR
+    R["获取目标仓库"] --> W["准备临时工作区"]
+    W --> S["冻结 ResearchSpec"]
+    S --> E["创建运行时"]
+    E --> I["安装规格声明的依赖"]
+    I --> L["Baseline + Keep/Reject 循环"]
+    L --> V["重复验证最佳候选"]
+    V --> P["汇总证据报告"]
+```
+
+关键节点使用确定性模板生成。即使配置了 LLM Planner，`AutoResearch` 也不会让模型临时改写这条安全关键拓扑。
+
+## 4. 用户入口
+
+仓库中需要存在 `autoresearch.json`，也可以上传一个 `autoresearch.spec/v1` JSON，或在指令中明确相对路径：
+
+```text
+用 https://github.com/OWNER/REPOSITORY 做 AutoResearch，
+使用 path/to/autoresearch.json，最多 3 次实验，总时长 15 分钟，最终验证 3 次。
+```
+
+当前规则意图模块会在论文、Benchmark 和代码关键词之前识别 `AutoResearch`、`自动实验`、`持续实验`、`自主研究`、`实验循环` 等明确表达。较宽泛的“自动优化”只有同时出现实验、指标、评测、仓库或模型上下文时才进入该流程。
+
+## 5. 已实现和未实现
+
+| 能力 | 状态 |
+|---|---|
+| 固定 DAG、预算和任务契约 | 已实现 |
+| 仓库内 spec 或上传 spec | 已实现 |
+| GitHub 固定 commit、归档回退与缓存隔离 | 已实现；非 GitHub 仓库仍依赖标准 Git clone |
+| baseline/候选重复测量与 worst 聚合 | 已实现；尚未自动注入不同随机 seed |
+| Keep 后达到目标分数确定性停止 | 已实现；目标必须由任务规格预声明 |
+| 根 `pyproject.toml` Python 版本向上适配 | 已实现；复杂 monorepo/Poetry/setup.py 约束仍需扩展 |
+| baseline、候选、Keep/Reject、回滚 | 已实现 |
+| evaluator/spec/data 哈希保护 | 已实现 |
+| TrialLedger、公开重放/隐藏 holdout 与命令资源摘要 | 已实现 |
+| 前端展示 DAG、日志和通用 Artifact | 复用现有界面，已实现 |
+| Trial 指标趋势、Keep/Reject、耗时和修改摘要 | 节点“实验”标签与全屏视图，已实现 |
+| 逐行代码 diff 对比 | 尚未实现；当前展示文件、原因和前后 SHA-256 摘要 |
+| 自动生成未经用户确认的评测规则 | 未实现，P0 要求显式 spec |
+| 模型上下文不可见 holdout | 已实现；尚不是独立服务级强隔离 |
+| 机密管理和强隔离多租户 | 未实现 |
+| 自动提交或推送最佳代码到远端仓库 | 未实现 |
+
+P0 的产品原则是先保证“有限、可回滚、可审计”，再扩大搜索策略和 GPU 规模。
+
+重复进程验证不等于多随机种子评测，公开 evaluator 重放也不等于隐藏测试；具体字段、统计规则、真实运行记录和边界见[重复验证与执行资源证据](07_repeated_validation_and_resource_evidence.md)。
+
+真实 rank-bm25、Tenacity、LightRAG、GraphRAG 执行及由此发现的架构缺陷见[真实外部仓库实验](08_real_repository_experiments.md)。

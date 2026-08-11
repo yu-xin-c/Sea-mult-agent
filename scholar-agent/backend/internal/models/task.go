@@ -41,6 +41,7 @@ type Task struct {
 	Inputs            map[string]any
 	Result            string // Output of the task
 	Code              string // Generated code for the task
+	StructuredData    string // Machine-readable JSON produced by structured tasks
 	ImageBase64       string // Base64 encoded image if the task generated a plot
 	Error             string // Error message if failed
 	Metadata          map[string]any

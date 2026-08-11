@@ -1,14 +1,16 @@
 import type { RefObject } from 'react';
-import { Code, Eye, FileText, Loader2, Maximize2, Play, TerminalSquare, X } from 'lucide-react';
+import { ChartNoAxesCombined, Code, Eye, FileText, FlaskConical, GitBranch, Loader2, Maximize2, Play, TerminalSquare, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import type { ExecutionDisplayMode } from '../../app/hooks/useScholarRuntime';
 import type { Task } from '../../contracts/api';
+import { AutoResearchTrialView } from '../autoresearch/AutoResearchTrialView';
+import { ClaimEvidenceGraphView } from '../claim-evidence/ClaimEvidenceGraphView';
 import { getAgentIcon } from '../shared/agentVisuals';
 
-type CompactMode = Exclude<ExecutionDisplayMode, 'report-expanded' | 'plot-expanded'>;
+type CompactMode = Exclude<ExecutionDisplayMode, 'report-expanded' | 'plot-expanded' | 'evidence-expanded' | 'trials-expanded'>;
 
 interface ExecutionSidebarProps {
   selectedTask: Task;
@@ -18,6 +20,7 @@ interface ExecutionSidebarProps {
   executionLogs: string;
   executionResult: string;
   executionCode: string;
+  executionStructuredData: string;
   executionImage: string;
   logsEndRef: RefObject<HTMLDivElement | null>;
   onClose: () => void;
@@ -28,6 +31,8 @@ interface ExecutionSidebarProps {
 const resolveCompactMode = (displayMode: ExecutionDisplayMode): CompactMode => {
   if (displayMode === 'report-expanded') return 'report';
   if (displayMode === 'plot-expanded') return 'plot';
+  if (displayMode === 'evidence-expanded') return 'evidence';
+  if (displayMode === 'trials-expanded') return 'trials';
   return displayMode;
 };
 
@@ -42,6 +47,7 @@ export function ExecutionSidebar(props: ExecutionSidebarProps) {
     executionLogs,
     executionResult,
     executionCode,
+    executionStructuredData,
     executionImage,
     logsEndRef,
     onClose,
@@ -50,7 +56,7 @@ export function ExecutionSidebar(props: ExecutionSidebarProps) {
   } = props;
 
   const activeMode = resolveCompactMode(displayMode);
-  const isExpanded = displayMode === 'report-expanded' || displayMode === 'plot-expanded';
+  const isExpanded = displayMode.endsWith('-expanded');
 
   return (
     <div
@@ -59,7 +65,11 @@ export function ExecutionSidebar(props: ExecutionSidebarProps) {
         isExpanded ? 'absolute inset-0' : 'relative'
       }`}
     >
-      {displayMode === 'plot-expanded' ? (
+      {displayMode === 'evidence-expanded' ? (
+        <ExpandedEvidenceView title={selectedTask.Name} rawGraph={executionStructuredData} onClose={() => onChangeDisplayMode('evidence')} />
+      ) : displayMode === 'trials-expanded' ? (
+        <ExpandedTrialView title={selectedTask.Name} rawLedger={executionStructuredData || executionResult} onClose={() => onChangeDisplayMode('trials')} />
+      ) : displayMode === 'plot-expanded' ? (
         <ExpandedPlotView executionImage={executionImage} onClose={() => onChangeDisplayMode('plot')} />
       ) : displayMode === 'report-expanded' ? (
         <ExpandedReportView title={selectedTask.Name} executionResult={executionResult} onClose={() => onChangeDisplayMode('report')} />
@@ -71,6 +81,7 @@ export function ExecutionSidebar(props: ExecutionSidebarProps) {
           executionLogs={executionLogs}
           executionResult={executionResult}
           executionCode={executionCode}
+          executionStructuredData={executionStructuredData}
           executionImage={executionImage}
           logsEndRef={logsEndRef}
           onClose={onClose}
@@ -78,6 +89,74 @@ export function ExecutionSidebar(props: ExecutionSidebarProps) {
           onChangeDisplayMode={onChangeDisplayMode}
         />
       )}
+    </div>
+  );
+}
+
+interface ExpandedTrialViewProps {
+  title: string;
+  rawLedger: string;
+  onClose: () => void;
+}
+
+function ExpandedTrialView({ title, rawLedger, onClose }: ExpandedTrialViewProps) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col bg-white p-6">
+      <div className="mb-4 flex flex-shrink-0 items-center justify-between border-b border-slate-200 pb-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm font-semibold text-cyan-800">
+            <FlaskConical className="h-4 w-4" />
+            AutoResearch Trials
+          </div>
+          <h2 className="mt-1 truncate text-xl font-semibold text-slate-900">{title}</h2>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
+          title="退出全屏实验视图"
+          aria-label="退出全屏实验视图"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto border border-slate-200">
+        <AutoResearchTrialView rawLedger={rawLedger} expanded />
+      </div>
+    </div>
+  );
+}
+
+interface ExpandedEvidenceViewProps {
+  title: string;
+  rawGraph: string;
+  onClose: () => void;
+}
+
+function ExpandedEvidenceView({ title, rawGraph, onClose }: ExpandedEvidenceViewProps) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col bg-white p-6">
+      <div className="mb-4 flex flex-shrink-0 items-center justify-between border-b border-slate-200 pb-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm font-semibold text-cyan-800">
+            <GitBranch className="h-4 w-4" />
+            Claim-to-Evidence Graph
+          </div>
+          <h2 className="mt-1 truncate text-xl font-semibold text-slate-900">{title}</h2>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
+          title="退出全屏证据图"
+          aria-label="退出全屏证据图"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 border border-slate-200">
+        <ClaimEvidenceGraphView rawGraph={rawGraph} expanded />
+      </div>
     </div>
   );
 }
@@ -168,6 +247,7 @@ interface ExecutionSidebarShellProps {
   executionLogs: string;
   executionResult: string;
   executionCode: string;
+  executionStructuredData: string;
   executionImage: string;
   logsEndRef: RefObject<HTMLDivElement | null>;
   onClose: () => void;
@@ -183,6 +263,7 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
     executionLogs,
     executionResult,
     executionCode,
+    executionStructuredData,
     executionImage,
     logsEndRef,
     onClose,
@@ -190,6 +271,7 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
     onChangeDisplayMode,
   } = props;
   const ablationBudget = selectedTask.Type === 'ablation_design' ? selectedTask.Inputs : undefined;
+  const hasAutoResearchEvidence = (selectedTask.Type === 'autoresearch_run' || selectedTask.Type === 'autoresearch_validate') && Boolean(executionStructuredData || executionResult);
 
   return (
     <>
@@ -248,16 +330,18 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
           )}
         </button>
 
-        {(executionResult || executionCode) && (
+        {(executionResult || executionCode || executionStructuredData) && (
           <div className="flex border-b border-gray-100 mt-2 items-center justify-between">
             <div className="flex flex-1">
               <button
                 onClick={() => onChangeDisplayMode('logs')}
-                className={`flex-1 py-3 text-xs font-black text-center border-b-2 transition-all ${
+                className={`flex-1 py-3 text-xs font-black text-center border-b-2 transition-all flex items-center justify-center gap-1 whitespace-nowrap ${
                   activeMode === 'logs' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'
                 }`}
               >
-                实时日志
+                <TerminalSquare className="h-4 w-4" />
+                <span className="hidden sm:inline">实时日志</span>
+                <span className="sm:hidden">日志</span>
               </button>
               {executionCode && (
                 <button
@@ -267,7 +351,19 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
                   }`}
                 >
                   <Code className="w-4 h-4" />
-                  沙箱代码
+                  <span className="hidden sm:inline">沙箱代码</span>
+                  <span className="sm:hidden">代码</span>
+                </button>
+              )}
+              {hasAutoResearchEvidence && (
+                <button
+                  onClick={() => onChangeDisplayMode('trials')}
+                  className={`flex-1 py-3 text-xs font-black text-center border-b-2 flex items-center justify-center gap-1 transition-all ${
+                    activeMode === 'trials' ? 'border-cyan-600 text-cyan-700' : 'border-transparent text-gray-400 hover:text-gray-600'
+                  }`}
+                >
+                  <ChartNoAxesCombined className="h-4 w-4" />
+                  {selectedTask.Type === 'autoresearch_validate' ? '验收' : '实验'}
                 </button>
               )}
               {executionImage && (
@@ -281,7 +377,18 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
                   生成图表
                 </button>
               )}
-              {reportAgents.has(selectedTask.AssignedTo) && executionResult && (
+              {selectedTask.Type === 'claim_evidence_build' && executionStructuredData && (
+                <button
+                  onClick={() => onChangeDisplayMode('evidence')}
+                  className={`flex-1 py-3 text-xs font-black text-center border-b-2 flex items-center justify-center gap-1 transition-all ${
+                    activeMode === 'evidence' ? 'border-cyan-600 text-cyan-700' : 'border-transparent text-gray-400 hover:text-gray-600'
+                  }`}
+                >
+                  <GitBranch className="w-4 h-4" />
+                  证据图
+                </button>
+              )}
+              {reportAgents.has(selectedTask.AssignedTo) && executionResult && !hasAutoResearchEvidence && (
                 <button
                   onClick={() => onChangeDisplayMode('report')}
                   className={`flex-1 py-3 text-xs font-black text-center border-b-2 flex items-center justify-center gap-1 transition-all ${
@@ -289,7 +396,8 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
                   }`}
                 >
                   <Eye className="w-4 h-4" />
-                  分析报告
+                  <span className="hidden sm:inline">分析报告</span>
+                  <span className="sm:hidden">报告</span>
                 </button>
               )}
             </div>
@@ -309,6 +417,25 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
                 title="全屏查看图表"
               >
                 <Maximize2 className="w-4 h-4" />
+              </button>
+            )}
+            {activeMode === 'evidence' && (
+              <button
+                onClick={() => onChangeDisplayMode('evidence-expanded')}
+                className="ml-3 p-2.5 text-cyan-700 hover:bg-cyan-50 rounded-xl transition-all active:scale-90 border border-cyan-100 shadow-sm"
+                title="全屏查看证据图"
+              >
+                <Maximize2 className="w-4 h-4" />
+              </button>
+            )}
+            {activeMode === 'trials' && (
+              <button
+                onClick={() => onChangeDisplayMode('trials-expanded')}
+                className="ml-3 p-2.5 text-cyan-700 hover:bg-cyan-50 rounded-xl transition-all active:scale-90 border border-cyan-100 shadow-sm"
+                title="全屏查看实验记录"
+                aria-label="全屏查看实验记录"
+              >
+                <Maximize2 className="h-4 w-4" />
               </button>
             )}
           </div>
@@ -332,6 +459,10 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
                 <div ref={logsEndRef} />
               </div>
             </>
+          ) : activeMode === 'trials' ? (
+            <div className="min-h-[32rem] flex-1 overflow-hidden border border-slate-200 bg-white">
+              <AutoResearchTrialView rawLedger={executionStructuredData || executionResult} />
+            </div>
           ) : activeMode === 'code' ? (
             <div className="bg-gray-50 rounded-2xl border border-gray-200 p-6 flex-1 overflow-y-auto shadow-inner prose prose-slate prose-sm max-w-none text-gray-800 h-64">
               <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex]}>
@@ -342,6 +473,10 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
             <div className="bg-white rounded-2xl border border-gray-100 p-2 flex-1 flex flex-col items-center justify-center overflow-hidden shadow-inner h-64">
               <img src={`data:image/png;base64,${executionImage}`} alt="Generated Plot" className="max-w-full max-h-full object-contain rounded-lg shadow-md" />
               <div className="mt-2 text-[10px] text-gray-400">点击下方按钮可全屏查看</div>
+            </div>
+          ) : activeMode === 'evidence' ? (
+            <div className="h-96 min-h-0 flex-1 overflow-hidden border border-slate-200 bg-white">
+              <ClaimEvidenceGraphView rawGraph={executionStructuredData} />
             </div>
           ) : (
             <div className="bg-white rounded-2xl border border-gray-100 p-6 flex-1 overflow-y-auto shadow-inner prose prose-slate prose-sm max-w-none text-gray-800 prose-headings:text-blue-900 prose-strong:text-blue-700 prose-code:bg-blue-50 prose-code:text-blue-600 prose-code:px-1 prose-code:rounded h-64">

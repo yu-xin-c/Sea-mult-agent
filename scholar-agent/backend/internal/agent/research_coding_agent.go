@@ -48,6 +48,12 @@ func (a *ResearchCodingAgent) ExecuteTask(ctx context.Context, task *models.Task
 		return a.executeBenchmark(ctx, task)
 	case "benchmark_validate":
 		return a.executeBenchmarkValidation(ctx, task)
+	case "autoresearch_spec":
+		return a.executeAutoResearchSpec(ctx, task)
+	case "autoresearch_run":
+		return a.executeAutoResearchRun(ctx, task)
+	case "autoresearch_validate":
+		return a.executeAutoResearchValidation(ctx, task)
 	case "paper_code_execute", "fix_and_rerun":
 		return a.executePaperCodeTask(ctx, task, sharedContext)
 	default:
