@@ -2,7 +2,7 @@
 
 本文描述 `scholar-agent/` 当前已经实现并可运行的架构。它以代码为准，重点说明服务边界、核心数据模型、Agent 调度、论文复现、Benchmark Harness、持久化与安全边界。早期设想和尚未接入主链的模块不会被写成现有能力。
 
-最后核对日期：2026-08-06。
+最后核对日期：2026-08-11。
 
 ## 1. 架构目标
 
@@ -15,7 +15,9 @@ ScholarAgent 是一个面向科研任务的单机多 Agent 执行系统。它把
 3. **模型负责建议，代码负责约束**：LLM 可以规划、生成和修复；DAG 校验、预算、哈希、指标重算和沙箱策略由确定性代码执行。
 4. **自动化必须有边界**：ToT、ReAct、重试、并发、运行时长和样本数都有明确上限。
 
-![Sea-Mult-Agent architecture](../../ArchitectureDiagram.png)
+![ScholarAgent current architecture](../../ArchitectureDiagram.png)
+
+总图的可编辑源文件见 [`ArchitectureDiagram.drawio`](../../ArchitectureDiagram.drawio)。图中只展示当前已接入主链的能力；Native Docker 是默认执行引擎，OpenSandbox 是可选 fallback，BERT/Qwen 意图模型不属于默认生产请求链。
 
 ## 2. 系统总览
 

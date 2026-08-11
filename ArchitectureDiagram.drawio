@@ -1,0 +1,242 @@
+<mxfile host="Electron" modified="2026-08-11T16:30:00.000Z" agent="Codex" version="31.1.8" type="device">
+  <diagram id="scholar-agent-current" name="ScholarAgent Architecture">
+    <mxGraphModel dx="1824" dy="1024" grid="1" gridSize="12" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1824" pageHeight="1024" math="0" shadow="0" background="#FFFFFF">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="canvas_bg" value="" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#FFFFFF;" vertex="1" parent="1">
+          <mxGeometry x="0" y="0" width="1824" height="1024" as="geometry" />
+        </mxCell>
+
+        <mxCell id="brand_bar" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#2F6BFF;strokeColor=#2F6BFF;" vertex="1" parent="1">
+          <mxGeometry x="24" y="26" width="10" height="54" as="geometry" />
+        </mxCell>
+        <mxCell id="brand" value="Sea-Mult-Agent" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=24;fontStyle=1;fontColor=#123B78;" vertex="1" parent="1">
+          <mxGeometry x="48" y="25" width="270" height="56" as="geometry" />
+        </mxCell>
+        <mxCell id="title" value="ScholarAgent 当前系统架构" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=34;fontStyle=1;fontColor=#123B78;" vertex="1" parent="1">
+          <mxGeometry x="430" y="18" width="970" height="48" as="geometry" />
+        </mxCell>
+        <mxCell id="subtitle" value="论文复现  ·  自有数据 Benchmark  ·  受限 AutoResearch  ·  Claim-to-Evidence" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=15;fontColor=#60758A;" vertex="1" parent="1">
+          <mxGeometry x="470" y="66" width="890" height="28" as="geometry" />
+        </mxCell>
+        <mxCell id="model_boundary" value="模型提出结构化建议；确定性 Go 代码掌握写入、执行、评分、回滚与验收" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFF8E8;strokeColor=#E59B19;strokeWidth=1.5;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=13;fontStyle=1;fontColor=#805B10;" vertex="1" parent="1">
+          <mxGeometry x="1120" y="92" width="684" height="28" as="geometry" />
+        </mxCell>
+
+        <mxCell id="input_panel" value="1. 研究输入" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#F7FAFF;strokeColor=#2F6BFF;strokeWidth=2;align=left;verticalAlign=top;spacingTop=12;spacingLeft=12;fontFamily=Helvetica;fontSize=18;fontStyle=1;fontColor=#123B78;" vertex="1" parent="1">
+          <mxGeometry x="20" y="126" width="190" height="694" as="geometry" />
+        </mxCell>
+        <mxCell id="input_user" value="&lt;b&gt;研究者 / 用户&lt;/b&gt;&lt;br&gt;&lt;br&gt;提交科研目标，选择 smoke 或 full 范围，并确认预算与验收门槛。" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#A9C1E8;strokeWidth=1.4;align=left;verticalAlign=top;spacing=11;fontFamily=Helvetica;fontSize=13;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="35" y="178" width="160" height="124" as="geometry" />
+        </mxCell>
+        <mxCell id="input_paper" value="&lt;b&gt;论文与主张&lt;/b&gt;&lt;br&gt;&lt;br&gt;PDF / 标题 / 复现范围&lt;br&gt;指标、消融与声明位置" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#A9C1E8;strokeWidth=1.4;align=left;verticalAlign=top;spacing=11;fontFamily=Helvetica;fontSize=13;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="35" y="324" width="160" height="122" as="geometry" />
+        </mxCell>
+        <mxCell id="input_repo" value="&lt;b&gt;仓库与数据&lt;/b&gt;&lt;br&gt;&lt;br&gt;GitHub URL / commit&lt;br&gt;CSV · TSV · JSON · JSONL&lt;br&gt;配置、笔记与附件" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#A9C1E8;strokeWidth=1.4;align=left;verticalAlign=top;spacing=11;fontFamily=Helvetica;fontSize=13;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="35" y="468" width="160" height="132" as="geometry" />
+        </mxCell>
+        <mxCell id="input_contract" value="&lt;b&gt;实验契约&lt;/b&gt;&lt;br&gt;&lt;br&gt;可编辑范围 · 指标方向&lt;br&gt;Trial / 时间 / GPU 预算&lt;br&gt;公开与隐藏验收" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#A9C1E8;strokeWidth=1.4;align=left;verticalAlign=top;spacing=11;fontFamily=Helvetica;fontSize=13;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="35" y="622" width="160" height="142" as="geometry" />
+        </mxCell>
+
+        <mxCell id="workbench_panel" value="2. React 研究工作台" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#F5F8FF;strokeColor=#4169C1;strokeWidth=2;align=left;verticalAlign=top;spacingTop=12;spacingLeft=12;fontFamily=Helvetica;fontSize=18;fontStyle=1;fontColor=#123B78;" vertex="1" parent="1">
+          <mxGeometry x="230" y="126" width="250" height="694" as="geometry" />
+        </mxCell>
+        <mxCell id="ui_chat" value="&lt;b&gt;对话 · PDF · 上传&lt;/b&gt;&lt;br&gt;&lt;br&gt;研究请求、附件、仓库和数据在同一工作台进入计划。" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#B7C7E8;strokeWidth=1.4;align=left;verticalAlign=top;spacing=12;fontFamily=Helvetica;fontSize=13;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="245" y="178" width="220" height="118" as="geometry" />
+        </mxCell>
+        <mxCell id="ui_plan" value="&lt;b&gt;DAG 与治理&lt;/b&gt;&lt;br&gt;&lt;br&gt;查看节点依赖；审批、执行、取消、失败重试与 Agent 重分配。" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#B7C7E8;strokeWidth=1.4;align=left;verticalAlign=top;spacing=12;fontFamily=Helvetica;fontSize=13;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="245" y="316" width="220" height="126" as="geometry" />
+        </mxCell>
+        <mxCell id="ui_live" value="&lt;b&gt;实时执行&lt;/b&gt;&lt;br&gt;&lt;br&gt;SSE 状态、stdout/stderr、任务租约、运行指标和结构化 Artifact。" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#B7C7E8;strokeWidth=1.4;align=left;verticalAlign=top;spacing=12;fontFamily=Helvetica;fontSize=13;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="245" y="462" width="220" height="126" as="geometry" />
+        </mxCell>
+        <mxCell id="ui_views" value="&lt;b&gt;专业结果视图&lt;/b&gt;&lt;br&gt;&lt;br&gt;Benchmark、Trial 趋势、Keep/Reject、隐藏验证、证据图与报告。" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#B7C7E8;strokeWidth=1.4;align=left;verticalAlign=top;spacing=12;fontFamily=Helvetica;fontSize=13;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="245" y="608" width="220" height="126" as="geometry" />
+        </mxCell>
+        <mxCell id="ui_note" value="浏览器只保存界面会话；计划真值以后端 PlanStore 为准" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#EAF1FF;strokeColor=#B7C7E8;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;fontColor=#47617C;" vertex="1" parent="1">
+          <mxGeometry x="245" y="752" width="220" height="42" as="geometry" />
+        </mxCell>
+
+        <mxCell id="control_panel" value="3. 确定性控制面  (Go + Gin)" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#F3FBFB;strokeColor=#0F8B8D;strokeWidth=2;align=left;verticalAlign=top;spacingTop=12;spacingLeft=12;fontFamily=Helvetica;fontSize=18;fontStyle=1;fontColor=#0A6668;" vertex="1" parent="1">
+          <mxGeometry x="500" y="126" width="600" height="694" as="geometry" />
+        </mxCell>
+        <mxCell id="api_card" value="&lt;b&gt;API / Auth / Upload&lt;/b&gt;&lt;br&gt;&lt;br&gt;REST · SSE · ownership&lt;br&gt;Bearer token · file hash" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#67B7B7;strokeWidth=1.4;align=left;verticalAlign=top;spacing=10;fontFamily=Helvetica;fontSize=12.5;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="520" y="178" width="170" height="112" as="geometry" />
+        </mxCell>
+        <mxCell id="intent_card" value="&lt;b&gt;Intent Router&lt;/b&gt;&lt;br&gt;&lt;br&gt;规则提取任务、仓库、附件与预算&lt;br&gt;&lt;font color=&quot;#60758A&quot;&gt;BERT / Qwen 为可选学习流程&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#67B7B7;strokeWidth=1.4;align=left;verticalAlign=top;spacing=10;fontFamily=Helvetica;fontSize=12.5;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="705" y="178" width="175" height="112" as="geometry" />
+        </mxCell>
+        <mxCell id="planner_card" value="&lt;b&gt;Planner + DAG Validator&lt;/b&gt;&lt;br&gt;&lt;br&gt;AutoResearch 固定 8 节点&lt;br&gt;Custom Benchmark 固定 11 节点&lt;br&gt;其他计划经校验与模板兜底" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#67B7B7;strokeWidth=1.4;align=left;verticalAlign=top;spacing=10;fontFamily=Helvetica;fontSize=12.5;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="895" y="178" width="185" height="112" as="geometry" />
+        </mxCell>
+        <mxCell id="plan_card" value="&lt;b&gt;Validated PlanGraph&lt;/b&gt;&lt;br&gt;&lt;br&gt;TaskContract&lt;br&gt;required / output artifacts&lt;br&gt;审批、重试与总预算" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#67B7B7;strokeWidth=1.4;align=left;verticalAlign=top;spacing=10;fontFamily=Helvetica;fontSize=12.5;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="520" y="314" width="175" height="124" as="geometry" />
+        </mxCell>
+        <mxCell id="store_card" value="&lt;b&gt;FilePlanStore&lt;/b&gt;&lt;br&gt;&lt;br&gt;Plan · Task · Event · Artifact&lt;br&gt;临时文件 + fsync + 原子替换&lt;br&gt;启动恢复中断状态" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#67B7B7;strokeWidth=1.4;align=left;verticalAlign=top;spacing=10;fontFamily=Helvetica;fontSize=12.5;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="710" y="314" width="175" height="124" as="geometry" />
+        </mxCell>
+        <mxCell id="scheduler_card" value="&lt;b&gt;Scheduler&lt;/b&gt;&lt;br&gt;&lt;br&gt;依赖与 Ready 队列 · 并发&lt;br&gt;execution ID / epoch / lease&lt;br&gt;取消、重试、迟到结果隔离" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#67B7B7;strokeWidth=1.4;align=left;verticalAlign=top;spacing=10;fontFamily=Helvetica;fontSize=12.5;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="900" y="314" width="180" height="124" as="geometry" />
+        </mxCell>
+        <mxCell id="executor_card" value="&lt;b&gt;Routed Task Executor&lt;/b&gt;  ·  合并节点输入和上游 Artifact  ·  校验 Agent / Task 白名单  ·  提交结构化结果" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#DFF4F2;strokeColor=#0F8B8D;strokeWidth=1.6;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=13;fontStyle=1;fontColor=#0A6668;" vertex="1" parent="1">
+          <mxGeometry x="520" y="462" width="560" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="artifact_bus" value="Artifact 总线：PlanGraph · TaskContract · Runtime · Metrics · Patch Manifest · ResearchSpec · TrialLedger" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#F1ECFF;strokeColor=#6D5BD0;strokeWidth=1.4;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=#4F3FA5;" vertex="1" parent="1">
+          <mxGeometry x="520" y="540" width="560" height="42" as="geometry" />
+        </mxCell>
+        <mxCell id="chat_agent" value="&lt;b&gt;Chat&lt;/b&gt;&lt;br&gt;&lt;br&gt;通用问答" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#7BB8B8;align=center;verticalAlign=top;spacingTop=10;fontFamily=Helvetica;fontSize=12;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="520" y="610" width="90" height="166" as="geometry" />
+        </mxCell>
+        <mxCell id="librarian_agent" value="&lt;b&gt;Librarian&lt;/b&gt;&lt;br&gt;&lt;br&gt;论文解析&lt;br&gt;Claim Rubric&lt;br&gt;资料归纳" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#7BB8B8;align=center;verticalAlign=top;spacingTop=10;fontFamily=Helvetica;fontSize=12;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="615" y="610" width="105" height="166" as="geometry" />
+        </mxCell>
+        <mxCell id="coder_agent" value="&lt;b&gt;Coder&lt;/b&gt;&lt;br&gt;&lt;br&gt;代码生成&lt;br&gt;依赖解析&lt;br&gt;运行时方法" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#7BB8B8;align=center;verticalAlign=top;spacingTop=10;fontFamily=Helvetica;fontSize=12;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="725" y="610" width="105" height="166" as="geometry" />
+        </mxCell>
+        <mxCell id="research_agent" value="&lt;b&gt;Research Coding&lt;/b&gt;&lt;br&gt;&lt;br&gt;论文代码 Debug&lt;br&gt;Benchmark Adapter&lt;br&gt;AutoResearch 候选&lt;br&gt;&lt;font color=&quot;#176B46&quot;&gt;仓库级专用 Agent&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#EAF8F0;strokeColor=#1E8E5A;strokeWidth=2;align=center;verticalAlign=top;spacingTop=10;fontFamily=Helvetica;fontSize=12;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="835" y="610" width="150" height="166" as="geometry" />
+        </mxCell>
+        <mxCell id="data_agent" value="&lt;b&gt;Data&lt;/b&gt;&lt;br&gt;&lt;br&gt;ToT 消融&lt;br&gt;指标对比&lt;br&gt;证据与报告" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#7BB8B8;align=center;verticalAlign=top;spacingTop=10;fontFamily=Helvetica;fontSize=12;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="990" y="610" width="90" height="166" as="geometry" />
+        </mxCell>
+
+        <mxCell id="harness_panel" value="4. 科研执行 Harness" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#F4FBF6;strokeColor=#1E8E5A;strokeWidth=2;align=left;verticalAlign=top;spacingTop=12;spacingLeft=12;fontFamily=Helvetica;fontSize=18;fontStyle=1;fontColor=#176B46;" vertex="1" parent="1">
+          <mxGeometry x="1120" y="126" width="405" height="694" as="geometry" />
+        </mxCell>
+        <mxCell id="paper_harness" value="&lt;b&gt;论文复现 / Paper Debug&lt;/b&gt;&lt;br&gt;&lt;br&gt;冻结 Claim Rubric → 准备仓库与依赖 → 运行 baseline&lt;br&gt;traceback 有限诊断 → 最小补丁 → 重跑 / 回滚&lt;br&gt;对照论文声明并汇入证据图" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#78B895;strokeWidth=1.5;align=left;verticalAlign=top;spacing=11;fontFamily=Helvetica;fontSize=12.5;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="1140" y="178" width="365" height="138" as="geometry" />
+        </mxCell>
+        <mxCell id="benchmark_harness" value="&lt;b&gt;自有数据 Benchmark&lt;/b&gt;&lt;br&gt;&lt;br&gt;Dataset Profile → 生成 Adapter → 最多 8 条预检&lt;br&gt;正式执行时冻结代码；Go 按逐样本预测重算指标&lt;br&gt;校验数据哈希、样本数、范围和运行清单" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#78B895;strokeWidth=1.5;align=left;verticalAlign=top;spacing=11;fontFamily=Helvetica;fontSize=12.5;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="1140" y="336" width="365" height="148" as="geometry" />
+        </mxCell>
+        <mxCell id="autoresearch_harness" value="&lt;b&gt;受限 AutoResearch&lt;/b&gt;&lt;br&gt;&lt;br&gt;精确 commit + ResearchSpec 冻结&lt;br&gt;重复 baseline → 模型候选 → guard / evaluator&lt;br&gt;按聚合指标 Keep / Reject，退化恢复最佳快照&lt;br&gt;达到 target_score 确定性停止&lt;br&gt;公开重放或模型不可见 holdout 最终复验" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#EAF8F0;strokeColor=#1E8E5A;strokeWidth=2;align=left;verticalAlign=top;spacing=11;fontFamily=Helvetica;fontSize=12.5;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="1140" y="504" width="365" height="202" as="geometry" />
+        </mxCell>
+        <mxCell id="policy_gate" value="&lt;b&gt;Go Policy Gate&lt;/b&gt;  ·  路径白名单  ·  protected SHA-256  ·  冻结命令  ·  预算  ·  指标与 Ledger 重算" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFF8E8;strokeColor=#E59B19;strokeWidth=1.6;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontStyle=1;fontColor=#805B10;" vertex="1" parent="1">
+          <mxGeometry x="1140" y="730" width="365" height="66" as="geometry" />
+        </mxCell>
+
+        <mxCell id="infra_panel" value="5. 外部服务与状态" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#F8F6FF;strokeColor=#6D5BD0;strokeWidth=2;align=left;verticalAlign=top;spacingTop=12;spacingLeft=12;fontFamily=Helvetica;fontSize=18;fontStyle=1;fontColor=#4F3FA5;" vertex="1" parent="1">
+          <mxGeometry x="1545" y="126" width="259" height="694" as="geometry" />
+        </mxCell>
+        <mxCell id="llm_card" value="&lt;b&gt;OpenAI-compatible LLM&lt;/b&gt;&lt;br&gt;&lt;br&gt;Planner 与专业 Agent 调用&lt;br&gt;&lt;font color=&quot;#805B10&quot;&gt;只提供建议，不拥有执行真值&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFF8E8;strokeColor=#E59B19;strokeWidth=1.5;align=left;verticalAlign=top;spacing=11;fontFamily=Helvetica;fontSize=12.5;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="1565" y="178" width="219" height="118" as="geometry" />
+        </mxCell>
+        <mxCell id="repo_services" value="&lt;b&gt;Repository / Package Sources&lt;/b&gt;&lt;br&gt;&lt;br&gt;GitHub · HuggingFace Papers&lt;br&gt;PyPI · model registry&lt;br&gt;完整 SHA 与获取方式进入 manifest" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#A99EE0;strokeWidth=1.4;align=left;verticalAlign=top;spacing=11;fontFamily=Helvetica;fontSize=12.5;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="1565" y="316" width="219" height="126" as="geometry" />
+        </mxCell>
+        <mxCell id="state_store" value="&lt;b&gt;持久状态与文件&lt;/b&gt;&lt;br&gt;&lt;br&gt;FilePlanStore volume&lt;br&gt;Upload Store / owner isolation&lt;br&gt;临时工作区与仓库缓存" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#A99EE0;strokeWidth=1.4;align=left;verticalAlign=top;spacing=11;fontFamily=Helvetica;fontSize=12.5;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="1565" y="462" width="219" height="128" as="geometry" />
+        </mxCell>
+        <mxCell id="observability" value="&lt;b&gt;事件与可观测性&lt;/b&gt;&lt;br&gt;&lt;br&gt;Event Bus + 历史补漏&lt;br&gt;SSE replay · trace / task span&lt;br&gt;health 与运行资源摘要" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#A99EE0;strokeWidth=1.4;align=left;verticalAlign=top;spacing=11;fontFamily=Helvetica;fontSize=12.5;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="1565" y="610" width="219" height="128" as="geometry" />
+        </mxCell>
+        <mxCell id="infra_boundary" value="当前边界：单机原型 · Native Docker 默认 · 非多租户强隔离" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#F1ECFF;strokeColor=#A99EE0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;fontColor=#4F3FA5;" vertex="1" parent="1">
+          <mxGeometry x="1565" y="756" width="219" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="runtime_band" value="6. 隔离执行面" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#F5F8FB;strokeColor=#52758F;strokeWidth=2;align=left;verticalAlign=top;spacingTop=10;spacingLeft=12;fontFamily=Helvetica;fontSize=17;fontStyle=1;fontColor=#35566F;" vertex="1" parent="1">
+          <mxGeometry x="230" y="840" width="1295" height="136" as="geometry" />
+        </mxCell>
+        <mxCell id="sandbox_client" value="&lt;b&gt;Sandbox Client&lt;/b&gt;&lt;br&gt;Bearer API + streaming" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#819BB0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="260" y="890" width="180" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="sandbox_service" value="&lt;b&gt;Go docker-sandbox :8082&lt;/b&gt;&lt;br&gt;create · exec · stream · cleanup" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#819BB0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="470" y="890" width="210" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="engine_policy" value="&lt;b&gt;Native Docker Engine  (当前默认)&lt;/b&gt;&lt;br&gt;CPU / memory / PID · cap-drop · image / mount allowlist" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#EAF1FF;strokeColor=#4169C1;strokeWidth=1.5;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="710" y="890" width="300" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="runtime_container" value="&lt;b&gt;持久运行容器&lt;/b&gt;&lt;br&gt;/workspace · Python · Git · dependencies" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#819BB0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="1040" y="890" width="220" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="runtime_output" value="&lt;b&gt;真实运行输出&lt;/b&gt;&lt;br&gt;stdout / stderr · files · images · metrics" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#819BB0;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontColor=#18324A;" vertex="1" parent="1">
+          <mxGeometry x="1290" y="890" width="205" height="58" as="geometry" />
+        </mxCell>
+        <mxCell id="runtime_optional" value="OpenSandbox fallback：可选，非默认主链" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=10.5;fontColor=#60758A;" vertex="1" parent="1">
+          <mxGeometry x="710" y="954" width="300" height="18" as="geometry" />
+        </mxCell>
+
+        <mxCell id="evidence_band" value="7. 可审计证据" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#F1ECFF;strokeColor=#6D5BD0;strokeWidth=2;align=left;verticalAlign=top;spacingTop=10;spacingLeft=12;fontFamily=Helvetica;fontSize=17;fontStyle=1;fontColor=#4F3FA5;" vertex="1" parent="1">
+          <mxGeometry x="1545" y="840" width="259" height="136" as="geometry" />
+        </mxCell>
+        <mxCell id="evidence_text" value="TrialLedger · ValidationReport&lt;br&gt;Benchmark report · Claim graph&lt;br&gt;补丁 / 数据 / spec 哈希&lt;br&gt;命令、耗时与失败证据" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacing=4;fontFamily=Helvetica;fontSize=12;fontColor=#4F3FA5;" vertex="1" parent="1">
+          <mxGeometry x="1565" y="884" width="219" height="78" as="geometry" />
+        </mxCell>
+
+        <mxCell id="footer" value="当前实现口径：固定 DAG 与确定性 Harness 负责安全关键状态转移；LLM 不直接拥有文件系统、评分规则或最终科研结论。" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=11.5;fontColor=#60758A;" vertex="1" parent="1">
+          <mxGeometry x="20" y="992" width="1784" height="22" as="geometry" />
+        </mxCell>
+
+        <mxCell id="flow_input_workbench" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.5;strokeColor=#0F8B8D;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="input_panel" target="workbench_panel">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="flow_rest" value="REST" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.52;entryX=0;entryY=0.52;strokeColor=#0F8B8D;strokeWidth=2;endArrow=block;endFill=1;fontSize=11;fontColor=#0A6668;" edge="1" parent="1" source="workbench_panel" target="control_panel">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="flow_api_intent" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F8B8D;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="api_card" target="intent_card">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="flow_intent_planner" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F8B8D;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="intent_card" target="planner_card">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="flow_planner_plan" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;strokeColor=#0F8B8D;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="planner_card" target="plan_card">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="988" y="302" />
+              <mxPoint x="607" y="302" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="flow_plan_store" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#6D5BD0;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="plan_card" target="store_card">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="flow_store_scheduler" value="state" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#6D5BD0;strokeWidth=2;startArrow=block;startFill=1;endArrow=block;endFill=1;fontSize=10;fontColor=#4F3FA5;" edge="1" parent="1" source="store_card" target="scheduler_card">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="flow_scheduler_executor" value="typed task" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F8B8D;strokeWidth=2;endArrow=block;endFill=1;fontSize=10;fontColor=#0A6668;" edge="1" parent="1" source="scheduler_card" target="executor_card">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="flow_executor_artifacts" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;strokeColor=#6D5BD0;strokeWidth=1.8;endArrow=block;endFill=1;" edge="1" parent="1" source="executor_card" target="artifact_bus">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="flow_artifacts_agents" value="route" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0.7;exitY=1;entryX=0.5;entryY=0;strokeColor=#0F8B8D;strokeWidth=1.8;endArrow=block;endFill=1;fontSize=10;fontColor=#0A6668;" edge="1" parent="1" source="artifact_bus" target="research_agent">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="flow_agents_harness" value="typed task + artifact" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.5;entryX=0;entryY=0.525;strokeColor=#0F8B8D;strokeWidth=2;endArrow=block;endFill=1;fontSize=10;fontColor=#0A6668;" edge="1" parent="1" source="executor_card" target="harness_panel">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="flow_sse" value="SSE" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;exitX=0;exitY=0.94;entryX=1;entryY=0.94;dashed=1;dashPattern=6 4;strokeColor=#2F6BFF;strokeWidth=2;endArrow=block;endFill=1;fontSize=10;fontColor=#123B78;" edge="1" parent="1" source="control_panel" target="workbench_panel">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="flow_harness_runtime" value="bounded commands" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F8B8D;strokeWidth=2;endArrow=block;endFill=1;fontSize=10;fontColor=#0A6668;" edge="1" parent="1" source="policy_gate" target="sandbox_client">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1322" y="830" />
+              <mxPoint x="350" y="830" />
+              <mxPoint x="350" y="874" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="flow_sandbox_service" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F8B8D;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="sandbox_client" target="sandbox_service">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="flow_engine" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F8B8D;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="sandbox_service" target="engine_policy">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="flow_container" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0F8B8D;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="engine_policy" target="runtime_container">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="flow_runtime_output" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#6D5BD0;strokeWidth=2;endArrow=block;endFill=1;" edge="1" parent="1" source="runtime_container" target="runtime_output">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="flow_output_evidence" value="artifacts" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#6D5BD0;strokeWidth=2;endArrow=block;endFill=1;fontSize=10;fontColor=#4F3FA5;" edge="1" parent="1" source="runtime_output" target="evidence_band">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

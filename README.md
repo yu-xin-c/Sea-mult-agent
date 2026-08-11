@@ -14,9 +14,11 @@
 
 </div>
 
-![Sea-Mult-Agent architecture](ArchitectureDiagram.png)
+![ScholarAgent current architecture](ArchitectureDiagram.png)
 
-Sea-Mult-Agent 面向论文阅读、代码仓库发现、环境准备、受控实验和结果分析等科研工作流。用户提交研究目标后，Planner 会生成 DAG，Scheduler 按依赖调度 Librarian、Coder、Sandbox 和 Data 等角色，并通过 SSE 将日志、状态和结构化产物实时推送到前端。
+Sea-Mult-Agent 面向论文复现、自有数据仓库评测和受限自动实验。Intent Router 与 Planner 把用户目标转换为经过校验的 DAG，Scheduler 通过类型化 Artifact 把节点路由给 Librarian、Coder、Research Coding 和 Data 等专业 Agent；模型负责理解问题和提出候选，Go Harness 负责文件写入、真实执行、指标判定、回滚与最终验收。日志、状态和结构化证据通过 SSE 返回工作台。
+
+总图的可编辑源文件见 [ArchitectureDiagram.drawio](ArchitectureDiagram.drawio)。其中 Native Docker 是当前默认执行引擎；OpenSandbox 仅为可选 fallback，BERT/Qwen 意图模型也未接入默认生产请求链。
 
 > [!NOTE]
 > 本项目目前是具备持久化、恢复、审批、预算和受限沙箱能力的单机研究原型，不是已完成多租户安全认证的生产服务。Docker 沙箱仍具有较高宿主机权限，部署前请阅读[项目状态与安全说明](#project-status)。
@@ -28,7 +30,7 @@ Sea-Mult-Agent 面向论文阅读、代码仓库发现、环境准备、受控�
 | 能力 | 当前实现 |
 |---|---|
 | **面向科研的任务规划** | 将论文复现、代码执行、框架对比等目标拆解为可执行 DAG |
-| **专业 Agent 路由** | 根据任务类型路由到 Librarian、Coder、Sandbox、Data 或 Chat 角色 |
+| **专业 Agent 路由** | 根据任务类型路由到 Chat、Librarian、Coder、Research Coding 或 Data；沙箱作为确定性执行服务独立运行 |
 | **真实隔离执行** | 通过独立 Go 沙箱服务调用原生 Docker，支持持久工作区与产物回传 |
 | **仓库优先的论文复现** | 发现或使用指定 GitHub 仓库，准备依赖并运行受控 smoke 实验 |
 | **预算受限的消融设计** | ToT 评估参数、模块、数据规模、随机种子和运行成本候选，只执行预算内的高价值组合 |
@@ -168,23 +170,35 @@ Attention Is All You Need，使用 smoke 模式运行轻量注意力消融，
 ## Architecture
 
 ```text
-User / Researcher
-       |
-       v
-React Workbench -- REST --> Go API / Intent Router
-       ^                         |
-       | SSE                     v
-       +---------------- Plan Store <--> Planner / Scheduler
-                                      |
-                         +---------+---------+---------+
-                         |         |         |         |
-                    Librarian    Coder   ResearchCoding   Data
-                         |         |         |
-                         +---------+----+----+
-                                        |
-                                  Docker Sandbox
-                                      |
-                           Logs / Metrics / Artifacts
+Researcher / Paper / Repository / Dataset
+                    |
+                    v
+             React Workbench
+                    |
+            REST / Upload / SSE
+                    |
+                    v
+    API -> Intent Router -> Planner + DAG Validator
+                               |
+                 Validated PlanGraph + FilePlanStore
+                               |
+          Scheduler (lease / retry / cancel / budget)
+                               |
+                    Routed Task Executor
+          +--------+----------+-------+-----------------+------+
+          |        |          |       |                 |      |
+         Chat  Librarian    Coder  Research Coding     Data
+                    |          |     /       |       \     |
+             Claim Rubric   Runtime  Paper  Benchmark  AutoResearch
+                                    Debug    Adapter
+                                      \        |        /
+                                       Go Policy Gate
+                                   |
+              Sandbox Client -> docker-sandbox -> Native Docker
+                                   |
+           stdout / metrics / files / TrialLedger / evidence graph
+                                   |
+                         Artifact + Event -> SSE
 ```
 
 ### Core Components
@@ -308,6 +322,7 @@ Sea-mult-agent/
 ├── README.md
 ├── LICENSE
 ├── ArchitectureDiagram.png
+├── ArchitectureDiagram.drawio   # 可编辑的当前系统总架构图
 ├── docker-core/                 # 早期/底层 Docker 执行组件
 └── scholar-agent/
     ├── backend/                 # Go API 与多 Agent 编排核心
