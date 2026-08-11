@@ -1,5 +1,3 @@
-version: "3.3"
-
 services:
   # 1. Docker 沙箱服务
   docker-sandbox:
@@ -24,7 +22,11 @@ services:
 
   # 2. Go 后端调度引擎
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      args:
+        DEBIAN_MIRROR: ${DEBIAN_MIRROR:-http://deb.debian.org/debian}
+        DEBIAN_SECURITY_MIRROR: ${DEBIAN_SECURITY_MIRROR:-http://deb.debian.org/debian-security}
     ports:
       - "8080:8080"
     volumes:

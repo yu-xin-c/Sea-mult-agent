@@ -357,6 +357,9 @@ func buildAutoResearchNodes(intent models.IntentContext) []*models.TaskNode {
 		"full_reproduction_requested":    false,
 		"skip_reproduction_smoke_runner": true,
 	}
+	if revision := strings.TrimSpace(stringEntity(intent.Entities, "repository_revision", "")); revision != "" {
+		prepare.Inputs["repository_revision"] = revision
+	}
 	if uploadedFiles != nil {
 		prepare.Inputs["uploaded_files"] = workspaceUploadReferences(uploadedFiles)
 	}
@@ -417,6 +420,7 @@ func buildAutoResearchNodes(intent models.IntentContext) []*models.TaskNode {
 		false,
 		context,
 	)
+	validate.RetryLimit = 0
 	report := newNode(
 		"Summarize AutoResearch Evidence",
 		"verify_result",
@@ -1428,7 +1432,7 @@ func exactTaskNameTranslations() map[string]string {
 		"Prepare AutoResearch Runtime":                                  "准备 AutoResearch 运行环境",
 		"Install AutoResearch Dependencies":                             "安装 AutoResearch 依赖",
 		"Run Bounded AutoResearch Loop":                                 "运行受限 AutoResearch 循环",
-		"Validate AutoResearch Candidate":                               "独立验证 AutoResearch 候选",
+		"Validate AutoResearch Candidate":                               "验收 AutoResearch 候选",
 		"Summarize AutoResearch Evidence":                               "汇总 AutoResearch 证据",
 		"Research Candidate Frameworks":                                 "调研候选框架",
 		"Generate Selection Recommendation":                             "生成选型建议",

@@ -26,6 +26,11 @@ func TestTaskPromptIsolation(t *testing.T) {
 		t.Fatalf("paper data prompt is not isolated")
 	}
 
+	autoResearchReport := DataSystemPromptForTask("Paper_Reproduction", "autoresearch_report", "论文复现 AutoResearch 总结", "")
+	if !strings.Contains(autoResearchReport, "AutoResearch 报告规则") || !strings.Contains(autoResearchReport, "不能称独立验证") || strings.Contains(autoResearchReport, "论文复现报告规则") {
+		t.Fatalf("AutoResearch data prompt is not isolated")
+	}
+
 	frameworkResearch := LibrarianSystemPromptForTask("Framework_Evaluation", "framework_research", "Research Candidate Frameworks", "")
 	if !strings.Contains(frameworkResearch, "技术框架调研员") || strings.Contains(frameworkResearch, "论文复现分析员") {
 		t.Fatalf("framework librarian prompt is not isolated")

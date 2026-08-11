@@ -1,0 +1,73 @@
+diff --git a/packages/graphrag-common/graphrag_common/hasher/hasher.py b/packages/graphrag-common/graphrag_common/hasher/hasher.py
+index c4af285..46f81fd 100644
+--- a/packages/graphrag-common/graphrag_common/hasher/hasher.py
++++ b/packages/graphrag-common/graphrag_common/hasher/hasher.py
+@@ -18,22 +18,54 @@ def sha256_hasher(data: str) -> str:
+     return hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+
++def _sort_key(item: Any) -> tuple:
++    """Return a canonical sort key that works for heterogeneous types."""
++    return (type(item).__name__, str(item))
++
++
+ def make_yaml_serializable(data: Any) -> Any:
+     """Convert data to a YAML-serializable format."""
+     if isinstance(data, (list, tuple)):
+         return tuple(make_yaml_serializable(item) for item in data)
+
+     if isinstance(data, set):
+-        return tuple(sorted(make_yaml_serializable(item) for item in data))
++        return tuple(sorted((make_yaml_serializable(item) for item in data), key=_sort_key))
+
+     if isinstance(data, dict):
+         return tuple(
+-            sorted((key, make_yaml_serializable(value)) for key, value in data.items())
++            sorted(
++                ((key, make_yaml_serializable(value)) for key, value in data.items()),
++                key=lambda pair: _sort_key(pair[0]),
++            )
+         )
+
++    if hasattr(data, "__dict__"):
++        return make_yaml_serializable(data.__dict__)
++
+     return str(data)
+
+
++def _has_non_string_keys(data: Any, _seen: set[int] | None = None) -> bool:
++    """Return True if any mapping key in the nested structure is not a string."""
++    if _seen is None:
++        _seen = set()
++    if id(data) in _seen:
++        return False
++    _seen.add(id(data))
++
++    if isinstance(data, dict):
++        for key, value in data.items():
++            if not isinstance(key, str):
++                return True
++            if _has_non_string_keys(value, _seen):
++                return True
++    elif isinstance(data, (list, tuple, set, frozenset)):
++        for item in data:
++            if _has_non_string_keys(item, _seen):
++                return True
++    return False
++
++
+ def hash_data(data: Any, *, hasher: Hasher | None = None) -> str:
+     """Hash the input data dictionary using the specified hasher function.
+
+@@ -53,6 +85,11 @@ def hash_data(data: Any, *, hasher: Hasher | None = None) -> str:
+
+     """
+     hasher = hasher or sha256_hasher
++    if _has_non_string_keys(data):
++        # Heterogeneous mapping keys need canonical ordering; yaml.dump's
++        # sort_keys sorts them lexicographically, which is not order-invariant.
++        # Serialize the canonical tuple form instead.
++        return hasher(yaml.dump(make_yaml_serializable(data), sort_keys=True))
+     try:
+         return hasher(yaml.dump(data, sort_keys=True))
+     except TypeError:

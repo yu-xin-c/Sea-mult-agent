@@ -6,7 +6,7 @@
 
 1. 论文仓库代码运行失败或结果差异明显时，定位有限源码上下文，生成最小补丁并在同一沙箱中重跑。
 2. 用户上传自有数据后，为指定公开仓库生成独立 Benchmark 适配器，完成预检、修复、正式评测和证据校验。
-3. 根据冻结的 `ResearchSpec` 执行有预算的 AutoResearch 循环，用真实指标 Keep/Reject 候选，回滚退化修改并重复独立复验最佳结果。
+3. 根据冻结的 `ResearchSpec` 执行有预算的 AutoResearch 循环，用真实指标 Keep/Reject 候选，回滚退化修改并对最佳结果执行公开重放或隐藏 holdout。
 
 底层 `CoderAgent` 继续提供通用代码生成、依赖解析和沙箱能力；Research Coding Agent 负责仓库级诊断、受控写入、重跑和证据闭环。它不会把一次代码运行成功解释成论文结论已经复现。
 
@@ -113,7 +113,7 @@ AutoResearch 与论文故障调试不同：论文调试以“消除运行错误�
 
 ### Keep/Reject 与回滚
 
-baseline 在模型第一次调用前运行。每轮模型只能返回一个假设和最多 3 个 editable 文件的完整替换；Go 端校验路径、符号链接、文件大小和禁止策略后才原子写入。guard/evaluator 真实运行后：
+baseline 在模型第一次调用前运行。editable 源码使用结构化 JSON 传给模型；eval/guard 命令直接引用的小型源码会作为有大小上限的只读 JSON 上下文提供，数据集和 editable 文件不会混入。每轮模型必须返回调用路径 `diagnosis`、可证伪假设和最多 3 个 editable 文件的完整替换；Go 端校验路径、符号链接、文件大小和禁止策略后才原子写入。guard/evaluator 真实运行后：
 
 - 指标相对当前最佳值按正确方向提升，且达到 `min_delta`：`kept`，更新最佳快照。
 - 运行失败、guard 失败、指标非法、退化或提升不足：`rejected`，恢复上一个最佳快照。
@@ -127,7 +127,7 @@ baseline 在模型第一次调用前运行。每轮模型只能返回一个假�
 |---|---|
 | `research_spec` | 已规范并带保护文件哈希的冻结研究契约 |
 | `research_spec_report` | 文件范围、预算和 spec hash 摘要 |
-| `research_trial_ledger` | baseline 与每轮假设、补丁哈希、命令、指标、Keep/Reject、停止原因和资源摘要 |
+| `research_trial_ledger` | baseline 与每轮诊断、假设、补丁哈希、命令、指标、Keep/Reject、停止原因和资源摘要 |
 | `research_best_candidate` | 最佳分数、接受次数和最终 editable 文件哈希 |
 | `research_run_report` | 搜索轮数、基线/最佳值和停止原因摘要 |
 | `research_validation_report` | spec/ledger hash、完整性、逐次观察值、统计量、资源摘要和最终状态 |
@@ -135,7 +135,7 @@ baseline 在模型第一次调用前运行。每轮模型只能返回一个假�
 
 完整规格、状态机、安全边界和可运行示例见 [`docs/autoresearch/`](autoresearch/)。
 
-前端对 `research_trial_ledger` 使用专用视图，而不是把它作为通用 JSON 展示。类型解析与异常降级位于 [`trialLedger.ts`](../frontend/src/features/autoresearch/trialLedger.ts)，[`AutoResearchTrialView.tsx`](../frontend/src/features/autoresearch/AutoResearchTrialView.tsx) 展示 baseline/best、指标趋势、Keep/Reject、耗时、假设、补丁哈希和命令资源摘要；用户可从执行侧栏切换“实验”页签并进入全屏视图。当前账本不保存每轮完整源码，因此界面不会生成不可验证的逐行 diff。
+前端对 `research_trial_ledger` 使用专用视图，而不是把它作为通用 JSON 展示。类型解析与异常降级位于 [`trialLedger.ts`](../frontend/src/features/autoresearch/trialLedger.ts)，[`AutoResearchTrialView.tsx`](../frontend/src/features/autoresearch/AutoResearchTrialView.tsx) 展示 baseline/best、指标趋势、Keep/Reject、耗时、调用路径诊断、假设、补丁哈希和命令资源摘要；用户可从执行侧栏切换“实验”页签并进入全屏视图。当前账本不保存每轮完整源码，因此界面不会生成不可验证的逐行 diff。
 
 ## 论文代码调试
 

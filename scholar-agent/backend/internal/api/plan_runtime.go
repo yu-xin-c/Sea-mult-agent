@@ -408,6 +408,9 @@ func buildRuleIntentContext(rawIntent string) models.IntentContext {
 	}
 	if intentType == "AutoResearch" {
 		context.Entities["needs_autoresearch"] = true
+		if match := routeRepositoryRevisionRe.FindStringSubmatch(rawIntent); len(match) > 1 {
+			context.Entities["repository_revision"] = strings.ToLower(match[1])
+		}
 		if match := regexp.MustCompile(`(?i)([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+\.json|autoresearch\.json)`).FindStringSubmatch(rawIntent); len(match) > 1 {
 			context.Entities["autoresearch_spec_path"] = match[1]
 		}

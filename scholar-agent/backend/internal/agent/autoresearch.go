@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"scholar-agent-backend/internal/models"
 	"scholar-agent-backend/internal/prompts"
@@ -31,6 +32,8 @@ const (
 	autoResearchMaxWallSeconds        = 3600
 	autoResearchDefaultValidationRuns = 1
 	autoResearchMaxValidationRuns     = 5
+	autoResearchDefaultSearchRuns     = 1
+	autoResearchMaxSearchRuns         = 5
 	autoResearchMaxEditableFiles      = 8
 	autoResearchMaxProtectedFiles     = 64
 	autoResearchMaxPatchFiles         = 3
@@ -39,12 +42,15 @@ const (
 	autoResearchOutputPreviewBytes    = 5000
 	autoResearchMaxImmutableFiles     = 10000
 	autoResearchMaxImmutableBytes     = 256 * 1024 * 1024
+	autoResearchMaxReadOnlyFileBytes  = 48 * 1024
+	autoResearchMaxReadOnlyBytes      = 96 * 1024
 )
 
 var (
-	autoResearchMetricKeyRE  = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
-	autoResearchDependencyRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*(?:\[[A-Za-z0-9_,.-]+\])?(?:(?:==|~=|>=|<=|>|<)[A-Za-z0-9.*+!_-]+)?$`)
-	errAutoResearchIntegrity = errors.New("AutoResearch workspace integrity failure")
+	autoResearchMetricKeyRE          = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+	autoResearchDependencyRE         = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*(?:\[[A-Za-z0-9_,.-]+\])?(?:(?:==|~=|>=|<=|>|<)[A-Za-z0-9.*+!_-]+)?$`)
+	autoResearchRepositoryRevisionRE = regexp.MustCompile(`^(?:[A-Fa-f0-9]{40}|[A-Fa-f0-9]{64})$`)
+	errAutoResearchIntegrity         = errors.New("AutoResearch workspace integrity failure")
 )
 
 type autoResearchCandidatePatch struct {
@@ -55,6 +61,7 @@ type autoResearchCandidatePatch struct {
 
 type autoResearchCandidateResponse struct {
 	Status     string                       `json:"status"`
+	Diagnosis  string                       `json:"diagnosis"`
 	Hypothesis string                       `json:"hypothesis"`
 	Reason     string                       `json:"reason"`
 	Patches    []autoResearchCandidatePatch `json:"patches"`
@@ -69,9 +76,13 @@ type autoResearchFileSnapshot struct {
 }
 
 type autoResearchEvaluation struct {
-	Guards []models.ResearchCommandResult
-	Eval   models.ResearchCommandResult
-	Metric float64
+	Guards       []models.ResearchCommandResult
+	Eval         models.ResearchCommandResult
+	Evals        []models.ResearchCommandResult
+	Metric       float64
+	Metrics      []float64
+	MetricStdDev float64
+	Aggregation  string
 }
 
 type autoResearchSourceFile struct {
@@ -100,7 +111,7 @@ func (a *ResearchCodingAgent) executeAutoResearchSpec(ctx context.Context, task 
 	specJSON, _ := json.Marshal(spec)
 	dependenciesJSON, _ := json.Marshal(spec.Dependencies)
 	specHash := autoResearchSHA(specJSON)
-	report := fmt.Sprintf("frozen AutoResearch spec %s (%s): %d editable file(s), %d protected file(s), max %d trial(s), %ds wall time, %d validation run(s)", spec.Name, specHash[:12], len(spec.EditableFiles), len(spec.ProtectedFiles), spec.MaxTrials, spec.MaxWallSeconds, spec.ValidationRuns)
+	report := fmt.Sprintf("frozen AutoResearch spec %s (%s): %d editable file(s), %d protected file(s), max %d trial(s), %ds wall time, search=%dx%s, validation=%d run(s)", spec.Name, specHash[:12], len(spec.EditableFiles), len(spec.ProtectedFiles), spec.MaxTrials, spec.MaxWallSeconds, spec.SearchRuns, spec.SearchAggregation, spec.ValidationRuns)
 
 	task.Result = report
 	task.StructuredData = string(specJSON)
@@ -182,6 +193,30 @@ func decodeAutoResearchSpec(raw []byte) (models.ResearchSpec, error) {
 	return spec, nil
 }
 
+func validateAutoResearchRepositoryRevision(task *models.Task, revision string) error {
+	if revision == "" {
+		return nil
+	}
+	raw := strings.TrimSpace(extractTaskInputLike(task, "repo_manifest"))
+	if raw == "" {
+		return fmt.Errorf("AutoResearch repository_revision requires repo_manifest evidence")
+	}
+	var manifest struct {
+		RequestedRevision string `json:"requested_revision"`
+		RepositoryCommit  string `json:"repository_commit"`
+	}
+	if err := json.Unmarshal([]byte(raw), &manifest); err != nil {
+		return fmt.Errorf("decode repo_manifest for repository revision: %w", err)
+	}
+	if requested := strings.TrimSpace(manifest.RequestedRevision); requested != "" && !strings.EqualFold(requested, revision) {
+		return fmt.Errorf("repo_manifest requested revision %q does not match AutoResearch repository_revision %q", requested, revision)
+	}
+	if !strings.EqualFold(strings.TrimSpace(manifest.RepositoryCommit), revision) {
+		return fmt.Errorf("repo_manifest commit %q does not match AutoResearch repository_revision %q", manifest.RepositoryCommit, revision)
+	}
+	return nil
+}
+
 func normalizeAndFreezeAutoResearchSpec(task *models.Task, workspacePath, source string, raw []byte, spec *models.ResearchSpec) error {
 	if spec == nil {
 		return fmt.Errorf("AutoResearch spec is nil")
@@ -191,11 +226,18 @@ func normalizeAndFreezeAutoResearchSpec(task *models.Task, workspacePath, source
 	}
 	spec.Name = strings.TrimSpace(spec.Name)
 	spec.Objective = strings.TrimSpace(spec.Objective)
+	spec.RepositoryRevision = strings.ToLower(strings.TrimSpace(spec.RepositoryRevision))
 	if spec.Name == "" || spec.Objective == "" {
 		return fmt.Errorf("AutoResearch spec requires name and objective")
 	}
 	if len(spec.Name) > 120 || len(spec.Objective) > 2000 {
 		return fmt.Errorf("AutoResearch spec name or objective is too long")
+	}
+	if spec.RepositoryRevision != "" && !autoResearchRepositoryRevisionRE.MatchString(spec.RepositoryRevision) {
+		return fmt.Errorf("AutoResearch repository_revision must be a full 40- or 64-character commit SHA")
+	}
+	if err := validateAutoResearchRepositoryRevision(task, spec.RepositoryRevision); err != nil {
+		return err
 	}
 
 	direction := strings.ToLower(strings.TrimSpace(spec.Direction))
@@ -212,6 +254,22 @@ func normalizeAndFreezeAutoResearchSpec(task *models.Task, workspacePath, source
 	}
 	if math.IsNaN(spec.MinDelta) || math.IsInf(spec.MinDelta, 0) || spec.MinDelta < 0 {
 		return fmt.Errorf("AutoResearch min_delta must be a finite non-negative number")
+	}
+	if spec.TargetScore != nil && (math.IsNaN(*spec.TargetScore) || math.IsInf(*spec.TargetScore, 0)) {
+		return fmt.Errorf("AutoResearch target_score must be finite when provided")
+	}
+	if spec.SearchRuns <= 0 {
+		spec.SearchRuns = autoResearchDefaultSearchRuns
+	}
+	if spec.SearchRuns > autoResearchMaxSearchRuns {
+		spec.SearchRuns = autoResearchMaxSearchRuns
+	}
+	spec.SearchAggregation = strings.ToLower(strings.TrimSpace(spec.SearchAggregation))
+	if spec.SearchAggregation == "" {
+		spec.SearchAggregation = "mean"
+	}
+	if !validAutoResearchSearchAggregation(spec.SearchAggregation) {
+		return fmt.Errorf("AutoResearch search_aggregation must be mean, median, or worst")
 	}
 
 	inputMaxTrials := boundedAutoResearchInput(task, "autoresearch_max_trials", autoResearchDefaultTrials, 1, autoResearchMaxTrials)
@@ -247,6 +305,19 @@ func normalizeAndFreezeAutoResearchSpec(task *models.Task, workspacePath, source
 
 	if err := validateAutoResearchCommand(spec.EvalCommand); err != nil {
 		return fmt.Errorf("invalid eval_command: %w", err)
+	}
+	if len(spec.HoldoutCommand) > 0 {
+		if err := validateAutoResearchCommand(spec.HoldoutCommand); err != nil {
+			return fmt.Errorf("invalid holdout_command: %w", err)
+		}
+		if equalAutoResearchCommands(spec.HoldoutCommand, spec.EvalCommand) {
+			return fmt.Errorf("holdout_command must differ from eval_command")
+		}
+		if spec.HoldoutMinDelta != nil && (*spec.HoldoutMinDelta < 0 || math.IsNaN(*spec.HoldoutMinDelta) || math.IsInf(*spec.HoldoutMinDelta, 0)) {
+			return fmt.Errorf("holdout_min_delta must be finite and non-negative")
+		}
+	} else if spec.HoldoutMinDelta != nil {
+		return fmt.Errorf("holdout_min_delta requires holdout_command")
 	}
 	if len(spec.GuardCommands) > 6 {
 		return fmt.Errorf("AutoResearch supports at most 6 guard commands")
@@ -296,6 +367,14 @@ func normalizeAndFreezeAutoResearchSpec(task *models.Task, workspacePath, source
 	if err := validateAutoResearchEvaluatorScope(workspacePath, spec.EvalCommand, editableSet); err != nil {
 		return err
 	}
+	if len(spec.HoldoutCommand) > 0 {
+		if err := validateAutoResearchEvaluatorScope(workspacePath, spec.HoldoutCommand, editableSet); err != nil {
+			return fmt.Errorf("holdout_command: %w", err)
+		}
+		if err := validateAutoResearchCommandProtectedScope(workspacePath, spec.HoldoutCommand, autoResearchPathSet(protected)); err != nil {
+			return err
+		}
+	}
 
 	spec.EditableFiles = editable
 	spec.ProtectedFiles = protected
@@ -328,7 +407,7 @@ func (a *ResearchCodingAgent) executeAutoResearchRun(ctx context.Context, task *
 	if err != nil {
 		return failResearchCodingTask(task, err)
 	}
-	spec, specJSON, specHash, err := autoResearchSpecFromTask(task)
+	spec, _, specHash, err := autoResearchSpecFromTask(task)
 	if err != nil {
 		return failResearchCodingTask(task, err)
 	}
@@ -337,6 +416,14 @@ func (a *ResearchCodingAgent) executeAutoResearchRun(ctx context.Context, task *
 	}
 	if err := validateAutoResearchEvaluatorScope(workspacePath, spec.EvalCommand, autoResearchPathSet(spec.EditableFiles)); err != nil {
 		return failResearchCodingTask(task, err)
+	}
+	if len(spec.HoldoutCommand) > 0 {
+		if err := validateAutoResearchEvaluatorScope(workspacePath, spec.HoldoutCommand, autoResearchPathSet(spec.EditableFiles)); err != nil {
+			return failResearchCodingTask(task, fmt.Errorf("holdout_command: %w", err))
+		}
+		if err := validateAutoResearchCommandProtectedScope(workspacePath, spec.HoldoutCommand, autoResearchPathSet(spec.ProtectedFiles)); err != nil {
+			return failResearchCodingTask(task, err)
+		}
 	}
 	if err := verifyAutoResearchSpecFiles(workspacePath, spec); err != nil {
 		return failResearchCodingTask(task, err)
@@ -361,7 +448,8 @@ func (a *ResearchCodingAgent) executeAutoResearchRun(ctx context.Context, task *
 	startedAt := time.Now().UTC()
 	ledger := models.ResearchTrialLedger{
 		Version: models.AutoResearchLedgerVersion, SpecSHA256: specHash, Status: "running",
-		MetricKey: spec.MetricKey, Direction: spec.Direction, MaxTrials: spec.MaxTrials,
+		MetricKey: spec.MetricKey, Direction: spec.Direction, TargetScore: spec.TargetScore, SearchRuns: spec.SearchRuns,
+		SearchAggregation: spec.SearchAggregation, MaxTrials: spec.MaxTrials,
 		ProtectedFiles: append([]models.ResearchFileHash(nil), spec.FrozenProtected...),
 		Trials:         []models.ResearchTrial{}, StartedAt: startedAt,
 	}
@@ -385,7 +473,9 @@ func (a *ResearchCodingAgent) executeAutoResearchRun(ctx context.Context, task *
 	baselineTrial := models.ResearchTrial{
 		Number: 0, Status: "baseline", Hypothesis: "frozen baseline", Decision: "keep",
 		Reason: "baseline establishes the initial score", GuardResults: baseline.Guards,
-		EvalResult: baseline.Eval, StartedAt: baselineStart, FinishedAt: time.Now().UTC(),
+		EvalResult: baseline.Eval, EvalResults: baseline.Evals,
+		MetricSamples: append([]float64(nil), baseline.Metrics...), MetricStdDev: baseline.MetricStdDev,
+		MetricAggregation: baseline.Aggregation, StartedAt: baselineStart, FinishedAt: time.Now().UTC(),
 	}
 	if baselineErr != nil {
 		baselineTrial.Status = "failed"
@@ -407,7 +497,34 @@ func (a *ResearchCodingAgent) executeAutoResearchRun(ctx context.Context, task *
 	ledger.Trials = append(ledger.Trials, baselineTrial)
 	ledger.BaselineScore = baselineMetric
 	ledger.BestScore = baselineMetric
+	if len(spec.HoldoutCommand) > 0 {
+		holdoutResult, holdoutMetric, holdoutErr := a.evaluateAutoResearchMetricCommand(runCtx, runtimeSession, workspacePath, spec, spec.HoldoutCommand)
+		ledger.HoldoutResult = &holdoutResult
+		if holdoutErr == nil {
+			currentHashes, hashErr := hashAutoResearchFiles(workspacePath, spec.EditableFiles, autoResearchMaxFileBytes, false)
+			if hashErr != nil {
+				holdoutErr = hashErr
+			} else if !equalAutoResearchHashes(currentHashes, baselineEditableHashes) {
+				holdoutErr = fmt.Errorf("editable files changed during frozen holdout baseline evaluation")
+			}
+		}
+		if holdoutErr != nil {
+			ledger.Status = "failed"
+			ledger.StopReason = "holdout_baseline_failed"
+			ledger.FinishedAt = time.Now().UTC()
+			if restoreErr := restoreAutoResearchWorkspace(workspacePath, spec.EditableFiles, immutableSnapshots, protectedSnapshots, editableSnapshots); restoreErr != nil {
+				holdoutErr = fmt.Errorf("%w; holdout baseline restore failed: %v", holdoutErr, restoreErr)
+			}
+			return failAutoResearchRun(task, &ledger, holdoutErr)
+		}
+		ledger.HoldoutBaseline = &holdoutMetric
+		logToContext(ctx, "[%s] AutoResearch frozen holdout baseline captured", a.Name)
+	}
+
 	bestSnapshots := editableSnapshots
+	candidateSpecJSON := autoResearchCandidateSpecJSON(spec)
+	readOnlyContext := autoResearchReadOnlySourceContext(workspacePath, spec)
+	rejectedCandidateFeedback := "{}"
 	logToContext(ctx, "[%s] AutoResearch baseline %s=%.8g", a.Name, spec.MetricKey, baselineMetric)
 
 	for trialNumber := 1; trialNumber <= spec.MaxTrials; trialNumber++ {
@@ -415,25 +532,53 @@ func (a *ResearchCodingAgent) executeAutoResearchRun(ctx context.Context, task *
 			ledger.StopReason = "wall_time_budget_exhausted"
 			break
 		}
-		proposal, proposalErr := a.proposeAutoResearchCandidate(runCtx, spec, specJSON, ledger, bestSnapshots)
+		proposal, proposalErr := a.proposeAutoResearchCandidate(runCtx, spec, candidateSpecJSON, ledger, bestSnapshots, readOnlyContext, rejectedCandidateFeedback)
 		if proposalErr != nil {
-			ledger.StopReason = "candidate_model_error: " + proposalErr.Error()
-			break
+			if runCtx.Err() != nil {
+				ledger.StopReason = "wall_time_budget_exhausted"
+				break
+			}
+			now := time.Now().UTC()
+			failure := "candidate model output rejected: " + proposalErr.Error()
+			ledger.Trials = append(ledger.Trials, models.ResearchTrial{
+				Number: trialNumber, Status: "rejected", Decision: "reject", Reason: failure,
+				StartedAt: now, FinishedAt: now,
+			})
+			ledger.CompletedTrials++
+			rejectedCandidateFeedback = autoResearchModelFailureFeedback(failure)
+			logToContext(ctx, "[%s] AutoResearch trial %d: candidate model output rejected", a.Name, trialNumber)
+			continue
 		}
 		if proposal.Status != "propose" {
+			if proposal.Status == "stop" {
+				visibleFailures := autoResearchVisibleFailures(ledger.Trials)
+				if len(visibleFailures) > 0 {
+					now := time.Now().UTC()
+					ledger.Trials = append(ledger.Trials, models.ResearchTrial{
+						Number: trialNumber, Status: "rejected", Diagnosis: proposal.Diagnosis,
+						Hypothesis: proposal.Hypothesis, Decision: "reject",
+						Reason:    fmt.Sprintf("premature stop rejected: visible evaluator still reports unresolved cases: %s", strings.Join(visibleFailures, ", ")),
+						StartedAt: now, FinishedAt: now,
+					})
+					ledger.CompletedTrials++
+					logToContext(ctx, "[%s] AutoResearch trial %d: premature stop rejected", a.Name, trialNumber)
+					continue
+				}
+			}
 			ledger.StopReason = proposal.Status + ": " + chooseNonEmpty(proposal.Reason, "candidate model stopped")
 			break
 		}
 
 		trial := models.ResearchTrial{
-			Number: trialNumber, Status: "running", Hypothesis: proposal.Hypothesis,
+			Number: trialNumber, Status: "running", Diagnosis: proposal.Diagnosis, Hypothesis: proposal.Hypothesis,
 			Decision: "reject", Reason: proposal.Reason, StartedAt: time.Now().UTC(),
 		}
-		patches, applyErr := applyAutoResearchCandidate(workspacePath, proposal, bestSnapshots)
+		patches, applyErr := applyAutoResearchCandidate(workspacePath, proposal, bestSnapshots, len(spec.HoldoutCommand) > 0)
 		trial.Patches = patches
 		if applyErr != nil {
 			trial.Status = "rejected"
 			trial.Reason = "candidate rejected before execution: " + applyErr.Error()
+			rejectedCandidateFeedback = autoResearchRejectedCandidateFeedback(proposal, trial.Reason, autoResearchEvaluation{})
 			trial.FinishedAt = time.Now().UTC()
 			ledger.Trials = append(ledger.Trials, trial)
 			ledger.CompletedTrials++
@@ -448,6 +593,7 @@ func (a *ResearchCodingAgent) executeAutoResearchRun(ctx context.Context, task *
 		if hashErr != nil {
 			trial.Status = "rejected"
 			trial.Reason = "candidate hash failed: " + hashErr.Error()
+			rejectedCandidateFeedback = autoResearchRejectedCandidateFeedback(proposal, trial.Reason, autoResearchEvaluation{})
 			trial.FinishedAt = time.Now().UTC()
 			ledger.Trials = append(ledger.Trials, trial)
 			ledger.CompletedTrials++
@@ -462,6 +608,10 @@ func (a *ResearchCodingAgent) executeAutoResearchRun(ctx context.Context, task *
 		evaluation, evalErr := a.evaluateAutoResearchCandidate(runCtx, runtimeSession, workspacePath, spec)
 		trial.GuardResults = evaluation.Guards
 		trial.EvalResult = evaluation.Eval
+		trial.EvalResults = evaluation.Evals
+		trial.MetricSamples = append([]float64(nil), evaluation.Metrics...)
+		trial.MetricStdDev = evaluation.MetricStdDev
+		trial.MetricAggregation = evaluation.Aggregation
 		if integrityErr := verifyAutoResearchSpecFiles(workspacePath, spec); integrityErr != nil {
 			trial.Status = "compromised"
 			trial.Decision = "abort"
@@ -501,6 +651,7 @@ func (a *ResearchCodingAgent) executeAutoResearchRun(ctx context.Context, task *
 		if evalErr != nil {
 			trial.Status = "rejected"
 			trial.Reason = "candidate execution failed: " + evalErr.Error()
+			rejectedCandidateFeedback = autoResearchRejectedCandidateFeedback(proposal, trial.Reason, evaluation)
 			if restoreErr := restoreAutoResearchGroups(bestSnapshots); restoreErr != nil {
 				trial.Status = "failed"
 				trial.Decision = "abort"
@@ -528,9 +679,11 @@ func (a *ResearchCodingAgent) executeAutoResearchRun(ctx context.Context, task *
 					return failAutoResearchRun(task, &ledger, snapshotErr)
 				}
 				bestSnapshots = newBestSnapshots
+				rejectedCandidateFeedback = "{}"
 			} else {
 				trial.Status = "rejected"
 				trial.Reason = fmt.Sprintf("%s delta %.8g did not meet %.8g", spec.MetricKey, delta, spec.MinDelta)
+				rejectedCandidateFeedback = autoResearchRejectedCandidateFeedback(proposal, trial.Reason, evaluation)
 				if restoreErr := restoreAutoResearchGroups(bestSnapshots); restoreErr != nil {
 					trial.Status = "failed"
 					trial.Decision = "abort"
@@ -548,6 +701,10 @@ func (a *ResearchCodingAgent) executeAutoResearchRun(ctx context.Context, task *
 		ledger.Trials = append(ledger.Trials, trial)
 		ledger.CompletedTrials++
 		logToContext(ctx, "[%s] AutoResearch trial %d: %s", a.Name, trialNumber, trial.Status)
+		if trial.Status == "kept" && autoResearchTargetReached(spec.TargetScore, ledger.BestScore, spec.Direction) {
+			ledger.StopReason = "target_score_reached"
+			break
+		}
 	}
 
 	if ledger.StopReason == "" {
@@ -567,7 +724,7 @@ func (a *ResearchCodingAgent) executeAutoResearchRun(ctx context.Context, task *
 	}
 	ledgerJSON, _ := json.Marshal(ledger)
 	bestJSON, _ := json.Marshal(best)
-	report := fmt.Sprintf("AutoResearch completed %d/%d candidate trial(s); kept %d; %s %.8g -> %.8g; commands=%d; command_time=%dms; stop=%s", ledger.CompletedTrials, spec.MaxTrials, ledger.AcceptedTrials, spec.MetricKey, ledger.BaselineScore, ledger.BestScore, ledger.ResourceUsage.CommandRuns, ledger.ResourceUsage.CommandDurationMS, ledger.StopReason)
+	report := fmt.Sprintf("AutoResearch completed %d/%d candidate trial(s); kept %d; %s %.8g -> %.8g; search=%dx%s; commands=%d; command_time=%dms; stop=%s", ledger.CompletedTrials, spec.MaxTrials, ledger.AcceptedTrials, spec.MetricKey, ledger.BaselineScore, ledger.BestScore, spec.SearchRuns, spec.SearchAggregation, ledger.ResourceUsage.CommandRuns, ledger.ResourceUsage.CommandDurationMS, ledger.StopReason)
 
 	task.Result = string(ledgerJSON)
 	task.StructuredData = string(ledgerJSON)
@@ -605,6 +762,14 @@ func (a *ResearchCodingAgent) executeAutoResearchValidation(ctx context.Context,
 	if err := validateAutoResearchEvaluatorScope(workspacePath, spec.EvalCommand, autoResearchPathSet(spec.EditableFiles)); err != nil {
 		return failResearchCodingTask(task, err)
 	}
+	if len(spec.HoldoutCommand) > 0 {
+		if err := validateAutoResearchEvaluatorScope(workspacePath, spec.HoldoutCommand, autoResearchPathSet(spec.EditableFiles)); err != nil {
+			return failResearchCodingTask(task, fmt.Errorf("holdout_command: %w", err))
+		}
+		if err := validateAutoResearchCommandProtectedScope(workspacePath, spec.HoldoutCommand, autoResearchPathSet(spec.ProtectedFiles)); err != nil {
+			return failResearchCodingTask(task, err)
+		}
+	}
 	ledger, _, ledgerHash, err := autoResearchLedgerFromTask(task)
 	if err != nil {
 		return failResearchCodingTask(task, err)
@@ -625,6 +790,25 @@ func (a *ResearchCodingAgent) executeAutoResearchValidation(ctx context.Context,
 
 	validationStartedAt := time.Now().UTC()
 	requestedRuns := effectiveAutoResearchValidationRuns(spec)
+	validationMode := "search_evaluator_replay"
+	validationCommand := spec.EvalCommand
+	expectedScore := ledger.BestScore
+	var holdoutBaseline *float64
+	if len(spec.HoldoutCommand) > 0 {
+		validationMode = "hidden_holdout"
+		validationCommand = spec.HoldoutCommand
+		if ledger.HoldoutBaseline == nil || ledger.HoldoutResult == nil {
+			return failResearchCodingTask(task, fmt.Errorf("AutoResearch ledger is missing the frozen holdout baseline"))
+		}
+		baseline := *ledger.HoldoutBaseline
+		holdoutBaseline = &baseline
+		holdoutMinDelta := effectiveAutoResearchHoldoutMinDelta(spec)
+		if spec.Direction == "minimize" {
+			expectedScore = baseline - holdoutMinDelta
+		} else {
+			expectedScore = baseline + holdoutMinDelta
+		}
+	}
 	protectedErr := verifyAutoResearchSpecFiles(workspacePath, spec)
 	immutableErr := verifyAutoResearchImmutableFingerprint(workspacePath, spec.EditableFiles, spec.FrozenWorkspace)
 	candidateHashes, candidateErr := hashAutoResearchFiles(workspacePath, spec.EditableFiles, autoResearchMaxFileBytes, false)
@@ -663,7 +847,15 @@ func (a *ResearchCodingAgent) executeAutoResearchValidation(ctx context.Context,
 				break
 			}
 			run := models.ResearchValidationRun{Number: runNumber, Status: "running", StartedAt: time.Now().UTC()}
-			evaluation, evalErr := a.evaluateAutoResearchCandidate(ctx, runtimeSession, workspacePath, spec)
+			if restoreErr := restoreAutoResearchWorkspace(workspacePath, spec.EditableFiles, immutableSnapshots, protectedSnapshots, candidateSnapshots); restoreErr != nil {
+				run.Status = "failed"
+				run.Error = "restore clean validation snapshot: " + restoreErr.Error()
+				run.FinishedAt = time.Now().UTC()
+				runs = append(runs, run)
+				validationErr = fmt.Errorf("validation run %d: %s", run.Number, run.Error)
+				break
+			}
+			evaluation, evalErr := a.evaluateAutoResearchWithCommand(ctx, runtimeSession, workspacePath, spec, validationCommand)
 			run.GuardResults = evaluation.Guards
 			run.EvalResult = evaluation.Eval
 			if !legacyEvaluationSet {
@@ -700,13 +892,23 @@ func (a *ResearchCodingAgent) executeAutoResearchValidation(ctx context.Context,
 				observed := evaluation.Metric
 				run.ObservedScore = &observed
 				observedScores = append(observedScores, observed)
-				run.ScoreMatches = math.Abs(observed-ledger.BestScore) <= tolerance
+				if holdoutBaseline != nil {
+					delta := autoResearchDelta(observed, *holdoutBaseline, spec.Direction)
+					run.DeltaFromBaseline = &delta
+					run.ScoreMatches = autoResearchImproved(observed, *holdoutBaseline, spec.Direction, effectiveAutoResearchHoldoutMinDelta(spec))
+				} else {
+					run.ScoreMatches = math.Abs(observed-ledger.BestScore) <= tolerance
+				}
 				if run.ScoreMatches {
 					run.Status = "validated"
 					passedRuns++
 				} else {
 					run.Status = "failed"
-					run.Error = fmt.Sprintf("observed %s=%.8g differs from expected %.8g", spec.MetricKey, observed, ledger.BestScore)
+					if holdoutBaseline != nil {
+						run.Error = fmt.Sprintf("hidden holdout %s=%.8g did not improve baseline %.8g by required %.8g", spec.MetricKey, observed, *holdoutBaseline, effectiveAutoResearchHoldoutMinDelta(spec))
+					} else {
+						run.Error = fmt.Sprintf("observed %s=%.8g differs from search score %.8g", spec.MetricKey, observed, ledger.BestScore)
+					}
 				}
 			} else {
 				run.Status = "failed"
@@ -729,9 +931,11 @@ func (a *ResearchCodingAgent) executeAutoResearchValidation(ctx context.Context,
 	failureRate := float64(failedRuns+unfinishedRuns) / float64(requestedRuns)
 	scoreMatches := passedRuns == requestedRuns
 	status := "validated"
-	summary := fmt.Sprintf("%d independent evaluator run(s) confirmed %s=%.8g (stddev %.8g)", requestedRuns, spec.MetricKey, meanScore, stddev)
-	if requestedRuns == 1 {
-		summary = fmt.Sprintf("independent evaluator confirmed %s=%.8g", spec.MetricKey, meanScore)
+	summary := fmt.Sprintf("%d search-evaluator replay run(s) reproduced %s=%.8g (stddev %.8g); no hidden holdout configured", requestedRuns, spec.MetricKey, meanScore, stddev)
+	if holdoutBaseline != nil {
+		summary = fmt.Sprintf("%d hidden holdout run(s) accepted %s baseline %.8g -> mean %.8g (stddev %.8g)", requestedRuns, spec.MetricKey, *holdoutBaseline, meanScore, stddev)
+	} else if requestedRuns == 1 {
+		summary = fmt.Sprintf("search-evaluator replay reproduced %s=%.8g; no hidden holdout configured", spec.MetricKey, meanScore)
 	}
 	if !protectedIntact || !workspaceIntact || !candidateIntact || !scoreMatches {
 		status = "failed"
@@ -743,8 +947,8 @@ func (a *ResearchCodingAgent) executeAutoResearchValidation(ctx context.Context,
 	validatedAt := time.Now().UTC()
 	resourceUsage := summarizeAutoResearchValidationUsage(runs, validationStartedAt, validatedAt)
 	report := models.ResearchValidationReport{
-		Version: models.AutoResearchValidationVersion, Status: status, SpecSHA256: specHash,
-		LedgerSHA256: ledgerHash, ExpectedScore: ledger.BestScore, ObservedScore: meanScore,
+		Version: models.AutoResearchValidationVersion, Status: status, ValidationMode: validationMode, SpecSHA256: specHash,
+		LedgerSHA256: ledgerHash, ExpectedScore: expectedScore, SearchBestScore: ledger.BestScore, HoldoutBaseline: holdoutBaseline, ObservedScore: meanScore,
 		ObservedScores: observedScores, MeanScore: meanScore, StdDev: stddev, MinScore: minScore, MaxScore: maxScore,
 		MetricKey: spec.MetricKey, ScoreMatches: scoreMatches, ProtectedIntact: protectedIntact,
 		RequestedRuns: requestedRuns, CompletedRuns: completedRuns, PassedRuns: passedRuns, FailedRuns: failedRuns,
@@ -754,7 +958,8 @@ func (a *ResearchCodingAgent) executeAutoResearchValidation(ctx context.Context,
 	}
 	reportJSON, _ := json.Marshal(report)
 	metricsJSON, _ := json.Marshal(map[string]any{
-		"metric_key": spec.MetricKey, "score": meanScore, "expected_score": ledger.BestScore,
+		"metric_key": spec.MetricKey, "score": meanScore, "expected_score": expectedScore,
+		"validation_mode": validationMode, "search_best_score": ledger.BestScore, "holdout_baseline_score": holdoutBaseline,
 		"stddev": stddev, "observed_scores": observedScores, "requested_runs": requestedRuns,
 		"min_score": minScore, "max_score": maxScore, "completed_runs": completedRuns,
 		"passed_runs": passedRuns, "failure_rate": failureRate, "status": status,
@@ -767,7 +972,12 @@ func (a *ResearchCodingAgent) executeAutoResearchValidation(ctx context.Context,
 		"research_best_metrics":      string(metricsJSON),
 	})
 	if status != "validated" {
-		return failResearchCodingTask(task, fmt.Errorf("%s", summary))
+		if !protectedIntact || !workspaceIntact || !candidateIntact || unfinishedRuns > 0 {
+			return failResearchCodingTask(task, fmt.Errorf("%s", summary))
+		}
+		task.Status = models.StatusCompleted
+		logToContext(ctx, "[%s] AutoResearch candidate rejected by %s: %s", a.Name, validationMode, summary)
+		return nil
 	}
 	task.Status = models.StatusCompleted
 	logToContext(ctx, "[%s] %s", a.Name, summary)
@@ -779,6 +989,13 @@ func effectiveAutoResearchValidationRuns(spec models.ResearchSpec) int {
 		return autoResearchDefaultValidationRuns
 	}
 	return spec.ValidationRuns
+}
+
+func effectiveAutoResearchHoldoutMinDelta(spec models.ResearchSpec) float64 {
+	if spec.HoldoutMinDelta != nil {
+		return *spec.HoldoutMinDelta
+	}
+	return spec.MinDelta
 }
 
 func autoResearchScoreStats(scores []float64) (mean, stddev, minimum, maximum float64) {
@@ -797,12 +1014,77 @@ func autoResearchScoreStats(scores []float64) (mean, stddev, minimum, maximum fl
 		}
 	}
 	mean /= float64(len(scores))
+	if minimum == maximum {
+		return mean, 0, minimum, maximum
+	}
 	for _, score := range scores {
 		delta := score - mean
 		stddev += delta * delta
 	}
 	stddev = math.Sqrt(stddev / float64(len(scores)))
 	return mean, stddev, minimum, maximum
+}
+
+func validAutoResearchSearchAggregation(aggregation string) bool {
+	switch aggregation {
+	case "mean", "median", "worst":
+		return true
+	default:
+		return false
+	}
+}
+
+func autoResearchTargetReached(target *float64, score float64, direction string) bool {
+	if target == nil || math.IsNaN(score) || math.IsInf(score, 0) {
+		return false
+	}
+	const epsilon = 1e-12
+	if direction == "minimize" {
+		return score <= *target+epsilon
+	}
+	return direction == "maximize" && score >= *target-epsilon
+}
+
+func equalOptionalAutoResearchScores(left, right *float64) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return math.Float64bits(*left) == math.Float64bits(*right)
+}
+
+func aggregateAutoResearchScores(scores []float64, aggregation, direction string) (float64, error) {
+	if len(scores) == 0 {
+		return 0, fmt.Errorf("cannot aggregate empty AutoResearch score samples")
+	}
+	for _, score := range scores {
+		if math.IsNaN(score) || math.IsInf(score, 0) {
+			return 0, fmt.Errorf("cannot aggregate non-finite AutoResearch score sample")
+		}
+	}
+	switch aggregation {
+	case "mean":
+		mean, _, _, _ := autoResearchScoreStats(scores)
+		return mean, nil
+	case "median":
+		ordered := append([]float64(nil), scores...)
+		sort.Float64s(ordered)
+		middle := len(ordered) / 2
+		if len(ordered)%2 == 1 {
+			return ordered[middle], nil
+		}
+		return (ordered[middle-1] + ordered[middle]) / 2, nil
+	case "worst":
+		_, _, minimum, maximum := autoResearchScoreStats(scores)
+		if direction == "maximize" {
+			return minimum, nil
+		}
+		if direction == "minimize" {
+			return maximum, nil
+		}
+		return 0, fmt.Errorf("invalid AutoResearch metric direction %q", direction)
+	default:
+		return 0, fmt.Errorf("invalid AutoResearch search aggregation %q", aggregation)
+	}
 }
 
 func summarizeAutoResearchValidationUsage(runs []models.ResearchValidationRun, startedAt, finishedAt time.Time) models.ResearchResourceUsage {
@@ -841,6 +1123,12 @@ func validateFrozenAutoResearchSpec(spec models.ResearchSpec) error {
 	}
 	if !autoResearchMetricKeyRE.MatchString(spec.MetricKey) || spec.MinDelta < 0 || math.IsNaN(spec.MinDelta) || math.IsInf(spec.MinDelta, 0) {
 		return fmt.Errorf("frozen AutoResearch metric contract is invalid")
+	}
+	if spec.TargetScore != nil && (math.IsNaN(*spec.TargetScore) || math.IsInf(*spec.TargetScore, 0)) {
+		return fmt.Errorf("frozen AutoResearch target score is invalid")
+	}
+	if spec.SearchRuns < 1 || spec.SearchRuns > autoResearchMaxSearchRuns || !validAutoResearchSearchAggregation(spec.SearchAggregation) {
+		return fmt.Errorf("frozen AutoResearch search measurement contract is invalid")
 	}
 	if spec.MaxTrials < 1 || spec.MaxTrials > autoResearchMaxTrials || spec.MaxWallSeconds < 1 || spec.MaxWallSeconds > autoResearchMaxWallSeconds {
 		return fmt.Errorf("frozen AutoResearch budget exceeds runtime limits")
@@ -899,6 +1187,19 @@ func validateFrozenAutoResearchSpec(spec models.ResearchSpec) error {
 	if err := validateAutoResearchCommand(spec.EvalCommand); err != nil {
 		return fmt.Errorf("frozen AutoResearch eval command is invalid: %w", err)
 	}
+	if len(spec.HoldoutCommand) > 0 {
+		if err := validateAutoResearchCommand(spec.HoldoutCommand); err != nil {
+			return fmt.Errorf("frozen AutoResearch holdout command is invalid: %w", err)
+		}
+		if equalAutoResearchCommands(spec.HoldoutCommand, spec.EvalCommand) {
+			return fmt.Errorf("frozen AutoResearch holdout command must differ from the eval command")
+		}
+		if spec.HoldoutMinDelta != nil && (*spec.HoldoutMinDelta < 0 || math.IsNaN(*spec.HoldoutMinDelta) || math.IsInf(*spec.HoldoutMinDelta, 0)) {
+			return fmt.Errorf("frozen AutoResearch holdout minimum delta is invalid")
+		}
+	} else if spec.HoldoutMinDelta != nil {
+		return fmt.Errorf("frozen AutoResearch holdout minimum delta has no holdout command")
+	}
 	if len(spec.GuardCommands) > 6 {
 		return fmt.Errorf("frozen AutoResearch guard command count is invalid")
 	}
@@ -943,11 +1244,24 @@ func autoResearchLedgerFromTask(task *models.Task) (models.ResearchTrialLedger, 
 }
 
 func validateAutoResearchLedgerAgainstSpec(ledger models.ResearchTrialLedger, spec models.ResearchSpec) error {
-	if ledger.MetricKey != spec.MetricKey || ledger.Direction != spec.Direction || ledger.MaxTrials != spec.MaxTrials {
-		return fmt.Errorf("research_trial_ledger metric, direction or budget does not match the frozen spec")
+	if ledger.MetricKey != spec.MetricKey || ledger.Direction != spec.Direction || ledger.MaxTrials != spec.MaxTrials ||
+		ledger.SearchRuns != spec.SearchRuns || ledger.SearchAggregation != spec.SearchAggregation ||
+		!equalOptionalAutoResearchScores(ledger.TargetScore, spec.TargetScore) {
+		return fmt.Errorf("research_trial_ledger metric, measurement contract, direction or budget does not match the frozen spec")
 	}
 	if !equalAutoResearchHashes(ledger.ProtectedFiles, spec.FrozenProtected) {
 		return fmt.Errorf("research_trial_ledger protected files do not match the frozen spec")
+	}
+	if len(spec.HoldoutCommand) > 0 {
+		if ledger.HoldoutBaseline == nil || ledger.HoldoutResult == nil {
+			return fmt.Errorf("research_trial_ledger is missing frozen holdout baseline evidence")
+		}
+		if math.IsNaN(*ledger.HoldoutBaseline) || math.IsInf(*ledger.HoldoutBaseline, 0) ||
+			!equalAutoResearchCommands(ledger.HoldoutResult.Command, spec.HoldoutCommand) || ledger.HoldoutResult.ExitCode != 0 || ledger.HoldoutResult.Error != "" {
+			return fmt.Errorf("research_trial_ledger holdout baseline evidence is invalid")
+		}
+	} else if ledger.HoldoutBaseline != nil || ledger.HoldoutResult != nil {
+		return fmt.Errorf("research_trial_ledger contains holdout evidence absent from the frozen spec")
 	}
 	if len(ledger.Trials) == 0 {
 		return fmt.Errorf("research_trial_ledger has no baseline trial")
@@ -957,15 +1271,24 @@ func validateAutoResearchLedgerAgainstSpec(ledger models.ResearchTrialLedger, sp
 		math.Float64bits(*baseline.Metric) != math.Float64bits(ledger.BaselineScore) {
 		return fmt.Errorf("research_trial_ledger baseline evidence is inconsistent")
 	}
+	if err := validateAutoResearchTrialMeasurement(baseline, spec); err != nil {
+		return fmt.Errorf("research_trial_ledger baseline measurement is invalid: %w", err)
+	}
 
 	bestScore := ledger.BaselineScore
 	accepted := 0
+	targetReached := false
 	for index, trial := range ledger.Trials[1:] {
 		if trial.Number != index+1 {
 			return fmt.Errorf("research_trial_ledger trial numbers are not sequential")
 		}
 		if trial.Metric != nil && (math.IsNaN(*trial.Metric) || math.IsInf(*trial.Metric, 0)) {
 			return fmt.Errorf("research_trial_ledger trial %d contains a non-finite metric", trial.Number)
+		}
+		if trial.Metric != nil {
+			if err := validateAutoResearchTrialMeasurement(trial, spec); err != nil {
+				return fmt.Errorf("research_trial_ledger trial %d measurement is invalid: %w", trial.Number, err)
+			}
 		}
 		switch trial.Status {
 		case "kept":
@@ -974,6 +1297,12 @@ func validateAutoResearchLedgerAgainstSpec(ledger models.ResearchTrialLedger, sp
 			}
 			bestScore = *trial.Metric
 			accepted++
+			if autoResearchTargetReached(spec.TargetScore, bestScore, spec.Direction) {
+				if index != len(ledger.Trials[1:])-1 {
+					return fmt.Errorf("research_trial_ledger continued after reaching the frozen target")
+				}
+				targetReached = true
+			}
 		case "rejected":
 			if trial.Decision != "reject" {
 				return fmt.Errorf("research_trial_ledger rejected trial %d has an invalid decision", trial.Number)
@@ -988,6 +1317,15 @@ func validateAutoResearchLedgerAgainstSpec(ledger models.ResearchTrialLedger, sp
 	if accepted != ledger.AcceptedTrials || math.Float64bits(bestScore) != math.Float64bits(ledger.BestScore) {
 		return fmt.Errorf("research_trial_ledger best score or accepted count is inconsistent")
 	}
+	if targetReached != (ledger.StopReason == "target_score_reached") {
+		return fmt.Errorf("research_trial_ledger target stop reason is inconsistent")
+	}
+	if targetReached {
+		last := ledger.Trials[len(ledger.Trials)-1]
+		if ledger.TargetScore == nil || accepted == 0 || last.Status != "kept" || !autoResearchTargetReached(ledger.TargetScore, bestScore, ledger.Direction) {
+			return fmt.Errorf("research_trial_ledger target stop evidence is inconsistent")
+		}
+	}
 	if ledger.ResourceUsage != nil {
 		expectedLedger := ledger
 		expectedLedger.ResourceUsage = nil
@@ -995,6 +1333,39 @@ func validateAutoResearchLedgerAgainstSpec(ledger models.ResearchTrialLedger, sp
 		if expectedLedger.ResourceUsage == nil || *ledger.ResourceUsage != *expectedLedger.ResourceUsage {
 			return fmt.Errorf("research_trial_ledger resource usage is inconsistent with command evidence")
 		}
+	}
+	return nil
+}
+
+func validateAutoResearchTrialMeasurement(trial models.ResearchTrial, spec models.ResearchSpec) error {
+	if trial.Metric == nil {
+		return fmt.Errorf("aggregated metric is missing")
+	}
+	if len(trial.MetricSamples) != spec.SearchRuns || len(trial.EvalResults) != spec.SearchRuns {
+		return fmt.Errorf("expected %d complete evaluator samples, got metrics=%d commands=%d", spec.SearchRuns, len(trial.MetricSamples), len(trial.EvalResults))
+	}
+	if trial.MetricAggregation != spec.SearchAggregation {
+		return fmt.Errorf("aggregation %q does not match frozen %q", trial.MetricAggregation, spec.SearchAggregation)
+	}
+	for _, result := range trial.EvalResults {
+		if !equalAutoResearchCommands(result.Command, spec.EvalCommand) || result.ExitCode != 0 || result.Error != "" {
+			return fmt.Errorf("evaluator command evidence is incomplete")
+		}
+	}
+	aggregated, err := aggregateAutoResearchScores(trial.MetricSamples, trial.MetricAggregation, spec.Direction)
+	if err != nil {
+		return err
+	}
+	if math.Float64bits(aggregated) != math.Float64bits(*trial.Metric) {
+		return fmt.Errorf("aggregated metric does not match raw samples")
+	}
+	_, stddev, _, _ := autoResearchScoreStats(trial.MetricSamples)
+	if math.Float64bits(stddev) != math.Float64bits(trial.MetricStdDev) {
+		return fmt.Errorf("metric standard deviation does not match raw samples")
+	}
+	last := trial.EvalResults[len(trial.EvalResults)-1]
+	if !equalAutoResearchCommands(trial.EvalResult.Command, last.Command) || trial.EvalResult.ExitCode != last.ExitCode || trial.EvalResult.Error != last.Error {
+		return fmt.Errorf("legacy evaluator result does not identify the final sample")
 	}
 	return nil
 }
@@ -1021,17 +1392,18 @@ func validateAutoResearchBestCandidate(best models.ResearchBestCandidate, ledger
 	return nil
 }
 
-func (a *ResearchCodingAgent) proposeAutoResearchCandidate(ctx context.Context, spec models.ResearchSpec, specJSON []byte, ledger models.ResearchTrialLedger, snapshots []autoResearchFileSnapshot) (autoResearchCandidateResponse, error) {
+func (a *ResearchCodingAgent) proposeAutoResearchCandidate(ctx context.Context, spec models.ResearchSpec, specJSON []byte, ledger models.ResearchTrialLedger, snapshots []autoResearchFileSnapshot, readOnlyContext, rejectedCandidateFeedback string) (autoResearchCandidateResponse, error) {
 	var response autoResearchCandidateResponse
 	contextText := autoResearchSourceContext(snapshots)
 	ledgerSummary, _ := json.Marshal(map[string]any{
 		"baseline_score": ledger.BaselineScore, "best_score": ledger.BestScore,
 		"completed_trials": ledger.CompletedTrials, "accepted_trials": ledger.AcceptedTrials,
-		"recent_trials": recentAutoResearchTrials(ledger.Trials, 4),
+		"recent_trials":             recentAutoResearchTrials(ledger.Trials, 4),
+		"latest_evaluator_evidence": latestAutoResearchEvaluatorEvidence(ledger.Trials),
 	})
 	message, err := a.ChatModel.Generate(ctx, []*schema.Message{
 		{Role: schema.System, Content: prompts.AutoResearchCandidateSystemPrompt},
-		{Role: schema.User, Content: prompts.AutoResearchCandidateUserPrompt(string(specJSON), string(ledgerSummary), contextText)},
+		{Role: schema.User, Content: prompts.AutoResearchCandidateUserPrompt(string(specJSON), string(ledgerSummary), contextText, readOnlyContext, rejectedCandidateFeedback)},
 	})
 	if err != nil {
 		return response, fmt.Errorf("candidate generation failed: %w", err)
@@ -1040,12 +1412,13 @@ func (a *ResearchCodingAgent) proposeAutoResearchCandidate(ctx context.Context, 
 		return response, fmt.Errorf("decode candidate response: %w", err)
 	}
 	response.Status = strings.ToLower(strings.TrimSpace(response.Status))
+	response.Diagnosis = strings.TrimSpace(response.Diagnosis)
 	response.Hypothesis = strings.TrimSpace(response.Hypothesis)
 	response.Reason = strings.TrimSpace(response.Reason)
 	switch response.Status {
 	case "propose":
-		if response.Hypothesis == "" || len(response.Patches) == 0 || len(response.Patches) > autoResearchMaxPatchFiles {
-			return response, fmt.Errorf("candidate proposal requires a hypothesis and 1-%d patches", autoResearchMaxPatchFiles)
+		if response.Diagnosis == "" || response.Hypothesis == "" || len(response.Patches) == 0 || len(response.Patches) > autoResearchMaxPatchFiles {
+			return response, fmt.Errorf("candidate proposal requires a diagnosis, hypothesis and 1-%d patches", autoResearchMaxPatchFiles)
 		}
 	case "stop", "unsupported":
 		response.Patches = nil
@@ -1055,7 +1428,46 @@ func (a *ResearchCodingAgent) proposeAutoResearchCandidate(ctx context.Context, 
 	return response, nil
 }
 
-func applyAutoResearchCandidate(workspacePath string, proposal autoResearchCandidateResponse, best []autoResearchFileSnapshot) ([]models.ResearchPatch, error) {
+func autoResearchRejectedCandidateFeedback(proposal autoResearchCandidateResponse, failure string, evaluation autoResearchEvaluation) string {
+	patches := make([]map[string]string, 0, len(proposal.Patches))
+	for _, patch := range proposal.Patches {
+		patches = append(patches, map[string]string{
+			"path": patch.Path, "content": patch.Content, "reason": patch.Reason,
+		})
+	}
+	payload := map[string]any{
+		"failure": failure,
+		"patches": patches,
+	}
+	if len(evaluation.Guards) > 0 {
+		payload["guard_results"] = evaluation.Guards
+	}
+	if len(evaluation.Eval.Command) > 0 || evaluation.Eval.Error != "" || evaluation.Eval.StdoutPreview != "" || evaluation.Eval.StderrPreview != "" {
+		payload["evaluator_result"] = evaluation.Eval
+	}
+	encoded, _ := json.Marshal(payload)
+	return truncatePaperDebugText(string(encoded), autoResearchMaxReadOnlyBytes)
+}
+
+func autoResearchModelFailureFeedback(failure string) string {
+	payload := map[string]any{
+		"failure": failure,
+		"required_response": map[string]any{
+			"status":     "propose|stop|unsupported",
+			"diagnosis":  "failing case, actual input and current call path",
+			"hypothesis": "falsifiable hypothesis",
+			"reason":     "evidence-based rationale",
+			"patches": []map[string]string{{
+				"path": "editable/path", "content": "complete file content", "reason": "why this file changes",
+			}},
+		},
+		"instruction": "Return one raw JSON object without Markdown fences or comments; escape all newlines and quotes inside file content.",
+	}
+	encoded, _ := json.Marshal(payload)
+	return truncatePaperDebugText(string(encoded), autoResearchMaxReadOnlyBytes)
+}
+
+func applyAutoResearchCandidate(workspacePath string, proposal autoResearchCandidateResponse, best []autoResearchFileSnapshot, hiddenHoldout bool) ([]models.ResearchPatch, error) {
 	allowed := make(map[string]autoResearchFileSnapshot, len(best))
 	for _, snapshot := range best {
 		allowed[snapshot.Relative] = snapshot
@@ -1093,6 +1505,11 @@ func applyAutoResearchCandidate(workspacePath string, proposal autoResearchCandi
 		if err := validatePaperCodePatchPolicy(string(snapshot.Content), string(content)); err != nil {
 			return nil, fmt.Errorf("candidate patch %s violates policy: %w", relative, err)
 		}
+		if hiddenHoldout {
+			if err := validateAutoResearchHiddenEvaluationPolicy(string(snapshot.Content), string(content)); err != nil {
+				return nil, fmt.Errorf("candidate patch %s violates hidden-evaluation policy: %w", relative, err)
+			}
+		}
 		pending = append(pending, pendingPatch{proposal: patch, snapshot: snapshot, content: content})
 	}
 	if len(pending) == 0 {
@@ -1115,8 +1532,36 @@ func applyAutoResearchCandidate(workspacePath string, proposal autoResearchCandi
 	return records, nil
 }
 
+func validateAutoResearchHiddenEvaluationPolicy(original, patched string) error {
+	lowerOriginal := strings.ToLower(original)
+	lowerPatched := strings.ToLower(patched)
+	for _, forbidden := range []string{
+		".scholar/", ".scholar\\", "holdout", "/proc/", "sys.argv", "__file__",
+		"os.listdir(", "os.scandir(", "os.walk(", "glob.glob(", ".rglob(", "inspect.",
+	} {
+		if strings.Contains(lowerPatched, forbidden) && !strings.Contains(lowerOriginal, forbidden) {
+			return fmt.Errorf("introduced evaluator-discovery construct %q", forbidden)
+		}
+	}
+	return nil
+}
+
 func (a *ResearchCodingAgent) evaluateAutoResearchCandidate(ctx context.Context, runtimeSession, workspacePath string, spec models.ResearchSpec) (autoResearchEvaluation, error) {
-	result := autoResearchEvaluation{Guards: []models.ResearchCommandResult{}}
+	return a.evaluateAutoResearchWithCommandRuns(ctx, runtimeSession, workspacePath, spec, spec.EvalCommand, spec.SearchRuns, spec.SearchAggregation)
+}
+
+func (a *ResearchCodingAgent) evaluateAutoResearchWithCommand(ctx context.Context, runtimeSession, workspacePath string, spec models.ResearchSpec, evalCommand []string) (autoResearchEvaluation, error) {
+	return a.evaluateAutoResearchWithCommandRuns(ctx, runtimeSession, workspacePath, spec, evalCommand, 1, "mean")
+}
+
+func (a *ResearchCodingAgent) evaluateAutoResearchWithCommandRuns(ctx context.Context, runtimeSession, workspacePath string, spec models.ResearchSpec, evalCommand []string, runs int, aggregation string) (autoResearchEvaluation, error) {
+	result := autoResearchEvaluation{
+		Guards: []models.ResearchCommandResult{}, Evals: []models.ResearchCommandResult{},
+		Metrics: []float64{}, Aggregation: aggregation,
+	}
+	if runs < 1 || runs > autoResearchMaxSearchRuns || !validAutoResearchSearchAggregation(aggregation) {
+		return result, fmt.Errorf("invalid search measurement contract")
+	}
 	if err := verifyAutoResearchImmutableFingerprint(workspacePath, spec.EditableFiles, spec.FrozenWorkspace); err != nil {
 		return result, err
 	}
@@ -1133,23 +1578,40 @@ func (a *ResearchCodingAgent) evaluateAutoResearchCandidate(ctx context.Context,
 			return result, fmt.Errorf("guard command failed: %w", err)
 		}
 	}
-	evalResult, stdout, err := a.runAutoResearchCommand(ctx, runtimeSession, spec.EvalCommand)
-	result.Eval = evalResult
-	if integrityErr := verifyAutoResearchSpecFiles(workspacePath, spec); integrityErr != nil {
-		return result, integrityErr
+	for runNumber := 1; runNumber <= runs; runNumber++ {
+		evalResult, metric, err := a.evaluateAutoResearchMetricCommand(ctx, runtimeSession, workspacePath, spec, evalCommand)
+		result.Eval = evalResult
+		result.Evals = append(result.Evals, evalResult)
+		if err != nil {
+			return result, fmt.Errorf("evaluator run %d/%d failed: %w", runNumber, runs, err)
+		}
+		result.Metrics = append(result.Metrics, metric)
 	}
-	if integrityErr := verifyAutoResearchImmutableFingerprint(workspacePath, spec.EditableFiles, spec.FrozenWorkspace); integrityErr != nil {
-		return result, integrityErr
-	}
-	if err != nil {
-		return result, fmt.Errorf("evaluator failed: %w", err)
-	}
-	metric, err := parseAutoResearchMetric(stdout, spec.MetricKey)
+	metric, err := aggregateAutoResearchScores(result.Metrics, aggregation, spec.Direction)
 	if err != nil {
 		return result, err
 	}
 	result.Metric = metric
+	_, result.MetricStdDev, _, _ = autoResearchScoreStats(result.Metrics)
 	return result, nil
+}
+
+func (a *ResearchCodingAgent) evaluateAutoResearchMetricCommand(ctx context.Context, runtimeSession, workspacePath string, spec models.ResearchSpec, command []string) (models.ResearchCommandResult, float64, error) {
+	evalResult, stdout, err := a.runAutoResearchCommand(ctx, runtimeSession, command)
+	if integrityErr := verifyAutoResearchSpecFiles(workspacePath, spec); integrityErr != nil {
+		return evalResult, 0, integrityErr
+	}
+	if integrityErr := verifyAutoResearchImmutableFingerprint(workspacePath, spec.EditableFiles, spec.FrozenWorkspace); integrityErr != nil {
+		return evalResult, 0, integrityErr
+	}
+	if err != nil {
+		return evalResult, 0, err
+	}
+	metric, err := parseAutoResearchMetric(stdout, spec.MetricKey)
+	if err != nil {
+		return evalResult, 0, err
+	}
+	return evalResult, metric, nil
 }
 
 func (a *ResearchCodingAgent) runAutoResearchCommand(ctx context.Context, runtimeSession string, command []string) (models.ResearchCommandResult, string, error) {
@@ -1207,7 +1669,19 @@ func validateAutoResearchCommand(command []string) error {
 	return nil
 }
 
-func validateAutoResearchEvaluatorScope(workspacePath string, command []string, editable map[string]struct{}) error {
+func equalAutoResearchCommands(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func autoResearchCommandFileCandidates(command []string) []string {
 	candidates := append([]string(nil), command[1:]...)
 	for index, argument := range command[1:] {
 		if argument == "-m" && index+2 < len(command) {
@@ -1215,7 +1689,11 @@ func validateAutoResearchEvaluatorScope(workspacePath string, command []string, 
 			candidates = append(candidates, modulePath)
 		}
 	}
-	for _, candidate := range candidates {
+	return candidates
+}
+
+func validateAutoResearchEvaluatorScope(workspacePath string, command []string, editable map[string]struct{}) error {
+	for _, candidate := range autoResearchCommandFileCandidates(command) {
 		if candidate == "" || strings.HasPrefix(candidate, "-") {
 			continue
 		}
@@ -1226,6 +1704,27 @@ func validateAutoResearchEvaluatorScope(workspacePath string, command []string, 
 		if _, mutable := editable[relative]; mutable {
 			return fmt.Errorf("eval_command cannot execute editable file %s as its evaluator", relative)
 		}
+	}
+	return nil
+}
+
+func validateAutoResearchCommandProtectedScope(workspacePath string, command []string, protected map[string]struct{}) error {
+	referencedFiles := 0
+	for _, candidate := range autoResearchCommandFileCandidates(command) {
+		if candidate == "" || strings.HasPrefix(candidate, "-") {
+			continue
+		}
+		relative, _, err := autoResearchExistingFile(workspacePath, candidate, autoResearchMaxProtectedBytes, true)
+		if err != nil {
+			continue
+		}
+		referencedFiles++
+		if _, frozen := protected[relative]; !frozen {
+			return fmt.Errorf("holdout_command file %s must be listed in protected_files", relative)
+		}
+	}
+	if referencedFiles == 0 {
+		return fmt.Errorf("holdout_command must directly reference at least one protected workspace file")
 	}
 	return nil
 }
@@ -1648,15 +2147,152 @@ func verifyAutoResearchImmutableFingerprint(workspacePath string, editableFiles 
 }
 
 func autoResearchSourceContext(snapshots []autoResearchFileSnapshot) string {
-	var builder strings.Builder
+	files := make([]map[string]string, 0, len(snapshots))
 	for _, snapshot := range snapshots {
-		builder.WriteString("FILE: ")
-		builder.WriteString(snapshot.Relative)
-		builder.WriteString("\n")
-		builder.Write(snapshot.Content)
-		builder.WriteString("\nEND FILE\n\n")
+		files = append(files, map[string]string{
+			"path": filepath.ToSlash(snapshot.Relative), "content": string(snapshot.Content),
+		})
 	}
-	return builder.String()
+	encoded, _ := json.Marshal(files)
+	return string(encoded)
+}
+
+func autoResearchCandidateSpecJSON(spec models.ResearchSpec) []byte {
+	publicSpec := map[string]any{
+		"version":            spec.Version,
+		"name":               spec.Name,
+		"objective":          spec.Objective,
+		"editable_files":     spec.EditableFiles,
+		"eval_command":       spec.EvalCommand,
+		"guard_commands":     spec.GuardCommands,
+		"metric_key":         spec.MetricKey,
+		"direction":          spec.Direction,
+		"min_delta":          spec.MinDelta,
+		"target_score":       spec.TargetScore,
+		"search_runs":        spec.SearchRuns,
+		"search_aggregation": spec.SearchAggregation,
+		"max_trials":         spec.MaxTrials,
+		"max_wall_seconds":   spec.MaxWallSeconds,
+		"holdout_validation": len(spec.HoldoutCommand) > 0,
+	}
+	encoded, _ := json.Marshal(publicSpec)
+	return encoded
+}
+
+func autoResearchReadOnlySourceContext(workspacePath string, spec models.ResearchSpec) string {
+	allowedExtensions := map[string]struct{}{
+		".c": {}, ".cc": {}, ".cpp": {}, ".go": {}, ".js": {}, ".jsx": {},
+		".mjs": {}, ".cjs": {}, ".py": {}, ".rs": {}, ".sh": {}, ".ts": {}, ".tsx": {},
+	}
+	editable := autoResearchPathSet(spec.EditableFiles)
+	commands := make([][]string, 0, len(spec.GuardCommands)+1)
+	commands = append(commands, spec.EvalCommand)
+	commands = append(commands, spec.GuardCommands...)
+	seen := map[string]struct{}{}
+	files := make([]map[string]string, 0, len(commands))
+	totalBytes := 0
+
+	for _, command := range commands {
+		for _, argument := range command[1:] {
+			if strings.HasPrefix(argument, "-") || strings.Contains(argument, "=") {
+				continue
+			}
+			relative, path, err := autoResearchExistingFile(workspacePath, argument, autoResearchMaxReadOnlyFileBytes, true)
+			if err != nil {
+				continue
+			}
+			if _, mutable := editable[relative]; mutable {
+				continue
+			}
+			if _, duplicate := seen[relative]; duplicate {
+				continue
+			}
+			if _, allowed := allowedExtensions[strings.ToLower(filepath.Ext(relative))]; !allowed {
+				continue
+			}
+			content, err := os.ReadFile(path)
+			if err != nil || len(content) == 0 || !utf8.Valid(content) || bytes.IndexByte(content, 0) >= 0 {
+				continue
+			}
+			entryBytes := len(relative) + len(content)
+			if totalBytes+entryBytes > autoResearchMaxReadOnlyBytes {
+				continue
+			}
+			seen[relative] = struct{}{}
+			totalBytes += entryBytes
+			files = append(files, map[string]string{
+				"path": filepath.ToSlash(relative), "content": string(content), "access": "read_only",
+			})
+		}
+	}
+	if len(files) == 0 {
+		return "[]"
+	}
+	encoded, _ := json.Marshal(files)
+	return string(encoded)
+}
+
+func latestAutoResearchEvaluatorEvidence(trials []models.ResearchTrial) map[string]any {
+	for index := len(trials) - 1; index >= 0; index-- {
+		trial := trials[index]
+		if strings.TrimSpace(trial.EvalResult.StdoutPreview) == "" && strings.TrimSpace(trial.EvalResult.StderrPreview) == "" {
+			continue
+		}
+		return map[string]any{
+			"trial": trial.Number, "status": trial.Status, "metric": trial.Metric,
+			"stdout": trial.EvalResult.StdoutPreview, "stderr": trial.EvalResult.StderrPreview,
+		}
+	}
+	return map[string]any{}
+}
+
+func autoResearchVisibleFailures(trials []models.ResearchTrial) []string {
+	for index := len(trials) - 1; index >= 0; index-- {
+		payload, ok := autoResearchFinalJSONObject(trials[index].EvalResult.StdoutPreview)
+		if !ok {
+			continue
+		}
+		rawCases, ok := payload["cases"].([]any)
+		if !ok {
+			return nil
+		}
+		failures := make([]string, 0, len(rawCases))
+		for caseIndex, rawCase := range rawCases {
+			entry, ok := rawCase.(map[string]any)
+			if !ok {
+				continue
+			}
+			passed, ok := entry["passed"].(bool)
+			if !ok || passed {
+				continue
+			}
+			name, _ := entry["name"].(string)
+			name = strings.TrimSpace(name)
+			if name == "" {
+				name = fmt.Sprintf("case_%d", caseIndex+1)
+			}
+			failures = append(failures, name)
+		}
+		return failures
+	}
+	return nil
+}
+
+func autoResearchFinalJSONObject(stdout string) (map[string]any, bool) {
+	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+	for index := len(lines) - 1; index >= 0; index-- {
+		line := strings.TrimSpace(lines[index])
+		if line == "" || !strings.HasPrefix(line, "{") {
+			continue
+		}
+		decoder := json.NewDecoder(strings.NewReader(line))
+		decoder.UseNumber()
+		var payload map[string]any
+		if err := decoder.Decode(&payload); err == nil {
+			return payload, true
+		}
+	}
+	return nil, false
 }
 
 func recentAutoResearchTrials(trials []models.ResearchTrial, maximum int) []models.ResearchTrial {
@@ -1751,7 +2387,16 @@ func finalizeAutoResearchLedgerUsage(ledger *models.ResearchTrialLedger) {
 		for _, command := range trial.GuardResults {
 			addAutoResearchCommandUsage(&usage, command, true)
 		}
-		addAutoResearchCommandUsage(&usage, trial.EvalResult, false)
+		if len(trial.EvalResults) > 0 {
+			for _, command := range trial.EvalResults {
+				addAutoResearchCommandUsage(&usage, command, false)
+			}
+		} else {
+			addAutoResearchCommandUsage(&usage, trial.EvalResult, false)
+		}
+	}
+	if ledger.HoldoutResult != nil {
+		addAutoResearchCommandUsage(&usage, *ledger.HoldoutResult, false)
 	}
 	usage.WallDurationMS = autoResearchElapsedMS(ledger.StartedAt, ledger.FinishedAt)
 	ledger.ResourceUsage = &usage

@@ -130,7 +130,7 @@ verify_result
 - `autoresearch_run` 消费工作区、`prepared_runtime`、spec，并输出 TrialLedger 和最佳候选。
 - `autoresearch_validate` 消费冻结证据并输出验证报告。
 
-用户可以写“最多 N 次实验”“总时长 N 分钟”和“独立复验 N 次”。Planner 分别限制为最多 8 次、60 分钟和 5 次；spec 与 Agent 还会再次限幅。未明确请求时，重复验证默认 1 次。验证轮次共享模板节点的 600 秒上限；计划总时长在研究循环预算之上增加 900 秒，用于克隆、建环境、验证和报告。
+用户可以写“最多 N 次实验”“总时长 N 分钟”和“最终验证 N 次”；旧的“独立复验 N 次”表达仍兼容。Planner 分别限制为最多 8 次、60 分钟和 5 次；spec 与 Agent 还会再次限幅。未明确请求时，重复验证默认 1 次。验证轮次共享模板节点的 600 秒上限；计划总时长在研究循环预算之上增加 900 秒，用于克隆、建环境、验证和报告。
 
 ## 8. AutoResearch 数据模型
 
@@ -174,7 +174,7 @@ Paper Reproduction、Custom Benchmark 和 AutoResearch 不应只修改 Planner p
 2. spec 归一化和硬上限。
 3. Planner 输入预算是否可被用户扩大。
 4. TrialLedger 是否记录实际执行值。
-5. 独立验证是否重新检查该字段。
+5. 最终验证是否重新检查该字段，并正确区分公开重放与隐藏 holdout。
 6. 示例、单测和模块文档是否同步。
 
 ## 10. 验证

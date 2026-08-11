@@ -1,0 +1,48 @@
+diff --git a/packages/graphrag-common/graphrag_common/hasher/hasher.py b/packages/graphrag-common/graphrag_common/hasher/hasher.py
+index c4af285..4aea243 100644
+--- a/packages/graphrag-common/graphrag_common/hasher/hasher.py
++++ b/packages/graphrag-common/graphrag_common/hasher/hasher.py
+@@ -18,6 +18,22 @@ def sha256_hasher(data: str) -> str:
+     return hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+
++def _key_sort_key(key: Any) -> tuple[str, str]:
++    """Return a deterministic sort key for a mapping key."""
++    return (type(key).__name__, str(key))
++
++
++def _has_heterogeneous_mapping(data: Any) -> bool:
++    """Return True if any nested mapping has more than one key type."""
++    if isinstance(data, dict):
++        if len({type(key) for key in data}) > 1:
++            return True
++        return any(_has_heterogeneous_mapping(value) for value in data.values())
++    if isinstance(data, (list, tuple, set)):
++        return any(_has_heterogeneous_mapping(item) for item in data)
++    return False
++
++
+ def make_yaml_serializable(data: Any) -> Any:
+     """Convert data to a YAML-serializable format."""
+     if isinstance(data, (list, tuple)):
+@@ -28,7 +44,10 @@ def make_yaml_serializable(data: Any) -> Any:
+
+     if isinstance(data, dict):
+         return tuple(
+-            sorted((key, make_yaml_serializable(value)) for key, value in data.items())
++            sorted(
++                ((key, make_yaml_serializable(value)) for key, value in data.items()),
++                key=lambda item: _key_sort_key(item[0]),
++            )
+         )
+
+     return str(data)
+@@ -54,6 +73,8 @@ def hash_data(data: Any, *, hasher: Hasher | None = None) -> str:
+     """
+     hasher = hasher or sha256_hasher
+     try:
++        if _has_heterogeneous_mapping(data):
++            return hasher(yaml.dump(make_yaml_serializable(data), sort_keys=True))
+         return hasher(yaml.dump(data, sort_keys=True))
+     except TypeError:
+         return hasher(yaml.dump(make_yaml_serializable(data), sort_keys=True))

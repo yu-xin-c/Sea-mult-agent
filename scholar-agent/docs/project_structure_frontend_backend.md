@@ -149,7 +149,7 @@
   - 科研仓库级 Coding Agent 统一入口
 
 - `backend/internal/agent/autoresearch.go`
-  - AutoResearch 规格冻结、候选执行、Keep/Reject、回滚、重复独立复验和资源汇总
+  - AutoResearch 规格冻结、候选执行、Keep/Reject、回滚、公开重放/隐藏 holdout 和资源汇总
 
 #### 模型层
 

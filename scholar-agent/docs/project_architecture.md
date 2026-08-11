@@ -153,7 +153,7 @@ scholar-agent/
 | `Framework_Evaluation` | 共同协议、并行框架实现、独立运行和比较报告 |
 | `Code_Execution` | 代码生成、依赖、运行和结果验证 |
 | `Custom_Benchmark` | 用户数据分析、仓库适配、预检、正式评测和证据校验 |
-| `AutoResearch` | 冻结研究契约、baseline、有限候选、Keep/Reject、回滚、重复独立复验和资源证据 |
+| `AutoResearch` | 冻结研究契约、baseline、有限候选、Keep/Reject、回滚、公开重放/隐藏 holdout 和资源证据 |
 | `General` | 通用研究或处理节点 |
 
 [`internal/Intent`](../backend/internal/Intent/) 和 Python 意图服务目前不是这条生产路径的一部分。当前 API 使用 [`buildRuleIntentContext`](../backend/internal/api/plan_runtime.go)，Planner Agent 负责后续拓扑生成。
@@ -267,7 +267,7 @@ Planner TaskNode
             -> Benchmark Harness
                 -> 数据契约 -> 适配器 -> 预检修复 -> 正式运行 -> Go 指标重算
             -> AutoResearch Harness
-                -> ResearchSpec -> baseline -> 候选补丁 -> Keep/Reject -> TrialLedger -> 重复独立复验
+                -> ResearchSpec -> baseline -> 候选补丁 -> Keep/Reject -> TrialLedger -> 最终验证
 ```
 
 它在启动时复用 Coder 的 Chat Model 和 Sandbox Client，但不复用 Coder 的任务状态。每次调试的运行次数、文件备份和补丁清单都只存在于当前任务内，跨节点状态通过显式 Artifact 传递。模型只能提出结构化方案或代码内容；路径检查、写入、回滚、源码指纹和结果校验都由 Go harness 完成。
@@ -342,12 +342,12 @@ Benchmark Harness 的信任边界不是“模型说成功”，而是：
 仓库发现 -> 工作区准备 -> 冻结 ResearchSpec
     -> 创建运行时 -> 安装规格依赖
     -> baseline + 有限候选 Keep/Reject
-    -> 重复独立复验 -> 证据报告
+    -> 公开重放或隐藏 holdout -> 证据报告
 ```
 
-它的关键边界是：模型只提出 editable 文件候选，Go harness 冻结 evaluator、benchmark、命令、指标、搜索预算和验证次数；退化候选恢复到上一个最佳版本，最终结果必须按声明的 1 至 5 次重复运行并与 TrialLedger 对齐。当前最多 8 个 Trial、最长 3600 秒，每轮最多修改 3 个已有白名单文件。
+它的关键边界是：模型只提出 editable 文件候选，Go harness 冻结 evaluator、benchmark、命令、指标、搜索预算和验证次数；eval/guard 直接引用的小型源码只读进入诊断上下文，数据文件不进入。候选必须给出失败用例到修改点的调用路径诊断。退化候选恢复到上一个最佳版本，最终结果必须按声明的 1 至 5 次重复运行并与 TrialLedger 对齐。当前最多 8 个 Trial、最长 3600 秒，每轮最多修改 3 个已有白名单文件。
 
-前端在现有 DAG、SSE 日志和 Artifact 面板上增加了 AutoResearch “实验”视图：展示 baseline/best、指标趋势、Keep/Reject、耗时、假设、候选文件哈希与命令资源摘要，并支持全屏及窄屏布局。重复验证报告还保存逐次分数、均值、总体标准差和失败率；当前不保存完整逐轮源码，所以还没有逐行 diff。完整模块文档见 [`autoresearch/`](autoresearch/)。
+前端在现有 DAG、SSE 日志和 Artifact 面板上增加了 AutoResearch “实验”视图：展示 baseline/best、指标趋势、Keep/Reject、耗时、调用路径诊断、假设、候选文件哈希与命令资源摘要，并支持全屏及窄屏布局。重复验证报告还保存逐次分数、均值、总体标准差和失败率；当前不保存完整逐轮源码，所以还没有逐行 diff。完整模块文档见 [`autoresearch/`](autoresearch/)。
 
 ## 11. 文件上传与数据流
 

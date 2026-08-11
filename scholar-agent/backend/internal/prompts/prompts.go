@@ -42,11 +42,24 @@ const DataPaperComparisonSystemPrompt = DataSystemPrompt + `
 4. 重点记录仓库来源、commit/版本、数据集/权重可用性、运行命令、指标差异、失败原因和下一步复现建议。
 5. 不要把 mock/fake 结果当成论文复现结果。`
 
+const DataAutoResearchReportSystemPrompt = DataSystemPrompt + `
+
+【AutoResearch 报告规则】：
+1. 严格区分 search evaluator（公开搜索指标）与 hidden holdout（模型不可见的最终验收）。
+2. 只有 validation_mode=hidden_holdout 且所有验收轮次通过时，才能称候选通过隐藏验收；同一公开评测器的重复运行只能称 search-evaluator replay，不能称独立验证。
+3. 若隐藏验收失败，必须明确写“候选被拒绝/修复未成立”，列出公开分数、隐藏基线、隐藏结果和未满足的最小增益，不能用公开高分淡化失败。
+4. 必须记录反例或失败用例、根因、实际命令、仓库 commit、文件哈希、试验次数、耗时和运行环境；缺失项应明确标注未知。
+5. 区分功能正确性、稳定性与性能，不得把 smoke test、部分 upstream test 或单一 evaluator 通过外推为完整仓库正确。
+6. 结论先写证据边界，再写可复现步骤和下一步建议；不得编造指标或补全未执行的实验。`
+
 func DataSystemPromptForTask(intentType string, taskType string, taskName string, description string) string {
 	intent := strings.ToLower(strings.TrimSpace(intentType))
 	task := strings.ToLower(strings.TrimSpace(taskType))
 	text := strings.ToLower(strings.Join([]string{taskName, description}, "\n"))
 
+	if intent == "autoresearch" || strings.Contains(task, "autoresearch") || strings.Contains(text, "autoresearch") || strings.Contains(text, "自动实验") {
+		return DataAutoResearchReportSystemPrompt
+	}
 	if intent == "paper_reproduction" || task == "paper_compare" || strings.Contains(text, "paper_reproduction") || strings.Contains(text, "论文复现") || strings.Contains(text, "compare with paper") {
 		return DataPaperComparisonSystemPrompt
 	}
@@ -104,9 +117,18 @@ Rules:
 3. Never modify the evaluator, benchmark data, spec, commands, metric key, direction, budget or acceptance rule.
 4. Do not add files, install packages, access the network, invoke subprocesses, weaken tests, fabricate metrics or hard-code evaluator answers.
 5. Use evidence from prior kept/rejected trials and avoid repeating an equivalent change.
-6. If no justified candidate remains, return status="stop". If the task cannot be improved within the scope, return status="unsupported".`
+6. The visible evaluator is search feedback. A model-hidden holdout may be enabled but its command, source and baseline are deliberately omitted. Prefer a general repair over evaluator-specific branching or hard-coded cases.
+7. Read-only evaluator and guard sources are diagnostic evidence. Never return patches for them. Trace the exact failing expression through the current best source and test adjacent edge cases implied by the contract.
+8. Never inspect workspace metadata, hidden evaluator paths, process arguments or runtime files to discover the holdout. Such candidates are rejected before execution.
+9. Every proposal requires a diagnosis naming the failing case, actual data shape, current call path and why the proposed edit reaches it.
+10. If latest_evaluator_evidence contains any case with passed=false, do not return status="stop" merely because the next edit is uncertain. Use the remaining budget to test a distinct, general hypothesis while preserving already-passing contracts. The harness rejects premature stops deterministically.
+11. When previous_rejected_candidate is present, inspect its complete source and exact guard/evaluator failure before writing the next candidate. Correct the reported line or choose a genuinely different implementation; never reproduce the same syntax error or behavior unchanged.
+12. Before returning Python, mentally check function signatures, indentation, generator-expression parentheses and literal escape sequences. The first guard is a real syntax check, not a substitute for producing parseable source.
+13. Return status="stop" only when the visible evaluator has no explicit failing cases and no justified candidate remains. Return status="unsupported" only for a concrete scope, runtime, or dependency blocker that no editable-file change can address.
+14. If previous_rejected_candidate reports a response decode or schema error, return one raw JSON object without Markdown fences or comments. Correctly JSON-escape every newline, quote and backslash inside complete file contents.
+15. search_runs and search_aggregation are frozen measurement rules. A candidate is judged by the aggregate of every declared search run; do not reason from a single favorable sample.`
 
-func AutoResearchCandidateUserPrompt(spec, ledger, editableSource string) string {
+func AutoResearchCandidateUserPrompt(spec, ledger, editableSource, readOnlySource, rejectedCandidate string) string {
 	return fmt.Sprintf(`Propose the next bounded candidate.
 
 Frozen research spec:
@@ -115,12 +137,18 @@ Frozen research spec:
 Trial ledger summary:
 %s
 
-Current best editable files:
+Current best editable files (JSON):
+%s
+
+Referenced evaluator and guard sources (read-only JSON, never patch):
+%s
+
+Previous rejected candidate and deterministic feedback (read-only JSON; may be empty):
 %s
 
 Return exactly:
-{"status":"propose|stop|unsupported","hypothesis":"falsifiable hypothesis","reason":"evidence-based rationale","patches":[{"path":"editable/path","content":"complete file content","reason":"why this file changes"}]}`,
-		spec, ledger, editableSource)
+{"status":"propose|stop|unsupported","diagnosis":"failing case, actual input and current call path","hypothesis":"falsifiable hypothesis","reason":"evidence-based rationale","patches":[{"path":"editable/path","content":"complete file content","reason":"why this file changes"}]}`,
+		spec, ledger, editableSource, readOnlySource, rejectedCandidate)
 }
 
 func DataReportUserPrompt(input string) string {

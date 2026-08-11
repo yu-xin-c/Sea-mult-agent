@@ -28,6 +28,8 @@ type scriptedAutoResearchSandbox struct {
 	mutateProtectedCall int
 	mutateImmutableCall int
 	scoreByCall         map[int]float64
+	failCalls           map[int]bool
+	emitCases           bool
 	calls               int
 }
 
@@ -89,13 +91,21 @@ func (s *scriptedAutoResearchSandbox) ExecCommandStream(_ context.Context, _ str
 			return nil, err
 		}
 	}
-	return &sandbox.PythonRunResponse{
-		ExitCode: 0,
-		Stdout:   fmt.Sprintf("fixture output\n{\"metrics\":{\"macro_f1\":%.4f}}", score),
-	}, nil
+	if s.failCalls[s.calls] {
+		return &sandbox.PythonRunResponse{ExitCode: 1, Stderr: "forced evaluator failure"}, nil
+	}
+	payload := fmt.Sprintf("{\"metrics\":{\"macro_f1\":%.4f}}", score)
+	if s.emitCases {
+		payload = fmt.Sprintf("{\"metrics\":{\"macro_f1\":%.4f},\"cases\":[{\"name\":\"score_target\",\"passed\":%t}]}", score, score >= 0.8)
+	}
+	return &sandbox.PythonRunResponse{ExitCode: 0, Stdout: "fixture output\n" + payload}, nil
 }
 
 func newAutoResearchModel(t *testing.T, responses ...string) *openaiModel.ChatModel {
+	return newAutoResearchModelWithInspector(t, nil, responses...)
+}
+
+func newAutoResearchModelWithInspector(t *testing.T, inspect func(int, string), responses ...string) *openaiModel.ChatModel {
 	t.Helper()
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -103,10 +113,17 @@ func newAutoResearchModel(t *testing.T, responses ...string) *openaiModel.ChatMo
 		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/chat/completions") {
 			t.Fatalf("unexpected model request: %s %s", r.Method, r.URL.Path)
 		}
-		if !strings.Contains(string(body), "Frozen research spec") || !strings.Contains(string(body), "candidate.py") {
+		if !strings.Contains(string(body), "Frozen research spec") || !strings.Contains(string(body), "candidate.py") ||
+			!strings.Contains(string(body), "read-only JSON") || !strings.Contains(string(body), "evaluator.py") {
 			t.Fatalf("model request omitted frozen AutoResearch context: %s", string(body))
 		}
+		if strings.Contains(string(body), "holdout.py") || strings.Contains(string(body), "HOLDOUT_SECRET") {
+			t.Fatalf("model request leaked hidden holdout context: %s", string(body))
+		}
 		index := int(calls.Add(1)) - 1
+		if inspect != nil {
+			inspect(index, string(body))
+		}
 		if index >= len(responses) {
 			t.Fatalf("unexpected model call %d", index+1)
 		}
@@ -132,6 +149,10 @@ func autoResearchFixture(t *testing.T, maxTrials int) (string, string) {
 }
 
 func autoResearchFixtureWithValidationRuns(t *testing.T, maxTrials, validationRuns int) (string, string) {
+	return autoResearchFixtureWithSearchMeasurement(t, maxTrials, validationRuns, 1, "mean")
+}
+
+func autoResearchFixtureWithSearchMeasurement(t *testing.T, maxTrials, validationRuns, searchRuns int, aggregation string) (string, string) {
 	t.Helper()
 	workspace := t.TempDir()
 	if err := os.WriteFile(filepath.Join(workspace, "candidate.py"), []byte("SCORE = 0.5\n"), 0o600); err != nil {
@@ -148,7 +169,7 @@ func autoResearchFixtureWithValidationRuns(t *testing.T, maxTrials, validationRu
 		EditableFiles: []string{"candidate.py"}, ProtectedFiles: []string{"evaluator.py"},
 		EvalCommand: []string{"python3", "evaluator.py"}, MetricKey: "metrics.macro_f1",
 		Direction: "maximize", MinDelta: 0.01, MaxTrials: maxTrials, MaxWallSeconds: 60,
-		ValidationRuns: validationRuns,
+		ValidationRuns: validationRuns, SearchRuns: searchRuns, SearchAggregation: aggregation,
 	}
 	raw, _ := json.Marshal(spec)
 	freeze := &models.Task{
@@ -169,13 +190,254 @@ func autoResearchFixtureWithValidationRuns(t *testing.T, maxTrials, validationRu
 func autoResearchProposal(t *testing.T, score float64, hypothesis string) string {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{
-		"status": "propose", "hypothesis": hypothesis, "reason": "bounded fixture change",
+		"status": "propose", "diagnosis": "the evaluator reads SCORE from candidate.py", "hypothesis": hypothesis, "reason": "bounded fixture change",
 		"patches": []map[string]string{{"path": "candidate.py", "content": fmt.Sprintf("SCORE = %.1f\n", score), "reason": "change fixture score"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return string(raw)
+}
+
+func autoResearchSourceProposal(t *testing.T, source, hypothesis string) string {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{
+		"status": "propose", "diagnosis": "the public contract exposes a bounded behavior gap", "hypothesis": hypothesis, "reason": "exercise the frozen public contract",
+		"patches": []map[string]string{{"path": "candidate.py", "content": source, "reason": "replace the bounded candidate implementation"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+func autoResearchStopResponse(t *testing.T, reason string) string {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{"status": "stop", "reason": reason})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+func autoResearchHoldoutFixture(t *testing.T, holdoutMinDelta float64, validationRuns int) (string, string) {
+	t.Helper()
+	workspace := t.TempDir()
+	files := map[string]string{
+		"candidate.py": "SEARCH_SCORE = 0.5\nHOLDOUT_SCORE = 0.5\n",
+		"evaluator.py": "import json\nfrom candidate import SEARCH_SCORE\nprint(json.dumps({'metrics': {'score': SEARCH_SCORE}}))\n",
+		"holdout.py":   "# HOLDOUT_SECRET\nimport json\nfrom candidate import HOLDOUT_SCORE\nprint(json.dumps({'metrics': {'score': HOLDOUT_SCORE}}))\n",
+	}
+	for relative, content := range files {
+		if err := os.WriteFile(filepath.Join(workspace, relative), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	spec := models.ResearchSpec{
+		Version: models.AutoResearchSpecVersion, Name: "holdout-fixture", Objective: "improve general behavior",
+		EditableFiles: []string{"candidate.py"}, ProtectedFiles: []string{"evaluator.py", "holdout.py"},
+		GuardCommands: [][]string{{"python3", "-m", "py_compile", "candidate.py"}},
+		EvalCommand:   []string{"python3", "evaluator.py"}, HoldoutCommand: []string{"python3", "holdout.py"},
+		HoldoutMinDelta: &holdoutMinDelta, MetricKey: "metrics.score", Direction: "maximize", MinDelta: 0.1,
+		MaxTrials: 1, MaxWallSeconds: 60, ValidationRuns: validationRuns,
+	}
+	rawSpec, _ := json.Marshal(spec)
+	freeze := &models.Task{Type: "autoresearch_spec", Inputs: map[string]any{
+		"workspace_path": workspace, "research_spec": string(rawSpec), "autoresearch_max_trials": 1, "autoresearch_max_wall_seconds": 60,
+	}}
+	if err := (&ResearchCodingAgent{Name: "research_coding_agent"}).ExecuteTask(context.Background(), freeze, nil); err != nil {
+		t.Fatal(err)
+	}
+	return workspace, freeze.Metadata["artifact_values"].(map[string]string)["research_spec"]
+}
+
+func TestAutoResearchReadOnlySourceContextIncludesReferencedCodeOnly(t *testing.T) {
+	workspace := t.TempDir()
+	files := map[string]string{
+		"candidate.py":        "SCORE = 0.5\n",
+		"evaluator.py":        "# evaluator contract\n",
+		"tests/test_guard.py": "# upstream guard\n",
+		"benchmark.json":      `{"private":"example"}`,
+	}
+	for relative, content := range files {
+		path := filepath.Join(workspace, filepath.FromSlash(relative))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	spec := models.ResearchSpec{
+		EditableFiles: []string{"candidate.py"},
+		EvalCommand:   []string{"python3", "evaluator.py", "benchmark.json"},
+		GuardCommands: [][]string{{"python3", "-m", "pytest", "tests/test_guard.py", "candidate.py"}},
+	}
+	contextText := autoResearchReadOnlySourceContext(workspace, spec)
+	for _, expected := range []string{"evaluator.py", "# evaluator contract", "tests/test_guard.py", "# upstream guard", `"access":"read_only"`} {
+		if !strings.Contains(contextText, expected) {
+			t.Fatalf("read-only context omitted %q: %s", expected, contextText)
+		}
+	}
+	for _, forbidden := range []string{"SCORE = 0.5", "private"} {
+		if strings.Contains(contextText, forbidden) {
+			t.Fatalf("read-only context leaked %q: %s", forbidden, contextText)
+		}
+	}
+}
+
+func TestAutoResearchCandidateContextRedactsHiddenHoldout(t *testing.T) {
+	workspace := t.TempDir()
+	files := map[string]string{
+		"candidate.py": "SEARCH_SCORE = 0.5\nHOLDOUT_SCORE = 0.5\n",
+		"evaluator.py": "# public evaluator\n",
+		"holdout.py":   "# HOLDOUT_SECRET\n",
+	}
+	for relative, content := range files {
+		if err := os.WriteFile(filepath.Join(workspace, relative), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	spec := models.ResearchSpec{
+		Version: models.AutoResearchSpecVersion, Name: "redaction", Objective: "improve general behavior",
+		EditableFiles: []string{"candidate.py"}, ProtectedFiles: []string{"evaluator.py", "holdout.py"},
+		EvalCommand: []string{"python3", "evaluator.py"}, HoldoutCommand: []string{"python3", "holdout.py"},
+		MetricKey: "metrics.score", Direction: "maximize", MinDelta: 0.1, MaxTrials: 1, MaxWallSeconds: 60,
+	}
+	publicSpec := string(autoResearchCandidateSpecJSON(spec))
+	readOnly := autoResearchReadOnlySourceContext(workspace, spec)
+	for label, content := range map[string]string{"candidate spec": publicSpec, "read-only context": readOnly} {
+		for _, secret := range []string{"holdout.py", "HOLDOUT_SECRET", "protected_files", "holdout_command"} {
+			if strings.Contains(content, secret) {
+				t.Fatalf("%s leaked %q: %s", label, secret, content)
+			}
+		}
+	}
+	if !strings.Contains(publicSpec, `"holdout_validation":true`) {
+		t.Fatalf("candidate spec did not disclose the existence of hidden validation: %s", publicSpec)
+	}
+}
+
+func TestAutoResearchHiddenEvaluationPolicyRejectsEvaluatorDiscovery(t *testing.T) {
+	for _, patched := range []string{
+		"import os\nfiles = list(os.walk('/workspace'))\n",
+		"from pathlib import Path\nsecret = Path('.scholar/uploads').read_text()\n",
+		"import sys\nargs = sys.argv\n",
+	} {
+		if err := validateAutoResearchHiddenEvaluationPolicy("VALUE = 1\n", patched); err == nil {
+			t.Fatalf("hidden evaluator discovery was accepted: %s", patched)
+		}
+	}
+	if err := validateAutoResearchHiddenEvaluationPolicy("VALUE = 1\n", "VALUE = 2\n"); err != nil {
+		t.Fatalf("ordinary candidate was rejected: %v", err)
+	}
+}
+
+func TestAutoResearchHiddenHoldoutRejectsPublicOnlyImprovement(t *testing.T) {
+	workspace := t.TempDir()
+	holdoutMinDelta := 0.2
+	files := map[string]string{
+		"candidate.py": "SEARCH_SCORE = 0.5\nHOLDOUT_SCORE = 0.5\n",
+		"evaluator.py": "import json\nfrom candidate import SEARCH_SCORE\nprint(json.dumps({'metrics': {'score': SEARCH_SCORE}}))\n",
+		"holdout.py":   "# HOLDOUT_SECRET\nimport json\nfrom candidate import HOLDOUT_SCORE\nprint(json.dumps({'metrics': {'score': HOLDOUT_SCORE}}))\n",
+	}
+	for relative, content := range files {
+		if err := os.WriteFile(filepath.Join(workspace, relative), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	spec := models.ResearchSpec{
+		Version: models.AutoResearchSpecVersion, Name: "holdout-rejection", Objective: "improve general behavior",
+		EditableFiles: []string{"candidate.py"}, ProtectedFiles: []string{"evaluator.py", "holdout.py"},
+		GuardCommands: [][]string{{"python3", "-m", "py_compile", "candidate.py"}},
+		EvalCommand:   []string{"python3", "evaluator.py"}, HoldoutCommand: []string{"python3", "holdout.py"},
+		HoldoutMinDelta: &holdoutMinDelta, MetricKey: "metrics.score", Direction: "maximize", MinDelta: 0.1, MaxTrials: 1, MaxWallSeconds: 60, ValidationRuns: 3,
+	}
+	rawSpec, _ := json.Marshal(spec)
+	freeze := &models.Task{Type: "autoresearch_spec", Inputs: map[string]any{
+		"workspace_path": workspace, "research_spec": string(rawSpec), "autoresearch_max_trials": 1, "autoresearch_max_wall_seconds": 60,
+	}}
+	if err := (&ResearchCodingAgent{Name: "research_coding_agent"}).ExecuteTask(context.Background(), freeze, nil); err != nil {
+		t.Fatal(err)
+	}
+	frozenSpec := freeze.Metadata["artifact_values"].(map[string]string)["research_spec"]
+	localSandbox := &localProcessAutoResearchSandbox{workspace: workspace}
+	agent := &ResearchCodingAgent{
+		Name: "research_coding_agent", Sandbox: localSandbox,
+		ChatModel: newAutoResearchModel(t, autoResearchSourceProposal(t, "SEARCH_SCORE = 0.9\nHOLDOUT_SCORE = 0.6\n", "improve the visible behavior")),
+	}
+	run := &models.Task{Type: "autoresearch_run", Inputs: map[string]any{
+		"workspace_path": workspace, "prepared_runtime": "dk-local", "research_spec": frozenSpec,
+	}}
+	if err := agent.ExecuteTask(context.Background(), run, nil); err != nil {
+		t.Fatal(err)
+	}
+	artifacts := run.Metadata["artifact_values"].(map[string]string)
+	var ledger models.ResearchTrialLedger
+	if err := json.Unmarshal([]byte(artifacts["research_trial_ledger"]), &ledger); err != nil {
+		t.Fatal(err)
+	}
+	if ledger.BestScore != 0.9 || ledger.HoldoutBaseline == nil || *ledger.HoldoutBaseline != 0.5 {
+		t.Fatalf("unexpected search and holdout baselines: %#v", ledger)
+	}
+	if ledger.ResourceUsage == nil || ledger.ResourceUsage.CommandRuns != 5 || ledger.ResourceUsage.EvaluatorRuns != 3 {
+		t.Fatalf("hidden baseline was not represented in resource usage: %#v", ledger.ResourceUsage)
+	}
+	validation := &models.Task{Type: "autoresearch_validate", Inputs: map[string]any{
+		"workspace_path": workspace, "prepared_runtime": "dk-local", "research_spec": frozenSpec,
+		"research_trial_ledger": artifacts["research_trial_ledger"], "research_best_candidate": artifacts["research_best_candidate"],
+	}}
+	if err := agent.ExecuteTask(context.Background(), validation, nil); err != nil {
+		t.Fatalf("completed holdout rejection should remain reportable: %v", err)
+	}
+	var report models.ResearchValidationReport
+	if err := json.Unmarshal([]byte(validation.Metadata["artifact_values"].(map[string]string)["research_validation_report"]), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != "failed" || report.ValidationMode != "hidden_holdout" || report.ExpectedScore != 0.7 || report.SearchBestScore != 0.9 || report.HoldoutBaseline == nil || *report.HoldoutBaseline != 0.5 || report.PassedRuns != 0 || report.FailedRuns != 3 {
+		t.Fatalf("public-only regression was not rejected with complete evidence: %#v", report)
+	}
+	if validation.Status != models.StatusCompleted {
+		t.Fatalf("domain-level rejection blocked downstream reporting: %s", validation.Status)
+	}
+	for _, validationRun := range report.Runs {
+		if validationRun.DeltaFromBaseline == nil || math.Abs(*validationRun.DeltaFromBaseline-0.1) > 1e-12 {
+			t.Fatalf("holdout delta missing or wrong: %#v", validationRun)
+		}
+	}
+}
+
+func TestAutoResearchHiddenHoldoutAcceptsGeneralImprovement(t *testing.T) {
+	workspace, frozenSpec := autoResearchHoldoutFixture(t, 0.2, 2)
+	localSandbox := &localProcessAutoResearchSandbox{workspace: workspace}
+	agent := &ResearchCodingAgent{
+		Name: "research_coding_agent", Sandbox: localSandbox,
+		ChatModel: newAutoResearchModel(t, autoResearchSourceProposal(t, "SEARCH_SCORE = 0.9\nHOLDOUT_SCORE = 0.8\n", "improve both visible and adjacent behavior")),
+	}
+	run := &models.Task{Type: "autoresearch_run", Inputs: map[string]any{
+		"workspace_path": workspace, "prepared_runtime": "dk-local", "research_spec": frozenSpec,
+	}}
+	if err := agent.ExecuteTask(context.Background(), run, nil); err != nil {
+		t.Fatal(err)
+	}
+	artifacts := run.Metadata["artifact_values"].(map[string]string)
+	validation := &models.Task{Type: "autoresearch_validate", Inputs: map[string]any{
+		"workspace_path": workspace, "prepared_runtime": "dk-local", "research_spec": frozenSpec,
+		"research_trial_ledger": artifacts["research_trial_ledger"], "research_best_candidate": artifacts["research_best_candidate"],
+	}}
+	if err := agent.ExecuteTask(context.Background(), validation, nil); err != nil {
+		t.Fatal(err)
+	}
+	var report models.ResearchValidationReport
+	if err := json.Unmarshal([]byte(validation.Metadata["artifact_values"].(map[string]string)["research_validation_report"]), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != "validated" || report.ValidationMode != "hidden_holdout" || report.ExpectedScore != 0.7 || report.SearchBestScore != 0.9 || report.MeanScore != 0.8 || report.PassedRuns != 2 || report.FailedRuns != 0 {
+		t.Fatalf("general improvement did not pass hidden holdout: %#v", report)
+	}
+	if strings.Contains(report.Summary, "independent evaluator") || !strings.Contains(report.Summary, "hidden holdout") {
+		t.Fatalf("validation summary used an inaccurate label: %s", report.Summary)
+	}
 }
 
 func TestAutoResearchKeepsImprovementAndRollsBackRegression(t *testing.T) {
@@ -204,6 +466,9 @@ func TestAutoResearchKeepsImprovementAndRollsBackRegression(t *testing.T) {
 	}
 	if ledger.Trials[1].Status != "kept" || ledger.Trials[2].Status != "rejected" {
 		t.Fatalf("unexpected trial decisions: %#v", ledger.Trials)
+	}
+	if ledger.Trials[1].Diagnosis != "the evaluator reads SCORE from candidate.py" {
+		t.Fatalf("candidate diagnosis was not preserved: %#v", ledger.Trials[1])
 	}
 	var spec models.ResearchSpec
 	if err := json.Unmarshal([]byte(frozenSpec), &spec); err != nil {
@@ -244,6 +509,312 @@ func TestAutoResearchKeepsImprovementAndRollsBackRegression(t *testing.T) {
 	}
 	if fixtureSandbox.calls != 4 {
 		t.Fatalf("sandbox calls=%d, want baseline + two trials + validation", fixtureSandbox.calls)
+	}
+}
+
+func TestAutoResearchStopsAfterKeptCandidateReachesTarget(t *testing.T) {
+	workspace, frozenSpec := autoResearchFixture(t, 2)
+	var spec models.ResearchSpec
+	if err := json.Unmarshal([]byte(frozenSpec), &spec); err != nil {
+		t.Fatal(err)
+	}
+	target := 0.8
+	spec.TargetScore = &target
+	frozenWithTarget, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fixtureSandbox := &scriptedAutoResearchSandbox{workspace: workspace}
+	agent := &ResearchCodingAgent{
+		Name: "research_coding_agent", Sandbox: fixtureSandbox,
+		ChatModel: newAutoResearchModel(t,
+			autoResearchProposal(t, 0.8, "reach the frozen campaign target"),
+			autoResearchProposal(t, 0.9, "this proposal must not be requested"),
+		),
+	}
+	run := &models.Task{Type: "autoresearch_run", Inputs: map[string]any{
+		"workspace_path": workspace, "prepared_runtime": "dk-fixture", "research_spec": string(frozenWithTarget),
+	}}
+	if err := agent.ExecuteTask(context.Background(), run, nil); err != nil {
+		t.Fatal(err)
+	}
+	var ledger models.ResearchTrialLedger
+	if err := json.Unmarshal([]byte(run.Metadata["artifact_values"].(map[string]string)["research_trial_ledger"]), &ledger); err != nil {
+		t.Fatal(err)
+	}
+	if ledger.CompletedTrials != 1 || ledger.AcceptedTrials != 1 || ledger.BestScore != target || ledger.StopReason != "target_score_reached" {
+		t.Fatalf("target did not stop the campaign after the first kept trial: %#v", ledger)
+	}
+	if ledger.TargetScore == nil || *ledger.TargetScore != target || fixtureSandbox.calls != 2 {
+		t.Fatalf("target evidence or evaluator calls are inconsistent: target=%v calls=%d", ledger.TargetScore, fixtureSandbox.calls)
+	}
+	if err := validateAutoResearchLedgerAgainstSpec(ledger, spec); err != nil {
+		t.Fatalf("valid target-stop ledger rejected: %v", err)
+	}
+	tampered := ledger
+	tampered.StopReason = "trial_budget_exhausted"
+	if err := validateAutoResearchLedgerAgainstSpec(tampered, spec); err == nil {
+		t.Fatal("ledger that hid its target stop was accepted")
+	}
+	tampered = ledger
+	tampered.StopReason = "target_score_reached"
+	notReached := 0.9
+	tampered.TargetScore = &notReached
+	if err := validateAutoResearchLedgerAgainstSpec(tampered, spec); err == nil {
+		t.Fatal("tampered target-stop ledger was accepted")
+	}
+}
+
+func TestAutoResearchSearchMeasurementRejectsOneShotSpike(t *testing.T) {
+	workspace, frozenSpec := autoResearchFixtureWithSearchMeasurement(t, 2, 1, 3, "worst")
+	fixtureSandbox := &scriptedAutoResearchSandbox{
+		workspace: workspace,
+		scoreByCall: map[int]float64{
+			4: 0.95,
+			5: 0.4,
+			6: 0.4,
+		},
+	}
+	agent := &ResearchCodingAgent{
+		Name: "research_coding_agent", Sandbox: fixtureSandbox,
+		ChatModel: newAutoResearchModel(t,
+			autoResearchProposal(t, 0.8, "a one-shot spike should not be trusted"),
+			autoResearchProposal(t, 0.7, "a stable gain should survive every search replay"),
+		),
+	}
+	run := &models.Task{Type: "autoresearch_run", Inputs: map[string]any{
+		"workspace_path": workspace, "prepared_runtime": "dk-fixture", "research_spec": frozenSpec,
+	}}
+	if err := agent.ExecuteTask(context.Background(), run, nil); err != nil {
+		t.Fatal(err)
+	}
+	var ledger models.ResearchTrialLedger
+	if err := json.Unmarshal([]byte(run.Metadata["artifact_values"].(map[string]string)["research_trial_ledger"]), &ledger); err != nil {
+		t.Fatal(err)
+	}
+	if ledger.SearchRuns != 3 || ledger.SearchAggregation != "worst" || ledger.BestScore != 0.7 || ledger.AcceptedTrials != 1 {
+		t.Fatalf("unexpected robust search summary: %#v", ledger)
+	}
+	if ledger.Trials[1].Status != "rejected" || *ledger.Trials[1].Metric != 0.4 || len(ledger.Trials[1].MetricSamples) != 3 {
+		t.Fatalf("one-shot spike was not rejected with raw evidence: %#v", ledger.Trials[1])
+	}
+	if ledger.Trials[2].Status != "kept" || *ledger.Trials[2].Metric != 0.7 || math.Abs(ledger.Trials[2].MetricStdDev) > 1e-12 {
+		t.Fatalf("stable candidate was not retained: %#v", ledger.Trials[2])
+	}
+	if ledger.ResourceUsage == nil || ledger.ResourceUsage.EvaluatorRuns != 9 || ledger.ResourceUsage.CommandRuns != 9 {
+		t.Fatalf("repeated search commands were not accounted for: %#v", ledger.ResourceUsage)
+	}
+	var spec models.ResearchSpec
+	if err := json.Unmarshal([]byte(frozenSpec), &spec); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateAutoResearchLedgerAgainstSpec(ledger, spec); err != nil {
+		t.Fatalf("robust search ledger was rejected: %v", err)
+	}
+	tampered := ledger
+	tampered.Trials = append([]models.ResearchTrial(nil), ledger.Trials...)
+	tampered.Trials[2].MetricSamples = append([]float64(nil), ledger.Trials[2].MetricSamples...)
+	tampered.Trials[2].MetricSamples[0] = 0.99
+	if err := validateAutoResearchLedgerAgainstSpec(tampered, spec); err == nil {
+		t.Fatal("tampered repeated-search samples were accepted")
+	}
+}
+
+func TestAutoResearchSearchMeasurementFailsClosedOnPartialReplay(t *testing.T) {
+	workspace, frozenSpec := autoResearchFixtureWithSearchMeasurement(t, 1, 1, 3, "mean")
+	fixtureSandbox := &scriptedAutoResearchSandbox{workspace: workspace, failCalls: map[int]bool{5: true}}
+	agent := &ResearchCodingAgent{
+		Name: "research_coding_agent", Sandbox: fixtureSandbox,
+		ChatModel: newAutoResearchModel(t, autoResearchProposal(t, 0.9, "all declared search runs must finish")),
+	}
+	run := &models.Task{Type: "autoresearch_run", Inputs: map[string]any{
+		"workspace_path": workspace, "prepared_runtime": "dk-fixture", "research_spec": frozenSpec,
+	}}
+	if err := agent.ExecuteTask(context.Background(), run, nil); err != nil {
+		t.Fatal(err)
+	}
+	var ledger models.ResearchTrialLedger
+	if err := json.Unmarshal([]byte(run.Metadata["artifact_values"].(map[string]string)["research_trial_ledger"]), &ledger); err != nil {
+		t.Fatal(err)
+	}
+	trial := ledger.Trials[1]
+	if trial.Status != "rejected" || trial.Metric != nil || len(trial.EvalResults) != 2 || len(trial.MetricSamples) != 1 || ledger.BestScore != 0.5 {
+		t.Fatalf("partial repeated evaluation did not fail closed: %#v", trial)
+	}
+	if ledger.ResourceUsage == nil || ledger.ResourceUsage.EvaluatorRuns != 5 || ledger.ResourceUsage.FailedCommands != 1 {
+		t.Fatalf("partial failure was not represented in resources: %#v", ledger.ResourceUsage)
+	}
+	finalSource, _ := os.ReadFile(filepath.Join(workspace, "candidate.py"))
+	if string(finalSource) != "SCORE = 0.5\n" {
+		t.Fatalf("partially evaluated candidate was not rolled back: %q", finalSource)
+	}
+}
+
+func TestAggregateAutoResearchScoresSupportsRobustDirections(t *testing.T) {
+	checks := []struct {
+		name        string
+		scores      []float64
+		aggregation string
+		direction   string
+		want        float64
+	}{
+		{name: "mean", scores: []float64{1, 2, 3}, aggregation: "mean", direction: "maximize", want: 2},
+		{name: "odd median", scores: []float64{9, 1, 3}, aggregation: "median", direction: "maximize", want: 3},
+		{name: "even median", scores: []float64{4, 2}, aggregation: "median", direction: "minimize", want: 3},
+		{name: "maximize worst", scores: []float64{0.9, 0.4, 0.8}, aggregation: "worst", direction: "maximize", want: 0.4},
+		{name: "minimize worst", scores: []float64{10, 14, 9}, aggregation: "worst", direction: "minimize", want: 14},
+	}
+	for _, check := range checks {
+		t.Run(check.name, func(t *testing.T) {
+			got, err := aggregateAutoResearchScores(check.scores, check.aggregation, check.direction)
+			if err != nil || got != check.want {
+				t.Fatalf("aggregate=%v err=%v, want %v", got, err, check.want)
+			}
+		})
+	}
+	if _, err := aggregateAutoResearchScores([]float64{1}, "unknown", "maximize"); err == nil {
+		t.Fatal("unknown aggregation was accepted")
+	}
+	if _, err := aggregateAutoResearchScores([]float64{math.NaN()}, "mean", "maximize"); err == nil {
+		t.Fatal("non-finite sample was accepted")
+	}
+}
+
+func TestAutoResearchTargetReachedSupportsMetricDirections(t *testing.T) {
+	maximizeTarget := 0.8
+	minimizeTarget := 10.0
+	if !autoResearchTargetReached(&maximizeTarget, 0.8, "maximize") || !autoResearchTargetReached(&maximizeTarget, 0.9, "maximize") {
+		t.Fatal("maximize target was not recognized")
+	}
+	if autoResearchTargetReached(&maximizeTarget, 0.79, "maximize") {
+		t.Fatal("maximize score below the target was accepted")
+	}
+	if !autoResearchTargetReached(&minimizeTarget, 10, "minimize") || !autoResearchTargetReached(&minimizeTarget, 9, "minimize") {
+		t.Fatal("minimize target was not recognized")
+	}
+	if autoResearchTargetReached(&minimizeTarget, 10.1, "minimize") || autoResearchTargetReached(nil, 1, "maximize") || autoResearchTargetReached(&maximizeTarget, 1, "unknown") {
+		t.Fatal("invalid or absent target was accepted")
+	}
+}
+
+func TestAutoResearchRejectsPrematureStopWhileVisibleCasesFail(t *testing.T) {
+	workspace, frozenSpec := autoResearchFixture(t, 2)
+	fixtureSandbox := &scriptedAutoResearchSandbox{workspace: workspace, emitCases: true}
+	agent := &ResearchCodingAgent{
+		Name: "research_coding_agent", Sandbox: fixtureSandbox,
+		ChatModel: newAutoResearchModel(t,
+			autoResearchStopResponse(t, "the next edit is uncertain"),
+			autoResearchProposal(t, 0.9, "address the unresolved public contract"),
+		),
+	}
+	run := &models.Task{Type: "autoresearch_run", Inputs: map[string]any{
+		"workspace_path": workspace, "prepared_runtime": "dk-fixture", "research_spec": frozenSpec,
+	}}
+	if err := agent.ExecuteTask(context.Background(), run, nil); err != nil {
+		t.Fatal(err)
+	}
+	var ledger models.ResearchTrialLedger
+	artifacts := run.Metadata["artifact_values"].(map[string]string)
+	if err := json.Unmarshal([]byte(artifacts["research_trial_ledger"]), &ledger); err != nil {
+		t.Fatal(err)
+	}
+	if ledger.CompletedTrials != 2 || ledger.AcceptedTrials != 1 || ledger.BestScore != 0.9 {
+		t.Fatalf("premature stop prevented the remaining search budget: %#v", ledger)
+	}
+	if ledger.Trials[1].Decision != "reject" || !strings.Contains(ledger.Trials[1].Reason, "score_target") || ledger.Trials[2].Status != "kept" {
+		t.Fatalf("premature stop was not recorded as a rejected attempt: %#v", ledger.Trials)
+	}
+	var spec models.ResearchSpec
+	if err := json.Unmarshal([]byte(frozenSpec), &spec); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateAutoResearchLedgerAgainstSpec(ledger, spec); err != nil {
+		t.Fatalf("premature-stop ledger failed final validation: %v", err)
+	}
+}
+
+func TestAutoResearchContinuesAfterMalformedCandidateResponse(t *testing.T) {
+	workspace, frozenSpec := autoResearchFixture(t, 2)
+	fixtureSandbox := &scriptedAutoResearchSandbox{workspace: workspace}
+	agent := &ResearchCodingAgent{
+		Name: "research_coding_agent", Sandbox: fixtureSandbox,
+		ChatModel: newAutoResearchModelWithInspector(t, func(call int, body string) {
+			if call != 1 {
+				return
+			}
+			for _, expected := range []string{"candidate model output rejected", "decode candidate response", "required_response", "without Markdown fences"} {
+				if !strings.Contains(body, expected) {
+					t.Fatalf("retry request omitted malformed-response feedback %q: %s", expected, body)
+				}
+			}
+		},
+			`{"status":"propose","diagnosis":"unterminated response"`,
+			autoResearchProposal(t, 0.9, "recover after returning valid strict JSON"),
+		),
+	}
+	run := &models.Task{Type: "autoresearch_run", Inputs: map[string]any{
+		"workspace_path": workspace, "prepared_runtime": "dk-fixture", "research_spec": frozenSpec,
+	}}
+	if err := agent.ExecuteTask(context.Background(), run, nil); err != nil {
+		t.Fatal(err)
+	}
+	var ledger models.ResearchTrialLedger
+	if err := json.Unmarshal([]byte(run.Metadata["artifact_values"].(map[string]string)["research_trial_ledger"]), &ledger); err != nil {
+		t.Fatal(err)
+	}
+	if ledger.CompletedTrials != 2 || ledger.AcceptedTrials != 1 || ledger.BestScore != 0.9 {
+		t.Fatalf("malformed response consumed the remaining campaign: %#v", ledger)
+	}
+	if ledger.Trials[1].Status != "rejected" || ledger.Trials[1].Decision != "reject" || !strings.Contains(ledger.Trials[1].Reason, "decode candidate response") {
+		t.Fatalf("malformed model output was not audited as a rejected attempt: %#v", ledger.Trials[1])
+	}
+	if ledger.Trials[2].Status != "kept" || fixtureSandbox.calls != 2 {
+		t.Fatalf("valid retry did not execute normally: trials=%#v sandbox_calls=%d", ledger.Trials, fixtureSandbox.calls)
+	}
+	validation := &models.Task{Type: "autoresearch_validate", Inputs: map[string]any{
+		"workspace_path": workspace, "prepared_runtime": "dk-fixture", "research_spec": frozenSpec,
+		"research_trial_ledger":   run.Metadata["artifact_values"].(map[string]string)["research_trial_ledger"],
+		"research_best_candidate": run.Metadata["artifact_values"].(map[string]string)["research_best_candidate"],
+	}}
+	if err := agent.ExecuteTask(context.Background(), validation, nil); err != nil {
+		t.Fatalf("valid candidate could not pass final ledger validation after malformed output: %v", err)
+	}
+	if validation.Status != models.StatusCompleted || fixtureSandbox.calls != 3 {
+		t.Fatalf("unexpected final validation state: status=%s sandbox_calls=%d", validation.Status, fixtureSandbox.calls)
+	}
+}
+
+func TestAutoResearchReturnsRejectedCandidateSourceToNextAttempt(t *testing.T) {
+	workspace, frozenSpec := autoResearchFixture(t, 2)
+	fixtureSandbox := &scriptedAutoResearchSandbox{workspace: workspace}
+	agent := &ResearchCodingAgent{
+		Name: "research_coding_agent", Sandbox: fixtureSandbox,
+		ChatModel: newAutoResearchModelWithInspector(t, func(call int, body string) {
+			if call == 1 {
+				for _, expected := range []string{"Previous rejected candidate", "BROKEN = True", "missing SCORE"} {
+					if !strings.Contains(body, expected) {
+						t.Fatalf("second candidate request omitted rejected-source feedback %q: %s", expected, body)
+					}
+				}
+			}
+		},
+			autoResearchSourceProposal(t, "BROKEN = True\n", "try an incomplete implementation"),
+			autoResearchProposal(t, 0.9, "repair the exact rejected candidate"),
+		),
+	}
+	run := &models.Task{Type: "autoresearch_run", Inputs: map[string]any{
+		"workspace_path": workspace, "prepared_runtime": "dk-fixture", "research_spec": frozenSpec,
+	}}
+	if err := agent.ExecuteTask(context.Background(), run, nil); err != nil {
+		t.Fatal(err)
+	}
+	var ledger models.ResearchTrialLedger
+	if err := json.Unmarshal([]byte(run.Metadata["artifact_values"].(map[string]string)["research_trial_ledger"]), &ledger); err != nil {
+		t.Fatal(err)
+	}
+	if ledger.Trials[1].Status != "rejected" || ledger.Trials[2].Status != "kept" || ledger.BestScore != 0.9 {
+		t.Fatalf("rejected-source repair did not recover the campaign: %#v", ledger.Trials)
 	}
 }
 
@@ -339,8 +910,8 @@ func TestAutoResearchRepeatedValidationRejectsMetricDrift(t *testing.T) {
 		"workspace_path": workspace, "prepared_runtime": "dk-fixture", "research_spec": frozenSpec,
 		"research_trial_ledger": artifacts["research_trial_ledger"], "research_best_candidate": artifacts["research_best_candidate"],
 	}}
-	if err := agent.ExecuteTask(context.Background(), validation, nil); err == nil {
-		t.Fatal("metric drift across repeated validation runs should fail validation")
+	if err := agent.ExecuteTask(context.Background(), validation, nil); err != nil {
+		t.Fatalf("completed metric rejection should remain reportable: %v", err)
 	}
 	var report models.ResearchValidationReport
 	validationArtifacts := validation.Metadata["artifact_values"].(map[string]string)
@@ -573,5 +1144,68 @@ func TestAutoResearchSpecUsesBoundedValidationRunsWhenUnset(t *testing.T) {
 	}
 	if frozen.ValidationRuns != autoResearchMaxValidationRuns {
 		t.Fatalf("validation run budget=%d, want runtime maximum %d", frozen.ValidationRuns, autoResearchMaxValidationRuns)
+	}
+	if frozen.SearchRuns != 1 || frozen.SearchAggregation != "mean" {
+		t.Fatalf("default search measurement=%dx%s, want 1xmean", frozen.SearchRuns, frozen.SearchAggregation)
+	}
+}
+
+func TestAutoResearchSpecBoundsAndValidatesSearchMeasurement(t *testing.T) {
+	workspace := t.TempDir()
+	for name, content := range map[string]string{
+		"candidate.py": "VALUE = 1\n",
+		"evaluator.py": "print('{\"score\": 1}')\n",
+	} {
+		if err := os.WriteFile(filepath.Join(workspace, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base := models.ResearchSpec{
+		Version: models.AutoResearchSpecVersion, Name: "search-measurement", Objective: "freeze repeated search measurement",
+		EditableFiles: []string{"candidate.py"}, ProtectedFiles: []string{"evaluator.py"},
+		EvalCommand: []string{"python3", "evaluator.py"}, MetricKey: "score", Direction: "minimize",
+		MaxTrials: 1, MaxWallSeconds: 60, SearchRuns: 99, SearchAggregation: "WORST",
+	}
+	raw, _ := json.Marshal(base)
+	task := &models.Task{Type: "autoresearch_spec", Inputs: map[string]any{
+		"workspace_path": workspace, "research_spec": string(raw),
+		"autoresearch_max_trials": 1, "autoresearch_max_wall_seconds": 60,
+	}}
+	if err := (&ResearchCodingAgent{Name: "research_coding_agent"}).ExecuteTask(context.Background(), task, nil); err != nil {
+		t.Fatal(err)
+	}
+	var frozen models.ResearchSpec
+	if err := json.Unmarshal([]byte(task.Metadata["artifact_values"].(map[string]string)["research_spec"]), &frozen); err != nil {
+		t.Fatal(err)
+	}
+	if frozen.SearchRuns != autoResearchMaxSearchRuns || frozen.SearchAggregation != "worst" {
+		t.Fatalf("bounded search measurement=%dx%s", frozen.SearchRuns, frozen.SearchAggregation)
+	}
+
+	base.SearchAggregation = "peak"
+	raw, _ = json.Marshal(base)
+	bad := &models.Task{Type: "autoresearch_spec", Inputs: map[string]any{
+		"workspace_path": workspace, "research_spec": string(raw),
+		"autoresearch_max_trials": 1, "autoresearch_max_wall_seconds": 60,
+	}}
+	if err := (&ResearchCodingAgent{Name: "research_coding_agent"}).ExecuteTask(context.Background(), bad, nil); err == nil {
+		t.Fatal("unsupported search aggregation was accepted")
+	}
+}
+
+func TestValidateAutoResearchRepositoryRevisionMatchesPreparedCommit(t *testing.T) {
+	revision := "47aa3ddf8dc1ebeb7ef4e65f2b4536af44594099"
+	manifest := fmt.Sprintf(`{"requested_revision":%q,"repository_commit":%q}`, revision, revision)
+	task := &models.Task{Inputs: map[string]any{"repo_manifest": manifest}}
+	if err := validateAutoResearchRepositoryRevision(task, revision); err != nil {
+		t.Fatal(err)
+	}
+
+	mismatch := &models.Task{Inputs: map[string]any{"repo_manifest": fmt.Sprintf(`{"requested_revision":%q,"repository_commit":%q}`, revision, "14a00ad88fc33cf2b52f4f113f25807556f8e25e")}}
+	if err := validateAutoResearchRepositoryRevision(mismatch, revision); err == nil {
+		t.Fatal("mismatched prepared commit was accepted")
+	}
+	if err := validateAutoResearchRepositoryRevision(&models.Task{}, revision); err == nil {
+		t.Fatal("missing repo_manifest evidence was accepted")
 	}
 }

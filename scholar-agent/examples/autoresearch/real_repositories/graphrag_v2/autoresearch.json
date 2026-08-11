@@ -1,0 +1,55 @@
+{
+  "version": "autoresearch.spec/v1",
+  "name": "graphrag-hasher-graph-canonicalization-v2",
+  "repository_revision": "14a00ad88fc33cf2b52f4f113f25807556f8e25e",
+  "objective": "Canonicalize heterogeneous keys and recursive object graphs deterministically, including the previously spent mixed-key recursive mapping case, while preserving GraphRAG's ordinary YAML hash contract.",
+  "editable_files": [
+    "packages/graphrag-common/graphrag_common/hasher/hasher.py"
+  ],
+  "protected_files": [
+    ".scholar/uploads/02-evaluator.py",
+    ".scholar/uploads/03-holdout_evaluator.py"
+  ],
+  "eval_command": [
+    "python3",
+    ".scholar/uploads/02-evaluator.py"
+  ],
+  "holdout_command": [
+    "python3",
+    ".scholar/uploads/03-holdout_evaluator.py"
+  ],
+  "holdout_min_delta": 0.75,
+  "guard_commands": [
+    [
+      "python3",
+      "-m",
+      "py_compile",
+      "packages/graphrag-common/graphrag_common/hasher/hasher.py",
+      ".scholar/uploads/02-evaluator.py"
+    ],
+    [
+      "python3",
+      "-m",
+      "pytest",
+      "-q",
+      "-c",
+      "/dev/null",
+      "-o",
+      "pythonpath=/workspace/packages/graphrag-common",
+      "tests/unit/hasher/test_hasher.py"
+    ]
+  ],
+  "metric_key": "metrics.robustness_score",
+  "direction": "maximize",
+  "min_delta": 0.01,
+  "target_score": 1.0,
+  "search_runs": 3,
+  "search_aggregation": "worst",
+  "max_trials": 8,
+  "max_wall_seconds": 360,
+  "validation_runs": 3,
+  "dependencies": [
+    "PyYAML==6.0.2",
+    "pytest==8.3.5"
+  ]
+}

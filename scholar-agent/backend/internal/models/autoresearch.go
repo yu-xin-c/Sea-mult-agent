@@ -11,25 +11,31 @@ const (
 // ResearchSpec freezes the editable scope, evaluator and experiment budget for
 // one bounded AutoResearch campaign.
 type ResearchSpec struct {
-	Version         string             `json:"version"`
-	Name            string             `json:"name"`
-	Objective       string             `json:"objective"`
-	EditableFiles   []string           `json:"editable_files"`
-	ProtectedFiles  []string           `json:"protected_files"`
-	EvalCommand     []string           `json:"eval_command"`
-	GuardCommands   [][]string         `json:"guard_commands,omitempty"`
-	MetricKey       string             `json:"metric_key"`
-	Direction       string             `json:"direction"`
-	MinDelta        float64            `json:"min_delta"`
-	MaxTrials       int                `json:"max_trials"`
-	MaxWallSeconds  int                `json:"max_wall_seconds"`
-	ValidationRuns  int                `json:"validation_runs,omitempty"`
-	Dependencies    []string           `json:"dependencies,omitempty"`
-	FrozenProtected []ResearchFileHash `json:"frozen_protected"`
-	FrozenWorkspace string             `json:"frozen_workspace_sha256"`
-	Source          string             `json:"source,omitempty"`
-	SourceSHA256    string             `json:"source_sha256,omitempty"`
-	CreatedAt       time.Time          `json:"created_at"`
+	Version            string             `json:"version"`
+	Name               string             `json:"name"`
+	Objective          string             `json:"objective"`
+	RepositoryRevision string             `json:"repository_revision,omitempty"`
+	EditableFiles      []string           `json:"editable_files"`
+	ProtectedFiles     []string           `json:"protected_files"`
+	EvalCommand        []string           `json:"eval_command"`
+	HoldoutCommand     []string           `json:"holdout_command,omitempty"`
+	HoldoutMinDelta    *float64           `json:"holdout_min_delta,omitempty"`
+	GuardCommands      [][]string         `json:"guard_commands,omitempty"`
+	MetricKey          string             `json:"metric_key"`
+	Direction          string             `json:"direction"`
+	MinDelta           float64            `json:"min_delta"`
+	TargetScore        *float64           `json:"target_score,omitempty"`
+	SearchRuns         int                `json:"search_runs,omitempty"`
+	SearchAggregation  string             `json:"search_aggregation,omitempty"`
+	MaxTrials          int                `json:"max_trials"`
+	MaxWallSeconds     int                `json:"max_wall_seconds"`
+	ValidationRuns     int                `json:"validation_runs,omitempty"`
+	Dependencies       []string           `json:"dependencies,omitempty"`
+	FrozenProtected    []ResearchFileHash `json:"frozen_protected"`
+	FrozenWorkspace    string             `json:"frozen_workspace_sha256"`
+	Source             string             `json:"source,omitempty"`
+	SourceSHA256       string             `json:"source_sha256,omitempty"`
+	CreatedAt          time.Time          `json:"created_at"`
 }
 
 // ResearchFileHash identifies the exact bytes used by a campaign.
@@ -59,18 +65,23 @@ type ResearchPatch struct {
 
 // ResearchTrial records one baseline or candidate evaluation.
 type ResearchTrial struct {
-	Number        int                     `json:"number"`
-	Status        string                  `json:"status"`
-	Hypothesis    string                  `json:"hypothesis,omitempty"`
-	Decision      string                  `json:"decision"`
-	Reason        string                  `json:"reason"`
-	Patches       []ResearchPatch         `json:"patches,omitempty"`
-	GuardResults  []ResearchCommandResult `json:"guard_results,omitempty"`
-	EvalResult    ResearchCommandResult   `json:"eval_result"`
-	Metric        *float64                `json:"metric,omitempty"`
-	DeltaFromBest *float64                `json:"delta_from_best,omitempty"`
-	StartedAt     time.Time               `json:"started_at"`
-	FinishedAt    time.Time               `json:"finished_at"`
+	Number            int                     `json:"number"`
+	Status            string                  `json:"status"`
+	Diagnosis         string                  `json:"diagnosis,omitempty"`
+	Hypothesis        string                  `json:"hypothesis,omitempty"`
+	Decision          string                  `json:"decision"`
+	Reason            string                  `json:"reason"`
+	Patches           []ResearchPatch         `json:"patches,omitempty"`
+	GuardResults      []ResearchCommandResult `json:"guard_results,omitempty"`
+	EvalResult        ResearchCommandResult   `json:"eval_result"`
+	EvalResults       []ResearchCommandResult `json:"eval_results,omitempty"`
+	Metric            *float64                `json:"metric,omitempty"`
+	MetricSamples     []float64               `json:"metric_samples,omitempty"`
+	MetricStdDev      float64                 `json:"metric_stddev,omitempty"`
+	MetricAggregation string                  `json:"metric_aggregation,omitempty"`
+	DeltaFromBest     *float64                `json:"delta_from_best,omitempty"`
+	StartedAt         time.Time               `json:"started_at"`
+	FinishedAt        time.Time               `json:"finished_at"`
 }
 
 // ResearchResourceUsage summarizes deterministic command execution without
@@ -92,8 +103,13 @@ type ResearchTrialLedger struct {
 	Status             string                 `json:"status"`
 	MetricKey          string                 `json:"metric_key"`
 	Direction          string                 `json:"direction"`
+	TargetScore        *float64               `json:"target_score,omitempty"`
+	SearchRuns         int                    `json:"search_runs,omitempty"`
+	SearchAggregation  string                 `json:"search_aggregation,omitempty"`
 	BaselineScore      float64                `json:"baseline_score"`
 	BestScore          float64                `json:"best_score"`
+	HoldoutBaseline    *float64               `json:"holdout_baseline_score,omitempty"`
+	HoldoutResult      *ResearchCommandResult `json:"holdout_baseline_result,omitempty"`
 	MaxTrials          int                    `json:"max_trials"`
 	CompletedTrials    int                    `json:"completed_trials"`
 	AcceptedTrials     int                    `json:"accepted_trials"`
@@ -108,15 +124,16 @@ type ResearchTrialLedger struct {
 
 // ResearchValidationRun records one fresh guard/evaluator process sequence.
 type ResearchValidationRun struct {
-	Number        int                     `json:"number"`
-	Status        string                  `json:"status"`
-	ObservedScore *float64                `json:"observed_score,omitempty"`
-	ScoreMatches  bool                    `json:"score_matches"`
-	GuardResults  []ResearchCommandResult `json:"guard_results,omitempty"`
-	EvalResult    ResearchCommandResult   `json:"eval_result"`
-	Error         string                  `json:"error,omitempty"`
-	StartedAt     time.Time               `json:"started_at"`
-	FinishedAt    time.Time               `json:"finished_at"`
+	Number            int                     `json:"number"`
+	Status            string                  `json:"status"`
+	ObservedScore     *float64                `json:"observed_score,omitempty"`
+	DeltaFromBaseline *float64                `json:"delta_from_baseline,omitempty"`
+	ScoreMatches      bool                    `json:"score_matches"`
+	GuardResults      []ResearchCommandResult `json:"guard_results,omitempty"`
+	EvalResult        ResearchCommandResult   `json:"eval_result"`
+	Error             string                  `json:"error,omitempty"`
+	StartedAt         time.Time               `json:"started_at"`
+	FinishedAt        time.Time               `json:"finished_at"`
 }
 
 // ResearchBestCandidate is a compact pointer to the retained workspace state.
@@ -129,14 +146,17 @@ type ResearchBestCandidate struct {
 	Files          []ResearchFileHash `json:"files"`
 }
 
-// ResearchValidationReport is produced by an independent rerun of the frozen
-// guards and evaluator after the search loop has finished.
+// ResearchValidationReport records either a model-hidden holdout acceptance
+// run or, when no holdout exists, an explicitly labeled search-evaluator replay.
 type ResearchValidationReport struct {
 	Version         string                  `json:"version"`
 	Status          string                  `json:"status"`
+	ValidationMode  string                  `json:"validation_mode"`
 	SpecSHA256      string                  `json:"spec_sha256"`
 	LedgerSHA256    string                  `json:"ledger_sha256"`
 	ExpectedScore   float64                 `json:"expected_score"`
+	SearchBestScore float64                 `json:"search_best_score"`
+	HoldoutBaseline *float64                `json:"holdout_baseline_score,omitempty"`
 	ObservedScore   float64                 `json:"observed_score"`
 	ObservedScores  []float64               `json:"observed_scores"`
 	MeanScore       float64                 `json:"mean_score"`

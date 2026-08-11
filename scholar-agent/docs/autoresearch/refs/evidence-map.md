@@ -1,12 +1,12 @@
 # AutoResearch 项目介绍证据表
 
-最后核验：2026-08-07。
+最后核验：2026-08-10。
 
 这张表只记录项目介绍中实际使用的来源。`借鉴类型` 分为直接方法、方向启发、工程对照和路线图依据；它们不表示 ScholarAgent 复刻了对应项目，也不表示本项目拥有原工作的全部能力。
 
 | Source ID | 一手来源 | 来源类型 | 可使用的事实 | 支持的项目表述 | 本地落点 | 借鉴类型与风险 |
 |---|---|---|---|---|---|---|
-| AR-01 | [karpathy/autoresearch](https://github.com/karpathy/autoresearch) | 官方仓库 README | Agent 修改单个训练文件，以固定 5 分钟预算运行，用单一验证指标比较并 Keep/Discard，持续记录实验 | AutoResearch 的最小闭环来自“小修改、固定预算、真实指标、保留或丢弃” | [`agent/autoresearch.go`](../../../backend/internal/agent/autoresearch.go)、[`03_research_coding_harness.md`](../03_research_coding_harness.md) | 直接方法；ScholarAgent 扩展为跨仓库规格、多个白名单文件和独立复验 |
+| AR-01 | [karpathy/autoresearch](https://github.com/karpathy/autoresearch) | 官方仓库 README | Agent 修改单个训练文件，以固定 5 分钟预算运行，用单一验证指标比较并 Keep/Discard，持续记录实验 | AutoResearch 的最小闭环来自“小修改、固定预算、真实指标、保留或丢弃” | [`agent/autoresearch.go`](../../../backend/internal/agent/autoresearch.go)、[`03_research_coding_harness.md`](../03_research_coding_harness.md) | 直接方法；ScholarAgent 扩展为跨仓库规格、多个白名单文件和明确标注的最终验证 |
 | AR-02 | [The AI Scientist](https://arxiv.org/abs/2408.06292) | 论文与官方代码 | 把想法生成、代码编写、实验、可视化、论文写作和模拟评审串为开放式科研流程 | 自动实验可以作为更长科研链的一环 | [`project_architecture.md`](../../project_architecture.md) | 方向启发；本项目没有宣称全自动科学发现，也不把自动评审当科学真值 |
 | AR-03 | [Agent Laboratory](https://arxiv.org/abs/2501.04227) | 论文与官方代码 | 文献、实验和报告由工作流协作完成，允许用户在阶段间提供反馈；论文报告人工介入改善整体质量 | 采用专业 Agent 分工，并把人工检查点列为高优先级治理能力 | [`research_coding_agent.md`](../../research_coding_agent.md)、[`06_research_basis_and_roadmap.md`](../06_research_basis_and_roadmap.md) | 方向启发；AutoResearch 的规格冻结审批尚未实现 |
 | AR-04 | [PaperBench](https://arxiv.org/abs/2504.01848) | 论文与官方研究项目 | 以分层 rubric 将 20 篇论文复现拆成 8,316 个可独立评分任务，rubric 由论文作者参与编写 | 复现验收不应只有“代码能运行”，而应按冻结主张、准则和证据逐项判断 | [`claim_evidence_graph.md`](../../claim_evidence_graph.md)、[`planner.go`](../../../backend/internal/planner/planner.go) | 直接评测启发；Claim-to-Evidence 属于 ScholarAgent 复现链，不是每轮搜索的接受函数 |
@@ -16,7 +16,11 @@
 | AR-08 | [SWE-agent](https://arxiv.org/abs/2405.15793) | 论文与官方项目 | 专门设计的 Agent-Computer Interface 支持仓库导航、代码编辑和测试执行，接口设计会影响 Agent 行为 | Research Coding Agent 采用仓库级、受限读写和测试反馈，而不是只让模型一次性输出代码 | [`research_coding_agent.md`](../../research_coding_agent.md) | 工程对照；没有移植 SWE-agent 的 ACI 或声称达到其 benchmark 结果 |
 | AR-09 | [Life After Benchmark Saturation: A Case Study of CORE-Bench](https://arxiv.org/abs/2606.26158) | 论文 | 将 Agent 评估扩展到构念有效性、OOD 泛化、效率、可靠性、模型与 scaffold 作用、人机协作 | 重复进程验证和命令资源摘要覆盖可靠性/效率的一小部分；多 seed、GPU 成本、OOD 与人工协作继续进入路线图 | [`06_research_basis_and_roadmap.md`](../06_research_basis_and_roadmap.md)、[`07_repeated_validation_and_resource_evidence.md`](../07_repeated_validation_and_resource_evidence.md) | 路线图依据；不能据此声称完成全面评估 |
 | AR-10 | [MLE-bench](https://arxiv.org/abs/2410.07095) | 论文与官方 benchmark | 使用 75 个 Kaggle 任务评测机器学习工程 Agent，并研究不同形式的资源扩展 | 把命令执行次数与耗时作为正式 Artifact 字段，为比较效果与运行投入提供基础 | [`models/autoresearch.go`](../../../backend/internal/models/autoresearch.go)、[`07_repeated_validation_and_resource_evidence.md`](../07_repeated_validation_and_resource_evidence.md) | 评价维度启发；当前资源摘要不是 MLE-bench 指标，也不包含 GPU/费用 |
-| AR-11 | [Microsoft R&D-Agent](https://github.com/microsoft/RD-Agent) | 官方仓库与技术报告入口 | 将 Research 与 Development 分工；官方 README 对部分 MLE-bench 结果报告 5/6 次独立 seed 的均值和标准差 | 最佳候选支持重复独立进程验证，报告逐次结果、均值、总体标准差和失败率 | [`agent/autoresearch.go`](../../../backend/internal/agent/autoresearch.go)、[`07_repeated_validation_and_resource_evidence.md`](../07_repeated_validation_and_resource_evidence.md) | 工程与报告方式借鉴；当前不会自动切换 seed，不能称为等价多 seed 评测 |
+| AR-11 | [Microsoft R&D-Agent](https://github.com/microsoft/RD-Agent) | 官方仓库与技术报告入口 | 将 Research 与 Development 分工；官方 README 对部分 MLE-bench 结果报告 5/6 次独立 seed 的均值和标准差 | 最佳候选支持重复启动验证进程，报告逐次结果、均值、总体标准差和失败率 | [`agent/autoresearch.go`](../../../backend/internal/agent/autoresearch.go)、[`07_repeated_validation_and_resource_evidence.md`](../07_repeated_validation_and_resource_evidence.md) | 工程与报告方式借鉴；当前不会自动切换 seed，不能称为等价多 seed 评测 |
+| AR-12 | [Auto-Research-Recipes](https://github.com/cxcscmu/Auto-Research-Recipes) | 官方仓库与架构文档 | 将任务无关研究核心和 Task Adapter 分开，外部 evaluator 拥有分数，发布物保留实验 Artifact | 真实仓库实验使用统一三文件任务包，Go harness 掌握执行和评分，结果保存完整 plan graph | [`real_repositories/README.md`](../../../examples/autoresearch/real_repositories/README.md)、[`run_campaign.py`](../../../examples/autoresearch/run_campaign.py) | 工程借鉴；未移植其源码，当前线性账本还没有分支 parent lineage |
+| AR-13 | [Arbor](https://github.com/RUC-NLPIR/Arbor) | 官方仓库 README | 采用 Coordinator/Executor、想法树、隔离 worktree、开发/heldout 划分及恢复机制 | 隔离仓库工作区和公开搜索/隐藏验收分离有明确工程参照 | [`08_real_repository_experiments.md`](../08_real_repository_experiments.md)、[`repo_prepare.go`](../../../backend/internal/scheduler/repo_prepare.go) | 工程与路线图依据；未实现 Arbor 的并行 worktree、树搜索或 checkpoint |
+| AR-14 | [AI Scientist v2](https://github.com/SakanaAI/AI-Scientist-v2) | 官方仓库 README 与论文入口 | 通过渐进式 Agent tree search 管理研究想法和实验 | 候选反馈、TrialLedger 和回滚是扩展到分支实验管理前的基础 | [`agent/autoresearch.go`](../../../backend/internal/agent/autoresearch.go)、[`06_research_basis_and_roadmap.md`](../06_research_basis_and_roadmap.md) | 方向启发；当前是线性循环，不能称为已实现 progressive tree search |
+| AR-15 | [Stochasticity in Deep Research Agents](https://arxiv.org/abs/2602.23271) | 论文 | 研究同一深度研究 Agent 多次独立运行产生的结果方差及可靠性影响 | 搜索阶段支持重复 evaluator、原始样本、标准差和保守聚合，不以单次尖峰 Keep | [`models/autoresearch.go`](../../../backend/internal/models/autoresearch.go)、[`agent/autoresearch.go`](../../../backend/internal/agent/autoresearch.go) | 直接评价启发；当前重放 evaluator，不等价于论文中的完整 Agent 多次独立运行 |
 
 ## 本地实现核对原则
 

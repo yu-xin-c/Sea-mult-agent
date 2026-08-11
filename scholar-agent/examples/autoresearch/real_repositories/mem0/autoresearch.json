@@ -1,0 +1,31 @@
+{
+  "version": "autoresearch.spec/v1",
+  "name": "mem0-retrieval-scoring-robustness",
+  "objective": "Improve Mem0 hybrid retrieval scoring for extreme BM25 values, non-finite semantic scores, and invalid top_k values while preserving ordinary ranking behavior.",
+  "editable_files": [
+    "mem0/utils/scoring.py"
+  ],
+  "protected_files": [
+    ".scholar/uploads/02-evaluator.py"
+  ],
+  "eval_command": [
+    "python3",
+    ".scholar/uploads/02-evaluator.py"
+  ],
+  "guard_commands": [
+    [
+      "python3",
+      "-m",
+      "py_compile",
+      "mem0/utils/scoring.py",
+      ".scholar/uploads/02-evaluator.py"
+    ]
+  ],
+  "metric_key": "metrics.robustness_score",
+  "direction": "maximize",
+  "min_delta": 0.01,
+  "max_trials": 3,
+  "max_wall_seconds": 300,
+  "validation_runs": 3,
+  "dependencies": []
+}

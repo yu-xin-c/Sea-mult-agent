@@ -9,9 +9,13 @@ export interface AutoResearchTrialView {
   number: number;
   status: string;
   decision: string;
+  diagnosis: string;
   hypothesis: string;
   reason: string;
   metric: number | null;
+  metricSamples: number[];
+  metricStdDev: number;
+  metricAggregation: 'mean' | 'median' | 'worst';
   deltaFromBest: number | null;
   durationMs: number;
   patches: AutoResearchPatchView[];
@@ -32,6 +36,9 @@ export interface AutoResearchLedgerView {
   status: string;
   metricKey: string;
   direction: 'maximize' | 'minimize';
+  targetScore: number | null;
+  searchRuns: number;
+  searchAggregation: 'mean' | 'median' | 'worst';
   baselineScore: number;
   bestScore: number;
   maxTrials: number;
@@ -42,8 +49,45 @@ export interface AutoResearchLedgerView {
   trials: AutoResearchTrialView[];
 }
 
+export interface AutoResearchValidationRunView {
+  number: number;
+  status: string;
+  observedScore: number | null;
+  deltaFromBaseline: number | null;
+  scoreMatches: boolean;
+  error: string;
+  durationMs: number;
+}
+
+export interface AutoResearchValidationView {
+  version: 'autoresearch.validation/v1';
+  status: string;
+  validationMode: 'hidden_holdout' | 'search_evaluator_replay';
+  metricKey: string;
+  searchBestScore: number;
+  holdoutBaselineScore: number | null;
+  expectedScore: number;
+  meanScore: number;
+  stddev: number;
+  requestedRuns: number;
+  completedRuns: number;
+  passedRuns: number;
+  failedRuns: number;
+  failureRate: number;
+  protectedIntact: boolean;
+  workspaceIntact: boolean;
+  candidateIntact: boolean;
+  summary: string;
+  resourceUsage: AutoResearchResourceView | null;
+  runs: AutoResearchValidationRunView[];
+}
+
 export type AutoResearchLedgerParseResult =
   | { ok: true; ledger: AutoResearchLedgerView }
+  | { ok: false; error: string };
+
+export type AutoResearchValidationParseResult =
+  | { ok: true; validation: AutoResearchValidationView }
   | { ok: false; error: string };
 
 type JsonObject = Record<string, unknown>;
@@ -72,7 +116,10 @@ const trialDuration = (trial: JsonObject): number => {
   }
 
   const guards = Array.isArray(trial.guard_results) ? trial.guard_results.reduce((sum, item) => sum + commandDuration(item), 0) : 0;
-  return guards + commandDuration(trial.eval_result);
+  const evaluations = Array.isArray(trial.eval_results)
+    ? trial.eval_results.reduce((sum, item) => sum + commandDuration(item), 0)
+    : commandDuration(trial.eval_result);
+  return guards + evaluations;
 };
 
 const parsePatch = (value: unknown): AutoResearchPatchView | null => {
@@ -97,6 +144,12 @@ const parseTrial = (value: unknown, baselineScore: number): AutoResearchTrialVie
   if (number === null || !status || !decision) return null;
 
   const metric = finiteNumber(trial.metric) ?? (number === 0 ? baselineScore : null);
+  const metricSamples = Array.isArray(trial.metric_samples)
+    ? trial.metric_samples.map(finiteNumber).filter((sample): sample is number => sample !== null)
+    : (metric === null ? [] : [metric]);
+  const metricAggregation = trial.metric_aggregation === 'median' || trial.metric_aggregation === 'worst'
+    ? trial.metric_aggregation
+    : 'mean';
   const patches = Array.isArray(trial.patches)
     ? trial.patches.map(parsePatch).filter((item): item is AutoResearchPatchView => item !== null)
     : [];
@@ -105,9 +158,13 @@ const parseTrial = (value: unknown, baselineScore: number): AutoResearchTrialVie
     number,
     status,
     decision,
+    diagnosis: textValue(trial.diagnosis),
     hypothesis: textValue(trial.hypothesis),
     reason: textValue(trial.reason),
     metric,
+    metricSamples,
+    metricStdDev: finiteNumber(trial.metric_stddev) ?? 0,
+    metricAggregation,
     deltaFromBest: finiteNumber(trial.delta_from_best),
     durationMs: trialDuration(trial),
     patches,
@@ -148,6 +205,28 @@ const parseResourceUsage = (value: unknown): AutoResearchResourceView | null => 
   };
 };
 
+const parseValidationRun = (value: unknown): AutoResearchValidationRunView | null => {
+  const run = asObject(value);
+  if (!run) return null;
+  const number = integer(run.number);
+  const status = textValue(run.status);
+  if (number === null || number < 1 || !status || typeof run.score_matches !== 'boolean') return null;
+  const startedAt = Date.parse(textValue(run.started_at));
+  const finishedAt = Date.parse(textValue(run.finished_at));
+  const durationMs = Number.isFinite(startedAt) && Number.isFinite(finishedAt) && finishedAt >= startedAt
+    ? finishedAt - startedAt
+    : 0;
+  return {
+    number,
+    status,
+    observedScore: finiteNumber(run.observed_score),
+    deltaFromBaseline: finiteNumber(run.delta_from_baseline),
+    scoreMatches: run.score_matches,
+    error: textValue(run.error),
+    durationMs,
+  };
+};
+
 const decodeInput = (raw: string | unknown): unknown => {
   let value: unknown = raw;
   for (let pass = 0; pass < 2 && typeof value === 'string'; pass += 1) {
@@ -166,6 +245,14 @@ export function parseAutoResearchLedger(raw: string | unknown): AutoResearchLedg
 
     const metricKey = textValue(candidate.metric_key);
     const direction = candidate.direction;
+    const targetScore = candidate.target_score === undefined || candidate.target_score === null
+      ? null
+      : finiteNumber(candidate.target_score);
+    const rawSearchRuns = integer(candidate.search_runs);
+    const searchRuns = rawSearchRuns === null || rawSearchRuns < 1 ? 1 : rawSearchRuns;
+    const searchAggregation = candidate.search_aggregation === 'median' || candidate.search_aggregation === 'worst'
+      ? candidate.search_aggregation
+      : 'mean';
     const baselineScore = finiteNumber(candidate.baseline_score);
     const bestScore = finiteNumber(candidate.best_score);
     const maxTrials = integer(candidate.max_trials);
@@ -175,6 +262,7 @@ export function parseAutoResearchLedger(raw: string | unknown): AutoResearchLedg
     if (
       !metricKey ||
       (direction !== 'maximize' && direction !== 'minimize') ||
+      (candidate.target_score !== undefined && candidate.target_score !== null && targetScore === null) ||
       baselineScore === null ||
       bestScore === null ||
       maxTrials === null ||
@@ -205,6 +293,9 @@ export function parseAutoResearchLedger(raw: string | unknown): AutoResearchLedg
         status: textValue(candidate.status),
         metricKey,
         direction,
+        targetScore,
+        searchRuns,
+        searchAggregation,
         baselineScore,
         bestScore,
         maxTrials,
@@ -217,6 +308,71 @@ export function parseAutoResearchLedger(raw: string | unknown): AutoResearchLedg
     };
   } catch {
     return { ok: false, error: '实验账本 JSON 无法解析。' };
+  }
+}
+
+export function parseAutoResearchValidationReport(raw: string | unknown): AutoResearchValidationParseResult {
+  try {
+    const candidate = asObject(decodeInput(raw));
+    if (!candidate || candidate.version !== 'autoresearch.validation/v1') {
+      return { ok: false, error: '验收报告版本不受支持。' };
+    }
+    const validationMode = candidate.validation_mode;
+    const metricKey = textValue(candidate.metric_key);
+    const searchBestScore = finiteNumber(candidate.search_best_score);
+    const expectedScore = finiteNumber(candidate.expected_score);
+    const meanScore = finiteNumber(candidate.mean_score);
+    const stddev = finiteNumber(candidate.stddev);
+    const requestedRuns = integer(candidate.requested_runs);
+    const completedRuns = integer(candidate.completed_runs);
+    const passedRuns = integer(candidate.passed_runs);
+    const failedRuns = integer(candidate.failed_runs);
+    const failureRate = finiteNumber(candidate.failure_rate);
+    const resourceUsage = candidate.resource_usage === undefined ? null : parseResourceUsage(candidate.resource_usage);
+    if (
+      (validationMode !== 'hidden_holdout' && validationMode !== 'search_evaluator_replay') ||
+      !metricKey || searchBestScore === null || expectedScore === null || meanScore === null || stddev === null ||
+      requestedRuns === null || completedRuns === null || passedRuns === null || failedRuns === null ||
+      failureRate === null || failureRate < 0 || failureRate > 1 || !Array.isArray(candidate.runs) ||
+      typeof candidate.protected_intact !== 'boolean' || typeof candidate.workspace_intact !== 'boolean' ||
+      typeof candidate.candidate_intact !== 'boolean'
+    ) {
+      return { ok: false, error: '验收报告缺少模式、指标、轮次或完整性字段。' };
+    }
+    if (candidate.resource_usage !== undefined && resourceUsage === null) {
+      return { ok: false, error: '验收报告的执行资源摘要不一致。' };
+    }
+    const runs = candidate.runs.map(parseValidationRun);
+    if (runs.some((run) => run === null)) {
+      return { ok: false, error: '验收报告包含无法识别的运行记录。' };
+    }
+    return {
+      ok: true,
+      validation: {
+        version: 'autoresearch.validation/v1',
+        status: textValue(candidate.status),
+        validationMode,
+        metricKey,
+        searchBestScore,
+        holdoutBaselineScore: finiteNumber(candidate.holdout_baseline_score),
+        expectedScore,
+        meanScore,
+        stddev,
+        requestedRuns,
+        completedRuns,
+        passedRuns,
+        failedRuns,
+        failureRate,
+        protectedIntact: candidate.protected_intact,
+        workspaceIntact: candidate.workspace_intact,
+        candidateIntact: candidate.candidate_intact,
+        summary: textValue(candidate.summary),
+        resourceUsage,
+        runs: runs as AutoResearchValidationRunView[],
+      },
+    };
+  } catch {
+    return { ok: false, error: '验收报告 JSON 无法解析。' };
   }
 }
 

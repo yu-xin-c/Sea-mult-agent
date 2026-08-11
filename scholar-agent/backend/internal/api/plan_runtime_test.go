@@ -225,7 +225,8 @@ func TestBuildRuleIntentContextPreservesExplicitSmokeAndPreferredRepository(t *t
 }
 
 func TestBuildRuleIntentContextRoutesAutoResearchBeforePaperAndCode(t *testing.T) {
-	raw := "用 https://github.com/example/research-repo 做 AutoResearch 自动实验循环，按 examples/autoresearch/intent_router/autoresearch.json 运行代码和评测"
+	revision := "47aa3ddf8dc1ebeb7ef4e65f2b4536af44594099"
+	raw := "用 https://github.com/example/research-repo commit " + revision + " 做 AutoResearch 自动实验循环，按 examples/autoresearch/intent_router/autoresearch.json 运行代码和评测"
 	intent := buildRuleIntentContext(raw)
 	if intent.IntentType != "AutoResearch" {
 		t.Fatalf("intent type=%s, want AutoResearch", intent.IntentType)
@@ -238,6 +239,9 @@ func TestBuildRuleIntentContextRoutesAutoResearchBeforePaperAndCode(t *testing.T
 	}
 	if got := intent.Entities["preferred_repo_url"]; got != "https://github.com/example/research-repo" {
 		t.Fatalf("preferred_repo_url=%v", got)
+	}
+	if got := intent.Entities["repository_revision"]; got != revision {
+		t.Fatalf("repository_revision=%v", got)
 	}
 }
 

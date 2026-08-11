@@ -8,6 +8,9 @@ import {
   FlaskConical,
   Gauge,
   Minus,
+  RotateCcw,
+  ShieldAlert,
+  ShieldCheck,
   TerminalSquare,
   TrendingDown,
   TrendingUp,
@@ -18,8 +21,10 @@ import {
   formatResearchDuration,
   formatResearchMetric,
   parseAutoResearchLedger,
+  parseAutoResearchValidationReport,
   type AutoResearchLedgerView,
   type AutoResearchTrialView as TrialView,
+  type AutoResearchValidationView,
 } from './trialLedger';
 
 interface AutoResearchTrialViewProps {
@@ -48,6 +53,7 @@ const pointColor = (trial: TrialView) => {
 };
 
 const stopReasonLabel = (reason: string) => {
+  if (reason === 'target_score_reached') return '达到契约目标分数';
   if (reason === 'trial_budget_exhausted') return '达到候选轮次预算';
   if (reason === 'wall_time_budget_exhausted') return '达到运行时间预算';
   if (reason.startsWith('stop:')) return `Agent 主动停止：${reason.slice(5).trim()}`;
@@ -145,6 +151,12 @@ function TrialRow({ trial, metricKey }: { trial: TrialView; metricKey: string })
               </span>
             )}
           </div>
+          {trial.diagnosis && (
+            <div className="mt-2 border-l-2 border-cyan-200 pl-2 text-[11px] leading-5 text-slate-600">
+              <span className="mr-1 font-semibold text-cyan-800">诊断</span>
+              <span className="break-words">{trial.diagnosis}</span>
+            </div>
+          )}
           {trial.hypothesis && <div className="mt-2 break-words text-xs font-medium leading-5 text-slate-800">{trial.hypothesis}</div>}
           {trial.reason && <div className="mt-1 break-words text-[11px] leading-5 text-slate-600">{trial.reason}</div>}
         </div>
@@ -153,6 +165,11 @@ function TrialRow({ trial, metricKey }: { trial: TrialView; metricKey: string })
             {trial.metric === null ? 'N/A' : formatResearchMetric(trial.metric)}
           </div>
           <div className="mt-1 text-[10px] text-slate-500">{metricKey}</div>
+          {trial.metricSamples.length > 1 && (
+            <div className="mt-1 font-mono text-[10px] text-slate-500">
+              n={trial.metricSamples.length} · {trial.metricAggregation} · σ {formatResearchMetric(trial.metricStdDev)}
+            </div>
+          )}
           {trial.deltaFromBest !== null && (
             <div className={`mt-1 font-mono text-[11px] ${trial.deltaFromBest > 0 ? 'text-emerald-700' : trial.deltaFromBest < 0 ? 'text-rose-700' : 'text-slate-500'}`}>
               {trial.deltaFromBest > 0 ? '+' : ''}{formatResearchMetric(trial.deltaFromBest)}
@@ -182,8 +199,105 @@ function TrialRow({ trial, metricKey }: { trial: TrialView; metricKey: string })
   );
 }
 
+function AutoResearchValidationPanel({ validation, expanded }: { validation: AutoResearchValidationView; expanded: boolean }) {
+  const hidden = validation.validationMode === 'hidden_holdout';
+  const passed = validation.status === 'validated';
+  const BannerIcon = hidden ? (passed ? ShieldCheck : ShieldAlert) : RotateCcw;
+  const bannerTone = hidden
+    ? passed ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-rose-200 bg-rose-50 text-rose-900'
+    : 'border-amber-200 bg-amber-50 text-amber-900';
+  const title = hidden
+    ? passed ? '隐藏验收通过' : '隐藏验收未通过'
+    : '仅完成公开评测重放';
+  const integrity = [
+    ['保护文件', validation.protectedIntact],
+    ['仓库源码', validation.workspaceIntact],
+    ['候选哈希', validation.candidateIntact],
+  ] as const;
+
+  return (
+    <div className={`flex min-h-0 flex-col bg-white ${expanded ? 'h-full' : ''}`}>
+      <div className={`border-b px-4 py-4 ${bannerTone}`}>
+        <div className="flex items-start gap-3">
+          <BannerIcon className="mt-0.5 h-5 w-5 shrink-0" />
+          <div className="min-w-0">
+            <div className="text-sm font-semibold">{title}</div>
+            <div className="mt-1 break-words text-xs leading-5 opacity-80">
+              {hidden ? '候选模型未看到该验收命令、源码或基线。' : '该结果复用了搜索阶段的评测器，不能视为独立或隐藏验收。'}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 border-b border-slate-200 bg-slate-50 sm:grid-cols-4">
+        <SummaryValue label="搜索最佳" value={formatResearchMetric(validation.searchBestScore)} tone="blue" />
+        <SummaryValue label={hidden ? '隐藏基线' : '搜索分数'} value={formatResearchMetric(validation.holdoutBaselineScore ?? validation.searchBestScore)} />
+        <SummaryValue label={hidden ? '验收阈值' : '重放期望'} value={formatResearchMetric(validation.expectedScore)} tone="amber" />
+        <SummaryValue label="验收均值" value={formatResearchMetric(validation.meanScore)} tone={passed ? 'emerald' : 'amber'} />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-slate-200 px-4 py-3 text-[11px] text-slate-600">
+        <span className="font-semibold text-slate-800">完整性</span>
+        {integrity.map(([label, intact]) => (
+          <span key={label} className={`inline-flex items-center gap-1 ${intact ? 'text-emerald-700' : 'font-semibold text-rose-700'}`}>
+            {intact ? <CheckCircle2 className="h-3.5 w-3.5" /> : <XCircle className="h-3.5 w-3.5" />}
+            {label}
+          </span>
+        ))}
+        <span>通过 {validation.passedRuns} / {validation.requestedRuns}</span>
+        <span>stddev {formatResearchMetric(validation.stddev)}</span>
+        <span>失败率 {formatResearchMetric(validation.failureRate * 100)}%</span>
+      </div>
+
+      {validation.resourceUsage && (
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-slate-200 px-4 py-2.5 text-[11px] text-slate-600">
+          <span className="inline-flex items-center gap-1.5 font-semibold text-slate-800">
+            <Gauge className="h-3.5 w-3.5 text-cyan-700" />
+            验收资源
+          </span>
+          <span>{validation.resourceUsage.commandRuns} 次命令</span>
+          <span>Guard {validation.resourceUsage.guardRuns} / Eval {validation.resourceUsage.evaluatorRuns}</span>
+          <span>墙钟 {formatResearchDuration(validation.resourceUsage.wallDurationMs)}</span>
+        </div>
+      )}
+
+      <section className="min-h-0 flex-1 px-4 py-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-sm font-semibold text-slate-900">逐轮验收</div>
+          <div className="break-all font-mono text-[11px] text-slate-500">{validation.metricKey}</div>
+        </div>
+        <ol className={`space-y-2 ${expanded ? '' : 'max-h-[30rem] overflow-y-auto pr-1'}`}>
+          {validation.runs.map((run) => (
+            <li key={run.number} className="border-b border-slate-100 px-1 py-3 last:border-b-0">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex min-w-0 items-start gap-2">
+                  {run.scoreMatches ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-rose-700" />}
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold text-slate-800">Run {run.number} · {run.scoreMatches ? 'Pass' : 'Fail'}</div>
+                    {run.error && <div className="mt-1 break-words text-[11px] leading-5 text-rose-700">{run.error}</div>}
+                  </div>
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className="font-mono text-xs font-semibold text-slate-900">{run.observedScore === null ? 'N/A' : formatResearchMetric(run.observedScore)}</div>
+                  {run.deltaFromBaseline !== null && <div className="mt-1 font-mono text-[10px] text-slate-500">delta {run.deltaFromBaseline >= 0 ? '+' : ''}{formatResearchMetric(run.deltaFromBaseline)}</div>}
+                  {run.durationMs > 0 && <div className="mt-1 text-[10px] text-slate-400">{formatResearchDuration(run.durationMs)}</div>}
+                </div>
+              </div>
+            </li>
+          ))}
+        </ol>
+        {validation.summary && <div className="mt-3 border-t border-slate-200 pt-3 text-[11px] leading-5 text-slate-600">{validation.summary}</div>}
+      </section>
+    </div>
+  );
+}
+
 export function AutoResearchTrialView({ rawLedger, expanded = false }: AutoResearchTrialViewProps) {
+  const validation = useMemo(() => parseAutoResearchValidationReport(rawLedger), [rawLedger]);
   const parsed = useMemo(() => parseAutoResearchLedger(rawLedger), [rawLedger]);
+  if (validation.ok) {
+    return <AutoResearchValidationPanel validation={validation.validation} expanded={expanded} />;
+  }
   if (!parsed.ok) {
     return (
       <div className="flex min-h-48 items-center justify-center border border-rose-200 bg-rose-50 px-6 text-center text-sm text-rose-800" role="alert">
@@ -221,6 +335,8 @@ export function AutoResearchTrialView({ rawLedger, expanded = false }: AutoResea
             {ledger.resourceUsage.commandRuns} 次命令
           </span>
           <span>Guard {ledger.resourceUsage.guardRuns} / Eval {ledger.resourceUsage.evaluatorRuns}</span>
+          <span>搜索测量 {ledger.searchRuns}× {ledger.searchAggregation}</span>
+          {ledger.targetScore !== null && <span>目标 {formatResearchMetric(ledger.targetScore)}</span>}
           <span>命令累计 {formatResearchDuration(ledger.resourceUsage.commandDurationMs)}</span>
           <span>墙钟 {formatResearchDuration(ledger.resourceUsage.wallDurationMs)}</span>
           {ledger.resourceUsage.failedCommands > 0 && (

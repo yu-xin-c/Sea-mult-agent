@@ -78,7 +78,10 @@ npm test
 | baseline `0.5` | Trial 0 建立初始最佳值 |
 | 候选 1 得分 `0.8` | `kept`，最佳快照更新 |
 | 候选 2 得分 `0.4` | `rejected`，文件恢复到 `0.8` 版本 |
-| 搜索后独立复验 | 文件哈希与 `0.8` 得分同时匹配 |
+| 搜索 evaluator 重放 | 文件哈希与 `0.8` 得分同时匹配，报告模式为 `search_evaluator_replay` |
+| 模型输出坏 JSON | 记录一个 Reject，下一轮收到严格 schema 提示，剩余预算继续 |
+| 模型在可见 case 失败时 Stop | Stop 请求被 Reject，不提前结束搜索 |
+| 隐藏 holdout 未达门槛 | 验证任务与报告节点完成，但报告为 `status=failed` |
 | 三次真实进程复验 | 每次运行 `py_compile + evaluator`，均值、标准差、失败率和资源摘要正确 |
 | 第二次复验从 `0.8` 漂移到 `0.79` | 继续完成三轮并以 `passed=2/3`、`failure_rate=1/3` 判失败 |
 | 复验首轮篡改 evaluator | 立即停止剩余两轮、计入 unfinished，并恢复 evaluator 与最佳候选 |
@@ -87,7 +90,7 @@ npm test
 | 恢复路径的父目录被换成符号链接 | 拒绝恢复，不向工作区外写入 |
 | 指标是字符串或无最终 JSON | 拒绝，不把日志文本当指标 |
 
-同一测试文件还包含本地进程 harness：真实执行 `py_compile` 和 Python evaluator，完成 `0.25 -> 0.9` 的 Keep、账本生成和三次独立复验。模型 HTTP 响应仍使用固定 fixture，因此候选生成离线、可重复；命令执行、文件写入、哈希、指标解析和统计均走真实代码路径。
+同一测试文件还包含本地进程 harness：真实执行 `py_compile` 和 Python evaluator，完成 `0.25 -> 0.9` 的 Keep、账本生成和三次公开 evaluator 重放。模型 HTTP 响应仍使用固定 fixture，因此候选生成离线、可重复；命令执行、文件写入、哈希、指标解析和统计均走真实代码路径。
 
 运行：
 
@@ -106,7 +109,13 @@ go test ./internal/planner ./internal/api ./internal/scheduler
 5. 每轮只有真实、有限数值指标达到阈值才 Keep。
 6. Reject 和 compromised 路径恢复正确文件。
 7. TrialLedger 能解释每个最佳结果来自哪一轮、哪组源码哈希。
-8. 声明的每次独立复验都通过后才生成成功状态的 `research_best_metrics`；报告同时包含均值、标准差和失败率。
+8. 声明的每次最终验证都通过后才生成成功状态；报告必须标明验证模式，并包含均值、标准差和失败率。
 9. `autoresearch_run` 节点无需阅读原始 JSON 即可查看趋势、决策和修改摘要。
 
 当前 Trial 视图不保存完整逐轮源码，因此只能显示补丁文件、原因和前后哈希，不能恢复逐行 diff。完整源码审阅仍应结合工作区、最终候选 Artifact 和版本控制系统。
+
+## 7. 2026-08-10 真实外部仓库验收
+
+远端完整部署通过上传 spec/evaluator/holdout 的产品入口运行了提交可追踪的 rank-bm25、Tenacity、LightRAG 与 GraphRAG。四组搜索都采用 `3 x worst`，公开分数分别从 `5/9、6/7、4/8、6/12` 提升到满分，新的隐藏 holdout 都达到 `4/4`，最终 3/3 重复验证通过。四份初始记录保存实际 checkout SHA；提交锁定机制在随后两次 LightRAG 运行中验证。完整机器记录保存于 [`examples/autoresearch/real_repositories/results`](../../examples/autoresearch/real_repositories/results/)。
+
+该过程还真实复现并修复了运行镜像缺 Git、Python 版本不匹配、工作区缓存污染、仓库 HEAD 漂移、单次指标不可靠、满分平台浪费预算、候选提前 Stop、坏 JSON 终止整轮和 Ledger 决策枚举不一致等问题。早期 GraphRAG 公开 `11/11`、隐藏 `3/4` 的负结果没有删除；新版把已知失败移入公开契约后使用全新 holdout。完整步骤、机器记录、资源口径和不做过度声明的边界见[真实外部仓库实验](08_real_repository_experiments.md)。

@@ -35,7 +35,7 @@ Sea-Mult-Agent 面向论文阅读、代码仓库发现、环境准备、受控�
 | **研究材料上传** | 在工作台附加论文、配置、笔记和小型数据文件，按用户隔离并传入复现流程 |
 | **科研仓库 Coding Agent** | 对论文代码做受限调试、补丁回滚和重跑，也能为自有数据生成仓库 Benchmark 适配器 |
 | **自有数据仓库评测** | Research Coding Agent 生成受限适配器，经 8 条预检、ReAct 修复和指标重算后运行用户数据 |
-| **受限 AutoResearch 循环** | 冻结声明的评测器与数据，只允许修改白名单文件；逐轮 Keep/Reject、退化回滚，并重复复验最佳候选及记录执行资源 |
+| **受限 AutoResearch 循环** | 冻结仓库提交、评测器与数据，只允许修改白名单文件；重复测量后 Keep/Reject、退化回滚、目标分数停止，并隐藏复验最佳候选 |
 | **逐主张复现验收** | 实验前冻结分层 Rubric，实验后把论文主张、判定准则与真实 Artifact 绑定成可视化证据图 |
 | **实时可观测执行** | SSE 推送计划、节点、日志和 Artifact 事件，前端同步展示执行状态 |
 | **可靠执行与治理** | 任务租约、迟到结果隔离、取消/重试、持久化恢复、预算和人工审批 |
@@ -77,7 +77,7 @@ docker compose up --build -d
 curl -s http://localhost:8080/api/health
 ```
 
-期望响应中同时出现 `backend.ok=true` 与 `sandbox.ok=true`。查看日志或停止服务：
+期望响应中同时出现 `backend.ok=true`、`repository.ok=true` 与 `sandbox.ok=true`。`repository.ok` 会在运行镜像缺少 Git 时明确失败，避免服务表面健康但外部仓库任务不可用。查看日志或停止服务：
 
 ```bash
 docker compose logs -f
@@ -120,14 +120,40 @@ Attention Is All You Need，使用 smoke 模式运行轻量注意力消融，
 
 ```text
 用 https://github.com/OWNER/REPOSITORY 做 AutoResearch，
-按 autoresearch.json 运行，最多 3 轮，总时长不超过 15 分钟，独立复验 3 次。
+按 autoresearch.json 运行，最多 3 轮，总时长不超过 15 分钟，最终验证 3 次。
 ```
 
-系统会冻结 ResearchSpec，先记录 baseline，再让 Research Coding Agent 生成白名单内的小改动。只有主指标达到最小提升才保留候选；退化候选会回滚。循环结束后，同一冻结评测器可启动 1 至 5 次独立进程复验，并输出逐次分数、均值、标准差、失败率以及搜索/验证命令资源摘要。项目如何借鉴 `karpathy/autoresearch`、ReAct、Tree of Thoughts、PaperBench、CORE-Bench、MLE-bench 和 R&D-Agent，见 [AutoResearch 项目介绍](scholar-agent/docs/autoresearch/00_project_introduction.md)；无需第三方 Python 依赖的可运行样例与三次实测记录见 [Intent Router AutoResearch](scholar-agent/examples/autoresearch/intent_router/)，实现边界见 [AutoResearch 模块文档](scholar-agent/docs/autoresearch/)。
+系统会冻结 ResearchSpec 和可选 `repository_revision`，先按 `search_runs` 重复测量 baseline，再让 Research Coding Agent 生成白名单内的小改动。只有聚合主指标达到最小提升才保留候选；退化或部分执行失败的候选会回滚。Keep 候选达到可选 `target_score` 后由 harness 确定性停止。循环结束后可启动 1 至 5 次新进程验证：未配置 holdout 时标记为 `search_evaluator_replay`，只证明公开评测可重复；配置模型不可见 holdout 时标记为 `hidden_holdout`，最终接受由隐藏指标决定。报告包含原始搜索样本、标准差、逐次验证分数、失败率以及命令资源摘要。可运行样例见 [Intent Router AutoResearch](scholar-agent/examples/autoresearch/intent_router/)和[四仓库真实实验](scholar-agent/examples/autoresearch/real_repositories/)，实现边界见 [AutoResearch 模块文档](scholar-agent/docs/autoresearch/)。
+
+#### Research Foundations
+
+这里的“借鉴”是方法组合与工程落地，不表示复制了来源项目的代码，也不表示 ScholarAgent 已具备原工作的全部能力。
+
+| 项目或论文 | 借鉴到 ScholarAgent 的内容 | 当前边界 |
+|---|---|---|
+| [karpathy/autoresearch](https://github.com/karpathy/autoresearch) | 小改动、固定预算、真实指标以及 Keep/Reject 循环 | 核心循环已实现，并扩展为跨仓库 ResearchSpec、多文件白名单、回滚和 TrialLedger |
+| [ReAct](https://arxiv.org/abs/2210.03629) | 错误观察、结构化修复动作和重跑 | 已用于依赖安装与 Benchmark 预检；不负责科研指标判定 |
+| [Tree of Thoughts](https://arxiv.org/abs/2305.10601) | 展开多个消融候选，再按信息增益、成本和风险选择 | 已用于轻量消融设计；不接管 AutoResearch 每轮 Keep/Reject |
+| [The AI Scientist](https://arxiv.org/abs/2408.06292) | 将想法、代码、实验、可视化和报告连接为长科研链 | 属于端到端方向启发，不宣称全自动科学发现或自动科学真值 |
+| [Agent Laboratory](https://arxiv.org/abs/2501.04227) | 文献、实验和写作阶段的专业 Agent 分工与用户介入 | 专业角色已实现；完整人工审批检查点仍在路线图 |
+| [PaperBench](https://arxiv.org/abs/2504.01848) | 用分层 Rubric 拆解论文复现，并逐项绑定证据 | 已实现 Claim Rubric 与 Claim-to-Evidence Graph；它属于上层复现验收，不替代主指标 |
+| [CORE-Bench](https://arxiv.org/abs/2409.11363) | 真实论文仓库、真实执行环境与任务专用复现 Agent | 已实现 Research Coding Agent 和可复查 Artifact；尚未完成公开 CORE-Bench 全量对照 |
+| [SWE-agent](https://arxiv.org/abs/2405.15793) | 仓库级受限阅读、代码编辑和测试反馈 | 仅作 Engineering scaffold 对照，没有移植 SWE-agent ACI 或宣称其评测结果 |
+| [CORE-Bench 2026 analysis](https://arxiv.org/abs/2606.26158) | 从准确率扩展到可靠性、效率、OOD、scaffold 和人机协作 | 已覆盖重复复验和部分资源证据；OOD、多 seed 与人机协作尚未完成 |
+| [MLE-bench](https://arxiv.org/abs/2410.07095) | 同时观察任务效果和计算资源投入 | 已记录命令次数与耗时，尚不包含 GPU、token 和费用账本 |
+| [Microsoft R&D-Agent](https://github.com/microsoft/RD-Agent) | Research/Development 分工，以及多次实验的统计报告方式 | 已输出重复验证的均值、标准差和失败率；当前不会自动注入不同 seed |
+| [Auto-Research-Recipes](https://github.com/cxcscmu/Auto-Research-Recipes) | 任务无关核心、Task Adapter、外部 evaluator 和可发布 Artifact | 已沉淀统一三文件任务包；尚无分支候选 parent lineage |
+| [Arbor](https://github.com/RUC-NLPIR/Arbor) | Coordinator/Executor、想法树、隔离 worktree 和开发/heldout 分离 | 已有隔离工作区和搜索/隐藏验收边界；并行树搜索与 checkpoint 未实现 |
+| [AI Scientist v2](https://github.com/SakanaAI/AI-Scientist-v2) | 渐进式 Agent tree search 与实验管理 | 当前只有线性 TrialLedger、反馈和回滚，不宣称已实现树搜索 |
+| [Deep Research Agent Stochasticity](https://arxiv.org/abs/2602.23271) | 独立运行存在方差，需要重复测量和聚合 | baseline 与每个候选已支持重复 evaluator、标准差和方向相关 worst |
+
+这些方法位于不同决策层：ToT 选择高价值消融，ReAct 处理有限故障恢复，AutoResearch 按冻结指标执行 Keep/Reject，PaperBench 风格 Rubric 与证据图负责上层论文验收。完整来源事实、代码落点和过度声明风险见 [AutoResearch 项目介绍](scholar-agent/docs/autoresearch/00_project_introduction.md)与[证据表](scholar-agent/docs/autoresearch/refs/evidence-map.md)。
+
+真实外部仓库审计（2026-08-10）：通过完整 API/Docker 链运行 [rank-bm25、Tenacity、LightRAG 和 Microsoft GraphRAG](scholar-agent/examples/autoresearch/real_repositories/)，四份原始结果都记录实际 commit。四组搜索均使用 `3 x worst`，公开分数分别从 `5/9、6/7、4/8、6/12` 提升到满分，新的模型不可见 holdout 均从低基线提升到 `4/4`，且最终 `3/3` 重复验证通过。实验同时推动三项架构修复：重复搜索测量防止单次尖峰、`repository_revision` 防止 HEAD 漂移、`target_score` 防止满分平台浪费预算；后两项用固定 LightRAG 提交做了独立对照。早期 GraphRAG `11/11` 公开满分但隐藏 `3/4` 的失败记录仍原样保留。完整机器记录和不足复盘见[真实外部仓库实验](scholar-agent/docs/autoresearch/08_real_repository_experiments.md)。
 
 ![ScholarAgent AutoResearch architecture](scholar-agent/docs/assets/autoresearch-architecture.png)
 
-架构图的可编辑矢量源文件见 [autoresearch-architecture.svg](scholar-agent/docs/assets/autoresearch-architecture.svg)。模型只负责提出候选；固定 Planner、ResearchSpec、Go policy gate、Docker 沙箱和重复独立验证共同掌握执行与接受边界。重复进程不等于多 seed，统计规则和资源口径见 [重复验证与执行资源证据](scholar-agent/docs/autoresearch/07_repeated_validation_and_resource_evidence.md)。
+架构图的可编辑矢量源文件见 [autoresearch-architecture.svg](scholar-agent/docs/assets/autoresearch-architecture.svg)。模型只负责提出候选；固定 Planner、ResearchSpec、Go policy gate、Docker 沙箱和最终验证共同掌握执行与接受边界。重复进程不等于多 seed，公开 evaluator 重放也不等于隐藏验证；统计规则和资源口径见 [重复验证与执行资源证据](scholar-agent/docs/autoresearch/07_repeated_validation_and_resource_evidence.md)。
 
 ![AutoResearch trial ledger view](scholar-agent/docs/assets/autoresearch-trial-view.jpg)
 
@@ -212,7 +238,7 @@ React Workbench -- REST --> Go API / Intent Router
 | `OPENAI_BASE_URL` | No | 默认示例为 DashScope compatible endpoint |
 | `OPENAI_MODEL_NAME` | No | 默认示例为 `qwen3-coder-plus` |
 | `SANDBOX_URL` | No | 本地默认 `http://localhost:8082`；Compose 会覆盖为服务地址 |
-| `SANDBOX_DEFAULT_IMAGE` | No | 论文 smoke test 使用的预装运行时镜像 |
+| `SANDBOX_DEFAULT_IMAGE` | No | 默认 Python 运行时；根 `pyproject.toml` 声明更高 `requires-python` 时只向上适配 |
 | `REDIS_ADDR` | No | 启用会话记忆；未设置时使用 No-op memory store |
 | `REDIS_USERNAME` / `REDIS_PASSWORD` / `REDIS_DB` | No | 可选 Redis 认证与数据库配置 |
 | `PLAN_STORE_PATH` | No | 单机计划和事件 JSON 存储；Compose 默认启用持久卷 |
@@ -220,6 +246,14 @@ React Workbench -- REST --> Go API / Intent Router
 | `REQUIRE_PLAN_APPROVAL` | No | 强制计划在执行前人工审批 |
 | `API_AUTH_TOKEN` / `SANDBOX_API_TOKEN` | No | 部署 API 与内部沙箱的静态 Bearer 保护 |
 | `CORS_ALLOWED_ORIGINS` | No | 允许访问后端的前端 Origin 列表 |
+
+后端镜像构建还支持 `DEBIAN_MIRROR` 与 `DEBIAN_SECURITY_MIRROR`。它们由执行 `docker compose` 的 shell 或项目 `.env` 读取，不是 `backend.env` 中的运行时变量；默认仍使用 Debian 官方源。网络受限环境可以显式覆盖：
+
+```bash
+DEBIAN_MIRROR=https://your-mirror.example/debian \
+DEBIAN_SECURITY_MIRROR=https://your-mirror.example/debian-security \
+docker compose up --build -d
+```
 
 GPU 透传需要宿主机安装 NVIDIA Container Toolkit，并在 Compose 环境中设置：
 

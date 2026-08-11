@@ -271,7 +271,7 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
     onChangeDisplayMode,
   } = props;
   const ablationBudget = selectedTask.Type === 'ablation_design' ? selectedTask.Inputs : undefined;
-  const hasTrialLedger = selectedTask.Type === 'autoresearch_run' && Boolean(executionStructuredData || executionResult);
+  const hasAutoResearchEvidence = (selectedTask.Type === 'autoresearch_run' || selectedTask.Type === 'autoresearch_validate') && Boolean(executionStructuredData || executionResult);
 
   return (
     <>
@@ -355,7 +355,7 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
                   <span className="sm:hidden">代码</span>
                 </button>
               )}
-              {hasTrialLedger && (
+              {hasAutoResearchEvidence && (
                 <button
                   onClick={() => onChangeDisplayMode('trials')}
                   className={`flex-1 py-3 text-xs font-black text-center border-b-2 flex items-center justify-center gap-1 transition-all ${
@@ -363,7 +363,7 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
                   }`}
                 >
                   <ChartNoAxesCombined className="h-4 w-4" />
-                  实验
+                  {selectedTask.Type === 'autoresearch_validate' ? '验收' : '实验'}
                 </button>
               )}
               {executionImage && (
@@ -388,7 +388,7 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
                   证据图
                 </button>
               )}
-              {reportAgents.has(selectedTask.AssignedTo) && executionResult && (
+              {reportAgents.has(selectedTask.AssignedTo) && executionResult && !hasAutoResearchEvidence && (
                 <button
                   onClick={() => onChangeDisplayMode('report')}
                   className={`flex-1 py-3 text-xs font-black text-center border-b-2 flex items-center justify-center gap-1 transition-all ${

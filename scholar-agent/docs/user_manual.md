@@ -103,10 +103,10 @@ AutoResearch 适合已经有可运行 baseline 和确定评测命令的仓库。
 
 ```text
 用 https://github.com/OWNER/REPOSITORY 做 AutoResearch，
-使用 path/to/autoresearch.json，最多 3 次实验，总时长 15 分钟，独立复验 3 次。
+使用 path/to/autoresearch.json，最多 3 次实验，总时长 15 分钟，最终验证 3 次。
 ```
 
-生成计划后，前端会显示 8 个节点。执行时先跑 baseline；每个候选只有指标达到规格中的最小提升才会保留，否则自动恢复上一个最佳版本。最后一个验证节点按 `validation_runs` 启动 1 至 5 组新命令进程，逐次核对评测分数和源码哈希，并报告均值、标准差和失败率。重复进程不会自动切换随机种子。
+生成计划后，前端会显示 8 个节点。执行时先跑 baseline；每个候选只有指标达到规格中的最小提升才会保留，否则自动恢复上一个最佳版本。最后一个验证节点按 `validation_runs` 启动 1 至 5 组新命令进程，逐次核对评测分数和源码哈希，并报告均值、标准差和失败率。未配置 holdout 时界面显示 `search_evaluator_replay`，只表示公开评测器重放；配置模型不可见 holdout 时显示 `hidden_holdout`。重复进程不会自动切换随机种子。
 
 点击 `autoresearch_run` 节点后，“实验”标签会显示 baseline/best、指标趋势、Keep/Reject、耗时、假设、候选文件哈希和命令资源摘要，也可切换全屏。当前没有逐行代码 diff；AutoResearch 只修改后端创建的临时克隆工作区，不会自动向远端仓库提交代码。
 

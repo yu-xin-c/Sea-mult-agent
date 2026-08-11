@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"scholar-agent-backend/internal/agent"
@@ -42,8 +43,9 @@ type ChatPayload struct {
 }
 
 var (
-	routePaperArxivIDRe  = regexp.MustCompile(`\b\d{4}\.\d{4,5}\b`)
-	routeGitHubRepoURLRe = regexp.MustCompile(`https?://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?`)
+	routePaperArxivIDRe       = regexp.MustCompile(`\b\d{4}\.\d{4,5}\b`)
+	routeGitHubRepoURLRe      = regexp.MustCompile(`https?://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?`)
+	routeRepositoryRevisionRe = regexp.MustCompile(`(?i)(?:commit|revision|提交|版本)\s*(?:[:：=]|为|是)?\s*([a-f0-9]{64}|[a-f0-9]{40})\b`)
 )
 
 // CORSMiddleware allows frontend to communicate with backend
@@ -401,12 +403,20 @@ func RegisterPlanRoute(apiGroup *gin.RouterGroup, p *planner.Planner) {
 }
 
 func buildServiceHealth(ctx context.Context, sandboxURL string) gin.H {
+	gitPath, gitErr := exec.LookPath("git")
+	repositoryHealth := gin.H{"ok": gitErr == nil}
+	if gitErr == nil {
+		repositoryHealth["git_path"] = gitPath
+	} else {
+		repositoryHealth["message"] = "git is unavailable; external repository workflows cannot run"
+	}
 	health := gin.H{
-		"ok": true,
+		"ok": gitErr == nil,
 		"backend": gin.H{
 			"ok":      true,
 			"message": "backend is reachable",
 		},
+		"repository": repositoryHealth,
 		"sandbox": gin.H{
 			"ok":      false,
 			"url":     sandboxURL,

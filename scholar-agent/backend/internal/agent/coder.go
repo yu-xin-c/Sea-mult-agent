@@ -7,17 +7,19 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sync"
-
-	"scholar-agent-backend/internal/appconfig"
-	"scholar-agent-backend/internal/models"
-	"scholar-agent-backend/internal/prompts"
-	"scholar-agent-backend/internal/sandbox"
+	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
+	"github.com/pelletier/go-toml/v2"
+	"scholar-agent-backend/internal/appconfig"
+	"scholar-agent-backend/internal/models"
+	"scholar-agent-backend/internal/prompts"
+	"scholar-agent-backend/internal/sandbox"
 )
 
 const (
@@ -664,7 +666,11 @@ func (a *CoderAgent) prepareRuntime(ctx context.Context, task *models.Task) erro
 	}
 
 	mountPath := strings.TrimSpace(extractTaskInputLike(task, "workspace_path"))
-	sandboxID, err := a.Sandbox.CreatePersistentSandbox(ctx, task.ID, configuredSandboxImage(), mountPath)
+	sandboxImage, runtimeReason := sandboxImageForWorkspace(configuredSandboxImage(), mountPath)
+	if runtimeReason != "" {
+		logToContext(ctx, "[%s] Runtime image selected from repository metadata: %s (%s)", a.Name, sandboxImage, runtimeReason)
+	}
+	sandboxID, err := a.Sandbox.CreatePersistentSandbox(ctx, task.ID, sandboxImage, mountPath)
 	if err != nil {
 		task.Status = models.StatusFailed
 		task.Error = fmt.Sprintf("failed to create runtime sandbox: %v", err)
@@ -675,8 +681,11 @@ func (a *CoderAgent) prepareRuntime(ctx context.Context, task *models.Task) erro
 	if task.Metadata == nil {
 		task.Metadata = map[string]any{}
 	}
+	task.Metadata["runtime_image"] = sandboxImage
+	task.Metadata["runtime_image_reason"] = runtimeReason
 	task.Metadata["artifact_values"] = buildArtifactValueMap(task, map[string]string{
 		"runtime_session": sandboxID,
+		"runtime_image":   sandboxImage,
 	})
 	task.Status = models.StatusCompleted
 	return nil
@@ -1898,6 +1907,97 @@ func configuredSandboxImage() string {
 		return image
 	}
 	return defaultSandboxImage
+}
+
+var pythonImageVersionRE = regexp.MustCompile(`^python:3\.(\d+)(-[A-Za-z0-9._-]+)?$`)
+
+type pyprojectRuntimeMetadata struct {
+	Project struct {
+		RequiresPython string `toml:"requires-python"`
+	} `toml:"project"`
+}
+
+func sandboxImageForWorkspace(defaultImage, workspacePath string) (string, string) {
+	defaultImage = strings.TrimSpace(defaultImage)
+	if defaultImage == "" {
+		defaultImage = defaultSandboxImage
+	}
+	requiredMinor, constraint, source := repositoryPythonRequirement(workspacePath)
+	if requiredMinor <= 0 {
+		return defaultImage, ""
+	}
+	currentMinor, suffix, ok := pythonImageMinor(defaultImage)
+	if !ok || currentMinor >= requiredMinor {
+		return defaultImage, fmt.Sprintf("%s declares requires-python %q", source, constraint)
+	}
+	return fmt.Sprintf("python:3.%d%s", requiredMinor, suffix), fmt.Sprintf("%s declares requires-python %q", source, constraint)
+}
+
+func pythonImageMinor(image string) (int, string, bool) {
+	matches := pythonImageVersionRE.FindStringSubmatch(strings.TrimSpace(image))
+	if len(matches) != 3 {
+		return 0, "", false
+	}
+	minor, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return 0, "", false
+	}
+	return minor, matches[2], true
+}
+
+func repositoryPythonRequirement(workspacePath string) (int, string, string) {
+	workspacePath = strings.TrimSpace(workspacePath)
+	if workspacePath == "" {
+		return 0, "", ""
+	}
+	pyprojectPath := filepath.Join(workspacePath, "pyproject.toml")
+	raw, err := os.ReadFile(pyprojectPath)
+	if err != nil {
+		return 0, "", ""
+	}
+	var metadata pyprojectRuntimeMetadata
+	if err := toml.Unmarshal(raw, &metadata); err != nil {
+		return 0, "", ""
+	}
+	constraint := strings.TrimSpace(metadata.Project.RequiresPython)
+	minor := minimumSupportedPythonMinor(constraint)
+	if minor <= 0 {
+		return 0, "", ""
+	}
+	return minor, constraint, "pyproject.toml"
+}
+
+func minimumSupportedPythonMinor(constraint string) int {
+	constraint = strings.ReplaceAll(strings.TrimSpace(constraint), " ", "")
+	minimum := 0
+	for _, clause := range strings.Split(constraint, ",") {
+		operator := ""
+		for _, candidate := range []string{">=", "~=", "==", ">"} {
+			if strings.HasPrefix(clause, candidate) {
+				operator = candidate
+				clause = strings.TrimPrefix(clause, candidate)
+				break
+			}
+		}
+		if operator == "" {
+			continue
+		}
+		parts := strings.Split(clause, ".")
+		if len(parts) < 2 || parts[0] != "3" {
+			continue
+		}
+		minor, err := strconv.Atoi(strings.TrimRight(parts[1], ".*"))
+		if err != nil {
+			continue
+		}
+		if operator == ">" {
+			minor++
+		}
+		if minor > minimum {
+			minimum = minor
+		}
+	}
+	return minimum
 }
 
 func (a *CoderAgent) validatePythonSyntaxInSandbox(ctx context.Context, sandboxID string, code string) error {

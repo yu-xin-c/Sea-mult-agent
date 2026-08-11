@@ -14,10 +14,11 @@ AutoResearch 是 ScholarAgent 面向“持续提出小改动并用真实指标�
 | [01_product_workflow.md](01_product_workflow.md) | 产品与流程 | 使用场景、8 节点 DAG、项目创新点和当前状态 |
 | [02_planner_and_contracts.md](02_planner_and_contracts.md) | Planner 与数据契约 | 意图路由、`ResearchSpec`、Artifact 和预算传递 |
 | [03_research_coding_harness.md](03_research_coding_harness.md) | Research Coding Agent | baseline、候选生成、Keep/Reject、回滚和终止条件 |
-| [04_evaluator_security_and_evidence.md](04_evaluator_security_and_evidence.md) | 沙箱、安全与证据 | 冻结评测器、路径白名单、哈希、独立复验和可信边界 |
+| [04_evaluator_security_and_evidence.md](04_evaluator_security_and_evidence.md) | 沙箱、安全与证据 | 冻结评测器、路径白名单、公开重放、隐藏 holdout 和可信边界 |
 | [05_example_and_acceptance.md](05_example_and_acceptance.md) | 示例与验收 | 意图路由示例、真实基线、测试命令和成功标准 |
 | [06_research_basis_and_roadmap.md](06_research_basis_and_roadmap.md) | 研究依据与路线图 | 一手项目/论文、借鉴关系、项目差异化和后续优先级 |
 | [07_repeated_validation_and_resource_evidence.md](07_repeated_validation_and_resource_evidence.md) | 重复验证与执行资源证据 | 多次独立进程复验、统计量、资源摘要、真实运行和边界 |
+| [08_real_repository_experiments.md](08_real_repository_experiments.md) | 真实外部仓库实验 | 四仓库全链运行、固定版本、重复搜索、目标停止、失败演进与可信边界 |
 
 研究来源的逐项证据、本地落点和风险标记见 [`refs/evidence-map.md`](refs/evidence-map.md)。
 
@@ -27,5 +28,6 @@ AutoResearch 是 ScholarAgent 面向“持续提出小改动并用真实指标�
 - [`agent/autoresearch.go`](../../backend/internal/agent/autoresearch.go)
 - [`planner/planner.go`](../../backend/internal/planner/planner.go)
 - [`examples/autoresearch/intent_router`](../../examples/autoresearch/intent_router/)
+- [`examples/autoresearch/real_repositories`](../../examples/autoresearch/real_repositories/)
 
 当前版本：`autoresearch.spec/v1`、`autoresearch.ledger/v1`、`autoresearch.validation/v1`。

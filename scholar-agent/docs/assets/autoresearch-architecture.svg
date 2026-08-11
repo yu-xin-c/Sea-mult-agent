@@ -176,9 +176,9 @@
 
     <path d="M1395 382 V411" class="connector"/>
     <rect x="1270" y="416" width="250" height="112" rx="7" fill="#f0fdf4" stroke="#4ade80"/>
-    <text x="1291" y="449" class="node-title">重复独立复验</text>
+    <text x="1291" y="449" class="node-title">重复最终验证</text>
     <text x="1291" y="476" class="node-body">不调用候选模型，核对哈希</text>
-    <text x="1291" y="498" class="node-body">1–5 次 guard + evaluator</text>
+    <text x="1291" y="498" class="node-body">公开重放 / 隐藏 holdout</text>
 
     <path d="M1395 528 V557" class="connector"/>
     <rect x="1270" y="562" width="250" height="88" rx="7" fill="#ecfeff" stroke="#67e8f9"/>
