@@ -1,6 +1,6 @@
 # ArchitectureDiagram visual audit
 
-Reference: the previous `ArchitectureDiagram.png`, updated against the current implementation described in `scholar-agent/docs/project_architecture.md`.
+Output: `ScholarAgentArchitecture.png`, updated from the previous `ArchitectureDiagram.png` against the current implementation described in `scholar-agent/docs/project_architecture.md`.
 
 ## Style tokens
 

@@ -14,7 +14,7 @@
 
 </div>
 
-![ScholarAgent current architecture](ArchitectureDiagram.png)
+![ScholarAgent current architecture](ScholarAgentArchitecture.png)
 
 Sea-Mult-Agent 面向论文复现、自有数据仓库评测和受限自动实验。Intent Router 与 Planner 把用户目标转换为经过校验的 DAG，Scheduler 通过类型化 Artifact 把节点路由给 Librarian、Coder、Research Coding 和 Data 等专业 Agent；模型负责理解问题和提出候选，Go Harness 负责文件写入、真实执行、指标判定、回滚与最终验收。日志、状态和结构化证据通过 SSE 返回工作台。
 
@@ -321,7 +321,7 @@ Windows 用户可使用 `scholar-agent/scripts/windows/` 中的 PowerShell 脚�
 Sea-mult-agent/
 ├── README.md
 ├── LICENSE
-├── ArchitectureDiagram.png
+├── ScholarAgentArchitecture.png # 当前系统总架构图
 ├── ArchitectureDiagram.drawio   # 可编辑的当前系统总架构图
 ├── docker-core/                 # 早期/底层 Docker 执行组件
 └── scholar-agent/
