@@ -176,7 +176,7 @@ flowchart LR
 
 仓库提供一个不依赖网络、GPU或第三方 Python 包的[意图路由 AutoResearch 示例](../../examples/autoresearch/intent_router/)，用于验证规格、baseline、候选筛选、重复验证和 evaluator 契约；另有通过远端完整 API/Docker 链执行的 [rank-bm25、Tenacity、LightRAG 与 GraphRAG 真实仓库示例](../../examples/autoresearch/real_repositories/)，保留实际 commit、完整 plan graph、公开搜索样本和隐藏验收报告。当前任务包已锁定这些 commit，锁定机制另由 LightRAG 对照验证。前端会在 `autoresearch_run` 节点展示指标趋势、Keep/Reject、目标、耗时、假设、补丁哈希和资源摘要。
 
-![AutoResearch Trial 可视化](../assets/autoresearch-trial-view.jpg)
+![AutoResearch 隐藏验证可视化](../assets/autoresearch-validation-view.jpg)
 
 建议继续阅读：
 

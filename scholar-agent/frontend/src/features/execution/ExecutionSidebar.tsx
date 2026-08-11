@@ -1,5 +1,5 @@
 import type { RefObject } from 'react';
-import { ChartNoAxesCombined, Code, Eye, FileText, FlaskConical, GitBranch, Loader2, Maximize2, Play, TerminalSquare, X } from 'lucide-react';
+import { ChartNoAxesCombined, Code, Eye, FileText, FlaskConical, GitBranch, Loader2, Maximize2, Play, RotateCcw, TerminalSquare, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -8,7 +8,7 @@ import type { ExecutionDisplayMode } from '../../app/hooks/useScholarRuntime';
 import type { Task } from '../../contracts/api';
 import { AutoResearchTrialView } from '../autoresearch/AutoResearchTrialView';
 import { ClaimEvidenceGraphView } from '../claim-evidence/ClaimEvidenceGraphView';
-import { getAgentIcon } from '../shared/agentVisuals';
+import { getAgentIcon, getAgentLabel } from '../shared/agentVisuals';
 
 type CompactMode = Exclude<ExecutionDisplayMode, 'report-expanded' | 'plot-expanded' | 'evidence-expanded' | 'trials-expanded'>;
 
@@ -299,8 +299,11 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
 
         <div className="flex items-center justify-between px-1">
           <label className="text-xs font-bold text-gray-500 uppercase tracking-tight">负责 Agent</label>
-          <div className="text-xs font-black text-blue-700 bg-blue-50 px-3 py-1.5 rounded-full border border-blue-100 shadow-sm font-mono">
-            {selectedTask.AssignedTo}
+          <div
+            className="text-xs font-black text-blue-700 bg-blue-50 px-3 py-1.5 rounded-full border border-blue-100 shadow-sm"
+            title={selectedTask.AssignedTo}
+          >
+            {getAgentLabel(selectedTask.AssignedTo)}
           </div>
         </div>
 
@@ -324,8 +327,16 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
             </span>
           ) : (
             <>
-              <Play className="w-5 h-5 fill-current" />
-              启动 Agent 任务
+              {selectedTask.Status === 'completed' || selectedTask.Status === 'failed' ? (
+                <RotateCcw className="w-5 h-5" />
+              ) : (
+                <Play className="w-5 h-5 fill-current" />
+              )}
+              {selectedTask.Status === 'completed'
+                ? '重新运行 Agent 任务'
+                : selectedTask.Status === 'failed'
+                  ? '重试 Agent 任务'
+                  : '启动 Agent 任务'}
             </>
           )}
         </button>

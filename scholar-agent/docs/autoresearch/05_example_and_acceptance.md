@@ -48,7 +48,7 @@ python3 examples/autoresearch/intent_router/evaluator.py
 
 这是 CPU 轻量 harness 验收，不是 BERT/Qwen 训练、多 seed 评测或论文结论。重复验证实现与资源口径见[重复验证与执行资源证据](07_repeated_validation_and_resource_evidence.md)。
 
-## 4. 前端 Trial 可视化
+## 4. 前端 Trial 与隐藏验证可视化
 
 `autoresearch_run` 节点完成后，执行面板默认进入“实验”标签，直接解析 `autoresearch.ledger/v1`：
 
@@ -58,7 +58,7 @@ python3 examples/autoresearch/intent_router/evaluator.py
 - 资源摘要展示命令总数、guard/evaluator 分布、失败命令、命令累计耗时和墙钟耗时。
 - 支持节点侧栏与全屏视图；损坏或未知版本账本会显示降级错误，不影响原始报告入口。
 
-![AutoResearch Trial 可视化](../assets/autoresearch-trial-view.jpg)
+![AutoResearch 隐藏验证可视化](../assets/autoresearch-validation-view.jpg)
 
 前端使用 Node 内置测试验证正常账本、双重 JSON 编码、minimize 指标、损坏数据和耗时格式：
 
@@ -67,7 +67,7 @@ cd scholar-agent/frontend
 npm test
 ```
 
-视觉验收覆盖 `1280x720`、`390x844` 和 `320x700`；窄屏无横向溢出或按钮文字裁切。
+README 截图使用当前组件回放 LightRAG 真实远端结果；可复现入口为 [`frontend/test/runtime-preview.html`](../../frontend/test/runtime-preview.html)。视觉验收覆盖 `1280x720`、`390x844` 和 `320x700`；窄屏无横向溢出或按钮文字裁切。
 
 ## 5. Harness 回归场景
 

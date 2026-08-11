@@ -28,6 +28,12 @@
 
 ![ScholarAgent node execution panel](assets/scholar-agent-node-panel.png)
 
+两张截图均由当前组件回放 [`2026-08-10_lightrag_target_stop_e2e.json`](../examples/autoresearch/real_repositories/results/2026-08-10_lightrag_target_stop_e2e.json) 生成。启动前端后可分别访问：
+
+- `http://localhost:5173/test/runtime-preview.html?view=dashboard`
+- `http://localhost:5173/test/runtime-preview.html?view=run`
+- `http://localhost:5173/test/runtime-preview.html?view=validation`
+
 阶段性改造记录可参考：
 
 - [plan/2026-04-23_breakpoint_resume_node_snapshot.md](plan/2026-04-23_breakpoint_resume_node_snapshot.md)：断点重启与依赖安装最小修复

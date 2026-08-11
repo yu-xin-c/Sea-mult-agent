@@ -55,7 +55,7 @@
 | P2 | 复现胶囊导出 | 导出 spec、镜像摘要、依赖、账本、补丁和验证报告 | 在干净主机上可一键复验相同 Artifact |
 | P2 | GPU 调度与成本账本 | 显式记录 GPU 型号、显存、用时和费用 | 每个 Trial 都有可比较的资源证据 |
 
-Trial 可视化的实现位于 [`frontend/src/features/autoresearch/`](../../frontend/src/features/autoresearch/)，视觉 fixture 位于 [`frontend/test/autoresearch-preview.html`](../../frontend/test/autoresearch-preview.html)。重复验证和资源证据的实现、统计规则与实测记录见 [`07_repeated_validation_and_resource_evidence.md`](07_repeated_validation_and_resource_evidence.md)。逐行代码 diff 需要新的受限 Artifact 契约，未混入本次 P1，以免 TrialLedger 无界增长或保存不必要的完整源码。
+Trial 可视化的实现位于 [`frontend/src/features/autoresearch/`](../../frontend/src/features/autoresearch/)，当前视觉 fixture 位于 [`frontend/test/runtime-preview.html`](../../frontend/test/runtime-preview.html)，直接回放 LightRAG 真实远端结果并支持工作台、实验侧栏和隐藏验证三种视图。重复验证和资源证据的实现、统计规则与实测记录见 [`07_repeated_validation_and_resource_evidence.md`](07_repeated_validation_and_resource_evidence.md)。逐行代码 diff 需要新的受限 Artifact 契约，未混入本次 P1，以免 TrialLedger 无界增长或保存不必要的完整源码。
 
 ## 4. 不应提前宣称的结论
 

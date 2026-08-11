@@ -1,5 +1,16 @@
 import { Bot, Code, Database, FileText, TerminalSquare, Wrench } from 'lucide-react';
 
+const agentLabels: Record<string, string> = {
+  librarian_agent: 'Librarian',
+  coder_agent: 'Coder',
+  sandbox_agent: 'Sandbox Runner',
+  data_agent: 'Data',
+  research_coding_agent: 'Research Coding',
+  general_agent: 'General',
+};
+
+export const getAgentLabel = (agentName: string) => agentLabels[agentName] ?? agentName;
+
 export const getAgentIcon = (agentName: string) => {
   switch (agentName) {
     case 'librarian_agent':

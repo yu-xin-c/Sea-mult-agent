@@ -25,6 +25,8 @@ Sea-Mult-Agent 面向论文复现、自有数据仓库评测和受限自动实�
 
 ![ScholarAgent dashboard](scholar-agent/docs/assets/scholar-agent-dashboard.png)
 
+界面截图由当前 React 组件回放 [LightRAG 真实远端实验记录](scholar-agent/examples/autoresearch/real_repositories/results/2026-08-10_lightrag_target_stop_e2e.json)生成，展示完整 `8/8` 执行计划，不是手工拼接的静态原型。
+
 ## Why Sea-Mult-Agent
 
 | 能力 | 当前实现 |
@@ -157,7 +159,7 @@ Attention Is All You Need，使用 smoke 模式运行轻量注意力消融，
 
 架构图的可编辑矢量源文件见 [autoresearch-architecture.svg](scholar-agent/docs/assets/autoresearch-architecture.svg)。模型只负责提出候选；固定 Planner、ResearchSpec、Go policy gate、Docker 沙箱和最终验证共同掌握执行与接受边界。重复进程不等于多 seed，公开 evaluator 重放也不等于隐藏验证；统计规则和资源口径见 [重复验证与执行资源证据](scholar-agent/docs/autoresearch/07_repeated_validation_and_resource_evidence.md)。
 
-![AutoResearch trial ledger view](scholar-agent/docs/assets/autoresearch-trial-view.jpg)
+![AutoResearch hidden holdout validation view](scholar-agent/docs/assets/autoresearch-validation-view.jpg)
 
 ## Interface
 

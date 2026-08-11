@@ -11,7 +11,7 @@ interface CreateTaskNodeLabelOptions {
 const agentLabels: Record<string, string> = {
   librarian_agent: '文献智能体',
   coder_agent: '代码智能体',
-  sandbox_agent: '沙箱智能体',
+  sandbox_agent: '沙箱执行器',
   data_agent: '数据智能体',
   research_coding_agent: '科研 Coding 智能体',
   general_agent: '通用智能体',
