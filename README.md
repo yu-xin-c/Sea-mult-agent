@@ -14,11 +14,11 @@
 
 </div>
 
-![ScholarAgent current architecture](ScholarAgentArchitecture.png)
+![ScholarAgent beginner-friendly workflow](ScholarAgentOverview.png)
 
 Sea-Mult-Agent 面向论文复现、自有数据仓库评测和受限自动实验。Intent Router 与 Planner 把用户目标转换为经过校验的 DAG，Scheduler 通过类型化 Artifact 把节点路由给 Librarian、Coder、Research Coding 和 Data 等专业 Agent；模型负责理解问题和提出候选，Go Harness 负责文件写入、真实执行、指标判定、回滚与最终验收。日志、状态和结构化证据通过 SSE 返回工作台。
 
-总图的可编辑源文件见 [ArchitectureDiagram.drawio](ArchitectureDiagram.drawio)。其中 Native Docker 是当前默认执行引擎；OpenSandbox 仅为可选 fallback，BERT/Qwen 意图模型也未接入默认生产请求链。
+总图先用五个步骤说明系统如何完成一次复现，可编辑源文件见 [ArchitectureDiagram.drawio](ArchitectureDiagram.drawio)，完整组件边界见[项目架构文档](scholar-agent/docs/project_architecture.md)。其中 Native Docker 是当前默认执行引擎；OpenSandbox 仅为可选 fallback，BERT/Qwen 意图模型也未接入默认生产请求链。
 
 > [!NOTE]
 > 本项目目前是具备持久化、恢复、审批、预算和受限沙箱能力的单机研究原型，不是已完成多租户安全认证的生产服务。Docker 沙箱仍具有较高宿主机权限，部署前请阅读[项目状态与安全说明](#project-status)。
@@ -321,7 +321,7 @@ Windows 用户可使用 `scholar-agent/scripts/windows/` 中的 PowerShell 脚�
 Sea-mult-agent/
 ├── README.md
 ├── LICENSE
-├── ScholarAgentArchitecture.png # 当前系统总架构图
+├── ScholarAgentOverview.png     # 面向新用户的五步流程总图
 ├── ArchitectureDiagram.drawio   # 可编辑的当前系统总架构图
 ├── docker-core/                 # 早期/底层 Docker 执行组件
 └── scholar-agent/

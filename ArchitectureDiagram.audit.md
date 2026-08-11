@@ -1,60 +1,62 @@
-# ArchitectureDiagram visual audit
+# ScholarAgent overview visual audit
 
-Output: `ScholarAgentArchitecture.png`, updated from the previous `ArchitectureDiagram.png` against the current implementation described in `scholar-agent/docs/project_architecture.md`.
+Output: `ScholarAgentOverview.png`. Editable source: `ArchitectureDiagram.drawio`.
+
+## Design goal
+
+The README figure is a beginner-facing overview, not a complete component map. It answers four questions in reading order: what the user provides, how the system plans, where code really runs, and how results are accepted. Detailed interfaces remain in `scholar-agent/docs/project_architecture.md`.
 
 ## Style tokens
 
-- Export: 1828 x 1028 PNG on a clean white background; the Draw.io editor grid is intentionally not printed.
-- Typography: Arial/Helvetica; title 34 px; section titles 18-20 px; card titles 15-17 px; body 12-14 px.
-- Palette: navy `#123B78`, blue `#2F6BFF`, teal `#0F8B8D`, green `#1E8E5A`, amber `#E59B19`, purple `#6D5BD0`, ink `#18324A`, muted `#60758A`.
-- Cards: white or lightly tinted fill, 1.5-2 px border, 8 px corner radius, minimal shadow.
-- Connectors: solid teal for control, blue dashed for SSE, purple for Artifact/evidence, amber dashed for model suggestions.
+- Canvas: 1440 x 900, light gray background, no printed grid.
+- Typography: Helvetica with Chinese fallback; title 31 px; step titles 18 px; body 14 px; supporting labels 12-13.5 px.
+- Palette: navy text with blue input, purple AI, amber runtime, green verification, and neutral gray infrastructure.
+- Cards: white, 8 px radius, restrained border and shadow.
+- Connectors: four short left-to-right workflow arrows plus four internal DAG edges.
 
 ## Visible-element inventory
 
-| ID | Approximate region | Content / visual | Medium | Style notes | Status |
-|---|---|---|---|---|---|
-| canvas | 0,0,1828,1028 | Clean white canvas | native | no printed grid | accepted |
-| brand | 28,24,300,56 | Sea-Mult-Agent wordmark and wave mark | native | navy, bold | accepted |
-| title | 430,24,970,52 | ScholarAgent current system title | native | centered navy title | accepted |
-| subtitle | 520,75,780,30 | Product scope subtitle | native | muted center text | accepted |
-| input_panel | 24,126,220,700 | Researcher inputs and request types | native | blue border, three input cards | accepted |
-| workbench_panel | 270,126,280,700 | React workbench, uploads, views and controls | native | blue tint, four cards | accepted |
-| control_panel | 580,126,580,700 | Gin API, intent, Planner, PlanStore, Scheduler, Routed Executor | native | teal border and internal cards | accepted |
-| agent_strip | 604,588,530,208 | Chat, Librarian, Coder, Research Coding, Data | native | five role cards; Research Coding highlighted | accepted |
-| harness_panel | 1190,126,350,700 | Paper Debug, Benchmark and AutoResearch harnesses plus policy gate | native | green border; three harness cards | accepted |
-| infra_panel | 1570,126,230,700 | LLM and repository sources, persistent state, events and observability | native | purple border, stacked cards | accepted |
-| runtime_band | 270,852,1270,118 | docker-sandbox, Native Docker, optional OpenSandbox, workspace | native | light slate band | accepted |
-| evidence_band | 1570,852,230,118 | TrialLedger, validation, evidence graph | native | purple tint | accepted |
-| model_boundary | 1188,96,612,28 | Model proposes; deterministic code decides | native | amber callout | accepted |
-| footer | 24,988,1776,22 | Current implementation boundary | native | muted small text | accepted |
+| ID | Region | Content | Medium | Status |
+|---|---|---|---|---|
+| header | top | Brand, title, subtitle, model/code boundary badge | native | accepted |
+| zone_labels | y=143 | Input, AI collaboration and deterministic execution zones | native | accepted |
+| step_1 | left flow card | Paper, repository, data, budget and acceptance inputs | native | accepted |
+| step_2 | second flow card | Intent, frozen contract and validated DAG | native | accepted |
+| step_2_dag | second card visual | Four-node DAG and label | native | accepted |
+| step_3 | center flow card | Librarian, Research Coding, Data, Chat/Coder collaboration | native | accepted |
+| step_4 | fourth flow card | Docker execution, dependency install and bounded repair | native | accepted |
+| step_4_terminal | fourth card visual | Real command execution metaphor | native | accepted |
+| step_5 | right flow card | Evaluator, Keep/Reject, rollback and hidden holdout | native | accepted |
+| step_5_metrics | fifth card visual | Improving metric bars and accepted result | native | accepted |
+| main_arrows | between steps | Four short workflow transitions | native | accepted |
+| trust_header | middle-lower | Explanation of the three safety boundaries | native | accepted |
+| guard_scope | lower left | Commit, file, budget, command and evaluator boundary | native | accepted |
+| guard_runtime | lower center | Persistence, leases, retry and SSE | native | accepted |
+| guard_evidence | lower right | Repeated measurement, rollback, holdout and evidence | native | accepted |
+| foundation | bottom band | React, Go, storage, Docker and Artifact technology base | native | accepted |
+| footer | bottom | Benchmark and AutoResearch scope note | native | accepted |
 
 ## Arrow inventory
 
-| ID | Source -> target | Type | Meaning | Status |
-|---|---|---|---|---|
-| flow_1 | input_panel -> workbench_panel | solid teal | user request and attachments | accepted |
-| flow_2 | workbench_panel -> control_panel | solid teal | REST commands | accepted |
-| flow_3 | control_panel -> workbench_panel | dashed blue | SSE events and state replay | accepted |
-| flow_4 | API -> Intent Router -> Planner | solid teal | request interpretation and plan generation | accepted |
-| flow_5 | Planner -> PlanGraph -> FilePlanStore <-> Scheduler | teal and purple | validated plan persistence and scheduler state | accepted |
-| flow_6 | Scheduler -> Routed Task Executor | solid teal | leased typed task | accepted |
-| flow_7 | Executor -> Artifact bus -> Research Coding | teal and purple | typed artifacts and specialist routing | accepted |
-| flow_8 | Executor -> research harnesses | solid teal | typed task and artifact dispatch | accepted |
-| flow_9 | Policy gate -> Sandbox Client -> docker-sandbox -> Native Docker | solid teal | bounded command execution | accepted |
-| flow_10 | Container -> runtime output -> evidence | purple | stdout, metrics, files and auditable results | accepted |
+| ID | Source -> target | Meaning | Status |
+|---|---|---|---|
+| flow_12 | Research input -> executable plan | material becomes a bounded task | accepted |
+| flow_23 | Executable plan -> specialist Agents | validated work is routed by capability | accepted |
+| flow_34 | Specialist Agents -> sandbox run | proposals become bounded commands | accepted |
+| flow_45 | Sandbox run -> evidence acceptance | real outputs are evaluated and verified | accepted |
+| dag_ab / dag_ac / dag_bd / dag_cd | internal plan nodes | small editable DAG visual | accepted |
 
 ## Content boundaries
 
-- The production intent path is rule extraction plus Planner; BERT/Qwen is labelled optional rather than part of the default request path.
-- `sandbox_agent` is shown as a logical role implemented by deterministic runtime methods, not as an independent model Agent.
-- Native Docker is shown as the current default. OpenSandbox remains optional; CubeSandbox is not shown as implemented.
-- AutoResearch uses a linear bounded TrialLedger, not tree search.
-- Hidden holdout is described as model-invisible, not an independent zero-trust service.
+- The figure does not present Sandbox as a model Agent.
+- Research Coding owns repository debugging and candidate generation; deterministic Go code owns writes, execution, scoring, rollback and acceptance.
+- Native Docker is the current default; OpenSandbox is marked optional.
+- Public evaluator search and model-invisible hidden holdout are shown as different stages.
+- AutoResearch remains a bounded linear Keep/Reject loop, not tree search.
 
 ## Final visual audit
 
-- Full-size export inspected: accepted after two render passes.
-- Text clipping / overlap: accepted; all card copy remains inside its container.
-- Connector routing and arrowheads: accepted after removing nonessential cross-panel lines and routing the sandbox call below the main panels.
-- README rendering at repository width: accepted; the overview remains scannable, with the full-size PNG available on click.
+- Full-size export: accepted after two render passes.
+- Text clipping and overlap: accepted; all copy remains within its card or band.
+- Connector routing: accepted; workflow arrows stay in the gaps between cards.
+- README-scale readability: accepted at a 900 px preview, with the original available on click.
