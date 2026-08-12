@@ -1,0 +1,314 @@
+export interface ExperimentCandidateView {
+  id: string;
+  parentId: string;
+  strategy: string;
+  parameters: Record<string, unknown>;
+  depth: number;
+  changedParameter: string;
+  reason: string;
+}
+
+export interface ExperimentParameterView {
+  name: string;
+  description: string;
+  values: unknown[];
+  defaultValue: unknown;
+}
+
+export interface ExperimentStrategyView {
+  name: string;
+  description: string;
+  parameters: ExperimentParameterView[];
+}
+
+export interface ExperimentTrialView {
+  number: number;
+  candidate: ExperimentCandidateView;
+  status: string;
+  decision: string;
+  reason: string;
+  metrics: Record<string, number>;
+  score: number | null;
+  deltaFromBest: number | null;
+  durationMs: number;
+  error: string;
+}
+
+export interface ExperimentLedgerView {
+  version: 'experiment.ledger/v1';
+  status: string;
+  domain: string;
+  adapter: string;
+  metricKey: string;
+  direction: 'maximize' | 'minimize';
+  targetScore: number | null;
+  baselineScore: number;
+  bestScore: number;
+  maxTrials: number;
+  completedTrials: number;
+  acceptedTrials: number;
+  stopReason: string;
+  bestCandidate: ExperimentCandidateView;
+  strategySpace: ExperimentStrategyView[];
+  trials: ExperimentTrialView[];
+  resourceUsage: { evaluatorRuns: number; evaluatorTimeMs: number; wallDurationMs: number };
+}
+
+export interface ExperimentEvidenceView {
+  caseId: string;
+  expected: string[];
+  observed: string[];
+  metrics: Record<string, number>;
+  details: Record<string, unknown>;
+}
+
+export interface ExperimentValidationRunView {
+  number: number;
+  status: string;
+  baselineScore: number;
+  candidateScore: number;
+  delta: number;
+  targetReached: boolean;
+  durationMs: number;
+  evidence: ExperimentEvidenceView[];
+  error: string;
+}
+
+export interface ExperimentValidationView {
+  version: 'experiment.validation/v1';
+  status: string;
+  domain: string;
+  adapter: string;
+  metricKey: string;
+  searchBaseline: number;
+  searchBest: number;
+  holdoutTarget: number | null;
+  requestedRuns: number;
+  passedRuns: number;
+  protectedIntact: boolean;
+  summary: string;
+  runs: ExperimentValidationRunView[];
+}
+
+type LedgerParseResult = { ok: true; ledger: ExperimentLedgerView } | { ok: false; error: string };
+type ValidationParseResult = { ok: true; validation: ExperimentValidationView } | { ok: false; error: string };
+
+const objectValue = (value: unknown): Record<string, unknown> | null =>
+  value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+
+const textValue = (value: unknown): string => typeof value === 'string' ? value : '';
+const numberValue = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) ? value : null;
+const integerValue = (value: unknown): number | null => {
+  const number = numberValue(value);
+  return number !== null && Number.isInteger(number) && number >= 0 ? number : null;
+};
+
+const decode = (raw: string | unknown): unknown => typeof raw === 'string' ? JSON.parse(raw) : raw;
+
+const parseNumberMap = (value: unknown): Record<string, number> | null => {
+  const object = objectValue(value);
+  if (!object) return null;
+  const entries = Object.entries(object);
+  if (entries.some(([, item]) => numberValue(item) === null)) return null;
+  return Object.fromEntries(entries) as Record<string, number>;
+};
+
+const parseCandidate = (value: unknown): ExperimentCandidateView | null => {
+  const candidate = objectValue(value);
+  const parameters = objectValue(candidate?.parameters);
+  const depth = integerValue(candidate?.depth);
+  if (!candidate || !textValue(candidate.id) || !textValue(candidate.strategy) || !parameters || depth === null) return null;
+  return {
+    id: textValue(candidate.id),
+    parentId: textValue(candidate.parent_id),
+    strategy: textValue(candidate.strategy),
+    parameters,
+    depth,
+    changedParameter: textValue(candidate.changed_parameter),
+    reason: textValue(candidate.reason),
+  };
+};
+
+const parseParameter = (value: unknown): ExperimentParameterView | null => {
+  const parameter = objectValue(value);
+  if (!parameter || !textValue(parameter.name) || !Array.isArray(parameter.values) || parameter.values.length === 0 || !Object.hasOwn(parameter, 'default')) return null;
+  return {
+    name: textValue(parameter.name),
+    description: textValue(parameter.description),
+    values: parameter.values,
+    defaultValue: parameter.default,
+  };
+};
+
+const parseStrategy = (value: unknown): ExperimentStrategyView | null => {
+  const strategy = objectValue(value);
+  if (!strategy || !textValue(strategy.name) || !Array.isArray(strategy.parameters)) return null;
+  const parameters = strategy.parameters.map(parseParameter);
+  if (parameters.some((parameter) => parameter === null)) return null;
+  return {
+    name: textValue(strategy.name),
+    description: textValue(strategy.description),
+    parameters: parameters as ExperimentParameterView[],
+  };
+};
+
+const parseTrial = (value: unknown): ExperimentTrialView | null => {
+  const trial = objectValue(value);
+  const number = integerValue(trial?.number);
+  const candidate = parseCandidate(trial?.candidate);
+  const score = trial?.score === undefined || trial.score === null ? null : numberValue(trial.score);
+  const delta = trial?.delta_from_best === undefined || trial.delta_from_best === null ? null : numberValue(trial.delta_from_best);
+  const duration = integerValue(trial?.duration_ms);
+  const metrics = parseNumberMap(trial?.metrics ?? {});
+  if (!trial || number === null || !candidate || score === null && trial.score !== null && trial.score !== undefined || delta === null && trial.delta_from_best !== null && trial.delta_from_best !== undefined || duration === null || !metrics) return null;
+  return {
+    number,
+    candidate,
+    status: textValue(trial.status),
+    decision: textValue(trial.decision),
+    reason: textValue(trial.reason),
+    metrics,
+    score,
+    deltaFromBest: delta,
+    durationMs: duration,
+    error: textValue(trial.error),
+  };
+};
+
+export function parseExperimentLedger(raw: string | unknown): LedgerParseResult {
+  try {
+    const value = objectValue(decode(raw));
+    if (!value || value.version !== 'experiment.ledger/v1') return { ok: false, error: '实验账本版本不受支持。' };
+    const direction = value.direction;
+    const target = value.target_score === undefined || value.target_score === null ? null : numberValue(value.target_score);
+    const baseline = numberValue(value.baseline_score);
+    const best = numberValue(value.best_score);
+    const maxTrials = integerValue(value.max_trials);
+    const completed = integerValue(value.completed_trials);
+    const accepted = integerValue(value.accepted_trials);
+    const bestCandidate = parseCandidate(value.best_candidate);
+    const rawUsage = objectValue(value.resource_usage);
+    const evaluatorRuns = integerValue(rawUsage?.evaluator_runs);
+    const evaluatorTime = integerValue(rawUsage?.evaluator_time_ms);
+    const wallDuration = integerValue(rawUsage?.wall_duration_ms);
+    if ((direction !== 'maximize' && direction !== 'minimize') || baseline === null || best === null || maxTrials === null || completed === null || accepted === null || !bestCandidate || !Array.isArray(value.trials) || !rawUsage || evaluatorRuns === null || evaluatorTime === null || wallDuration === null || target === null && value.target_score !== null && value.target_score !== undefined) {
+      return { ok: false, error: '实验账本缺少候选、指标或预算字段。' };
+    }
+    const trials = value.trials.map(parseTrial);
+    if (trials.some((trial) => trial === null)) return { ok: false, error: '实验账本包含无效候选。' };
+    const rawStrategySpace = value.strategy_space === undefined ? [] : value.strategy_space;
+    if (!Array.isArray(rawStrategySpace)) return { ok: false, error: '实验账本中的策略空间无效。' };
+    const strategySpace = rawStrategySpace.map(parseStrategy);
+    if (strategySpace.some((strategy) => strategy === null)) return { ok: false, error: '实验账本中的方法或参数定义无效。' };
+    const normalizedTrials = trials as ExperimentTrialView[];
+    const ids = new Set(normalizedTrials.map((trial) => trial.candidate.id));
+    if (ids.size !== normalizedTrials.length || normalizedTrials[0]?.number !== 0) return { ok: false, error: '实验候选重复或缺少基线。' };
+    for (const trial of normalizedTrials) {
+      if (trial.candidate.parentId && !ids.has(trial.candidate.parentId)) return { ok: false, error: '实验候选父节点不存在。' };
+    }
+    return {
+      ok: true,
+      ledger: {
+        version: 'experiment.ledger/v1',
+        status: textValue(value.status),
+        domain: textValue(value.domain),
+        adapter: textValue(value.adapter),
+        metricKey: textValue(value.metric_key),
+        direction,
+        targetScore: target,
+        baselineScore: baseline,
+        bestScore: best,
+        maxTrials,
+        completedTrials: completed,
+        acceptedTrials: accepted,
+        stopReason: textValue(value.stop_reason),
+        bestCandidate,
+        strategySpace: strategySpace as ExperimentStrategyView[],
+        trials: normalizedTrials,
+        resourceUsage: { evaluatorRuns, evaluatorTimeMs: evaluatorTime, wallDurationMs: wallDuration },
+      },
+    };
+  } catch {
+    return { ok: false, error: '实验账本 JSON 无法解析。' };
+  }
+}
+
+const parseEvidence = (value: unknown): ExperimentEvidenceView | null => {
+  const evidence = objectValue(value);
+  if (!evidence || !textValue(evidence.case_id)) return null;
+  const expected = Array.isArray(evidence.expected) ? evidence.expected.filter((item): item is string => typeof item === 'string') : [];
+  const observed = Array.isArray(evidence.observed) ? evidence.observed.filter((item): item is string => typeof item === 'string') : [];
+  const metrics = parseNumberMap(evidence.metrics ?? {});
+  const details = objectValue(evidence.details ?? {});
+  if (!metrics || !details) return null;
+  return { caseId: textValue(evidence.case_id), expected, observed, metrics, details };
+};
+
+const parseValidationRun = (value: unknown): ExperimentValidationRunView | null => {
+  const run = objectValue(value);
+  const number = integerValue(run?.number);
+  const baseline = numberValue(run?.baseline_score);
+  const candidate = numberValue(run?.candidate_score);
+  const delta = numberValue(run?.delta);
+  const duration = integerValue(run?.duration_ms);
+  if (!run || number === null || baseline === null || candidate === null || delta === null || duration === null || typeof run.target_reached !== 'boolean' || !Array.isArray(run.evidence)) return null;
+  const evidence = run.evidence.map(parseEvidence);
+  if (evidence.some((item) => item === null)) return null;
+  return {
+    number,
+    status: textValue(run.status),
+    baselineScore: baseline,
+    candidateScore: candidate,
+    delta,
+    targetReached: run.target_reached,
+    durationMs: duration,
+    evidence: evidence as ExperimentEvidenceView[],
+    error: textValue(run.error),
+  };
+};
+
+export function parseExperimentValidation(raw: string | unknown): ValidationParseResult {
+  try {
+    const value = objectValue(decode(raw));
+    if (!value || value.version !== 'experiment.validation/v1') return { ok: false, error: '验收报告版本不受支持。' };
+    const searchBaseline = numberValue(value.search_baseline);
+    const searchBest = numberValue(value.search_best);
+    const target = value.holdout_target === undefined || value.holdout_target === null ? null : numberValue(value.holdout_target);
+    const requested = integerValue(value.requested_runs);
+    const passed = integerValue(value.passed_runs);
+    if (searchBaseline === null || searchBest === null || requested === null || passed === null || typeof value.protected_intact !== 'boolean' || !Array.isArray(value.runs) || target === null && value.holdout_target !== null && value.holdout_target !== undefined) {
+      return { ok: false, error: '验收报告缺少分数、轮次或完整性字段。' };
+    }
+    const runs = value.runs.map(parseValidationRun);
+    if (runs.some((run) => run === null)) return { ok: false, error: '验收报告包含无效运行。' };
+    return {
+      ok: true,
+      validation: {
+        version: 'experiment.validation/v1',
+        status: textValue(value.status),
+        domain: textValue(value.domain),
+        adapter: textValue(value.adapter),
+        metricKey: textValue(value.metric_key),
+        searchBaseline,
+        searchBest,
+        holdoutTarget: target,
+        requestedRuns: requested,
+        passedRuns: passed,
+        protectedIntact: value.protected_intact,
+        summary: textValue(value.summary),
+        runs: runs as ExperimentValidationRunView[],
+      },
+    };
+  } catch {
+    return { ok: false, error: '验收报告 JSON 无法解析。' };
+  }
+}
+
+export const formatExperimentNumber = (value: number): string =>
+  new Intl.NumberFormat('zh-CN', { maximumSignificantDigits: 6 }).format(value);
+
+export const formatExperimentDuration = (milliseconds: number): string => {
+  if (milliseconds < 1000) return `${Math.round(milliseconds)} ms`;
+  if (milliseconds < 60_000) return `${(milliseconds / 1000).toFixed(1)} s`;
+  return `${Math.floor(milliseconds / 60_000)}m ${Math.round(milliseconds % 60_000 / 1000)}s`;
+};

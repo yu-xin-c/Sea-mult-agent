@@ -1,0 +1,13 @@
+{"id":"ops-index-e42","text":"E42 pump alarm on hydraulic transfer unit: pressure loss and restart incident index","links":["ops-procedure-pump-reset"]}
+{"id":"ops-procedure-pump-reset","text":"lock out the transfer unit, isolate the inlet valve, inspect the pressure sensor, then restore power in sequence","links":["ops-index-e42"]}
+{"id":"ops-index-hx17","text":"HX17 heat exchanger high-temperature drift incident and cooling-loop overview","links":["ops-procedure-hx-clean"]}
+{"id":"ops-procedure-hx-clean","text":"stop circulation, verify zero pressure, flush the plate channels, clean deposits, and recalibrate both probes","links":["ops-index-hx17"]}
+{"id":"it-credential-rotation","text":"rotate database service credentials in the vault, update the application secret reference, and revoke the previous token"}
+{"id":"robot-index-j6","text":"J6 robot joint oscillation fault record for the packaging arm","links":["robot-procedure-j6-tune"]}
+{"id":"robot-procedure-j6-tune","text":"place the arm in maintenance mode, inspect backlash, lower proportional gain, and run the calibration trajectory","links":["robot-index-j6"]}
+{"id":"finance-invoice-match","text":"resolve invoice matching differences by comparing purchase order quantity, receipt quantity, tax, and currency rounding"}
+{"id":"line-index-p09","text":"P09 conveyor overload alarm and motor-current incident index","links":["line-procedure-p09-clear"]}
+{"id":"line-procedure-p09-clear","text":"isolate conveyor power, remove the downstream blockage, test belt tension, reset the thermal relay, and restart unloaded","links":["line-index-p09"]}
+{"id":"security-cert-renewal","text":"renew the internal gateway certificate, validate the full chain, deploy to both ingress nodes, and confirm expiry monitoring"}
+{"id":"compressor-index-surge","text":"C31 compressor surge event index with unstable discharge pressure","links":["compressor-procedure-surge"]}
+{"id":"compressor-procedure-surge","text":"open the recycle valve, reduce load, verify suction filters, stabilize flow, and inspect the anti-surge controller","links":["compressor-index-surge"]}

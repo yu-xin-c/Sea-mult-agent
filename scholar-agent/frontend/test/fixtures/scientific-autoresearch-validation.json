@@ -1,0 +1,60 @@
+{
+  "version": "experiment.validation/v1",
+  "status": "validated",
+  "domain": "retrieval",
+  "adapter": "retrieval.v1",
+  "metric_key": "ndcg_at_k",
+  "search_baseline": 0.4,
+  "search_best": 0.6,
+  "holdout_target": 0.6,
+  "requested_runs": 2,
+  "passed_runs": 2,
+  "protected_intact": true,
+  "summary": "validated: search 0.400000 -> 0.600000; holdout passed 2/2 fresh runs",
+  "runs": [
+    {
+      "number": 1,
+      "status": "passed",
+      "baseline_score": 0.3333333333333333,
+      "candidate_score": 0.6666666666666666,
+      "delta": 0.3333333333333333,
+      "target_reached": true,
+      "duration_ms": 3480,
+      "error": "",
+      "evidence": [
+        {
+          "case_id": "q-holdout-1",
+          "expected": ["line-procedure-p09-clear"],
+          "observed": ["line-procedure-p09-clear"],
+          "metrics": { "ndcg": 1, "recall": 1, "reciprocal_rank": 1 },
+          "details": { "hit_rank": 1 }
+        },
+        {
+          "case_id": "q-holdout-2",
+          "expected": ["security-cert-renewal"],
+          "observed": ["compressor-procedure-surge"],
+          "metrics": { "ndcg": 0, "recall": 0, "reciprocal_rank": 0 },
+          "details": { "hit_rank": null }
+        },
+        {
+          "case_id": "q-holdout-3",
+          "expected": ["compressor-procedure-surge"],
+          "observed": ["compressor-procedure-surge"],
+          "metrics": { "ndcg": 1, "recall": 1, "reciprocal_rank": 1 },
+          "details": { "hit_rank": 1 }
+        }
+      ]
+    },
+    {
+      "number": 2,
+      "status": "passed",
+      "baseline_score": 0.3333333333333333,
+      "candidate_score": 0.6666666666666666,
+      "delta": 0.3333333333333333,
+      "target_reached": true,
+      "duration_ms": 3890,
+      "error": "",
+      "evidence": []
+    }
+  ]
+}

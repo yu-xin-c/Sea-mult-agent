@@ -38,6 +38,14 @@ func (a *ResearchCodingAgent) ExecuteTask(ctx context.Context, task *models.Task
 	}
 	logToContext(ctx, "[%s] executing %s", a.Name, task.Type)
 	switch task.Type {
+	case "experiment_dataset_prepare":
+		return a.executeExperimentDatasetPrepare(ctx, task)
+	case "experiment_spec":
+		return a.executeExperimentSpec(ctx, task)
+	case "experiment_run":
+		return a.executeExperimentRun(ctx, task)
+	case "experiment_validate":
+		return a.executeExperimentValidation(ctx, task)
 	case "dataset_profile":
 		return a.executeDatasetProfile(ctx, task)
 	case "benchmark_adapter_generate":

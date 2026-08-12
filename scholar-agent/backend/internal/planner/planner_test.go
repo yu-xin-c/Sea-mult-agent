@@ -186,6 +186,78 @@ func TestAutoResearchBuildsDeterministicBoundedHarness(t *testing.T) {
 	}
 }
 
+func TestDatasetAutoResearchBuildsGenericExperimentHarness(t *testing.T) {
+	intent := models.IntentContext{
+		RawIntent:  "上传工业语料和评测问题，自动研究 RAG 策略与超参数，最多 14 次实验，总时长 20 分钟，目标分数 0.82，top_k=8",
+		IntentType: "AutoResearch",
+		Entities: map[string]any{
+			"needs_autoresearch": true, "needs_dataset_research": true,
+			"research_domain": "retrieval", "experiment_adapter": "retrieval.v1",
+			"uploaded_files": []map[string]any{{"name": "corpus.jsonl"}, {"name": "queries.jsonl"}},
+		},
+	}
+	plan, err := NewPlanner().BuildPlan(t.Context(), intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wanted := []string{"experiment_dataset_prepare", "experiment_spec", "prepare_runtime", "install_dependencies", "experiment_run", "experiment_validate", "verify_result"}
+	if len(plan.Nodes) != len(wanted) {
+		t.Fatalf("unexpected experiment plan length: %d", len(plan.Nodes))
+	}
+	for index, taskType := range wanted {
+		if plan.Nodes[index].Type != taskType {
+			t.Fatalf("node %d type=%s, want %s", index, plan.Nodes[index].Type, taskType)
+		}
+	}
+	if plan.Nodes[0].Inputs["research_domain"] != "retrieval" || plan.Nodes[1].Inputs["experiment_max_trials"] != 14 || plan.Nodes[1].Inputs["experiment_cutoff"] != 8 {
+		t.Fatalf("experiment inputs were not frozen: %#v", plan.Nodes[1].Inputs)
+	}
+	if got := plan.Nodes[1].Inputs["experiment_target_score"]; got != 0.82 {
+		t.Fatalf("target score=%v", got)
+	}
+	if plan.Nodes[4].TimeoutSeconds != 1230 || plan.Budget.MaxDurationSec != 2100 || plan.Nodes[5].RetryLimit != 0 {
+		t.Fatalf("experiment budgets are inconsistent: plan=%#v run=%#v validate=%#v", plan.Budget, plan.Nodes[4], plan.Nodes[5])
+	}
+}
+
+func TestDatasetAutoResearchRequiresAnUploadedContractOrDataset(t *testing.T) {
+	intent := models.IntentContext{
+		RawIntent:  "对论文仓库做 AutoResearch，并比较方法和超参数",
+		IntentType: "AutoResearch",
+		Entities: map[string]any{
+			"needs_autoresearch": true, "needs_dataset_research": true,
+			"preferred_repo_url": "https://github.com/example/research-repo",
+		},
+	}
+	plan, err := NewPlanner().BuildPlan(t.Context(), intent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Nodes) != 8 || plan.Nodes[0].Type != "repo_discovery" || plan.Nodes[5].Type != "autoresearch_run" {
+		t.Fatalf("request without uploads must stay on repository AutoResearch path: %#v", plan.Nodes)
+	}
+}
+
+func TestDatasetExperimentParsesDomainSpecificTargetScale(t *testing.T) {
+	inputs := buildDatasetExperimentInputs(models.IntentContext{
+		RawIntent: "上传实验契约，最小化 latency，目标指标达到 125.5，Holdout 目标 130",
+		Entities:  map[string]any{"uploaded_files": []map[string]any{{"name": "experiment.json"}}},
+	})
+	if inputs["experiment_target_score"] != 125.5 || inputs["experiment_holdout_target_score"] != 130.0 {
+		t.Fatalf("generic metric targets must not be clamped to [0,1]: %#v", inputs)
+	}
+}
+
+func TestDatasetExperimentParsesMetricAtCutoff(t *testing.T) {
+	inputs := buildDatasetExperimentInputs(models.IntentContext{
+		RawIntent: "固定 NDCG@1，最多 6 次实验，目标分数 0.60",
+		Entities:  map[string]any{"uploaded_files": []map[string]any{{"name": "queries.jsonl"}}},
+	})
+	if inputs["experiment_metric"] != "ndcg_at_k" || inputs["experiment_cutoff"] != 1 {
+		t.Fatalf("metric@k notation was not frozen correctly: %#v", inputs)
+	}
+}
+
 func TestPaperReproductionRoutesRepositoryDebugToResearchCodingAgent(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 	intent := models.IntentContext{

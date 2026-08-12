@@ -245,6 +245,20 @@ func TestBuildRuleIntentContextRoutesAutoResearchBeforePaperAndCode(t *testing.T
 	}
 }
 
+func TestBuildRuleIntentContextRoutesDatasetAutoResearchWithoutNarrowingProduct(t *testing.T) {
+	intent := buildRuleIntentContext("上传工业数据，自动实验 BM25、混合检索和 GraphRAG 参数，直到 benchmark 达到 0.8")
+	if intent.IntentType != "AutoResearch" {
+		t.Fatalf("intent type=%s", intent.IntentType)
+	}
+	if intent.Entities["needs_dataset_research"] != true || intent.Entities["research_domain"] != "retrieval" || intent.Entities["experiment_adapter"] != "retrieval.v1" {
+		t.Fatalf("dataset research entities=%#v", intent.Entities)
+	}
+	attachments := []map[string]any{{"name": "corpus.jsonl"}, {"name": "queries.jsonl"}}
+	if shouldRouteUploadedCustomBenchmark(intent.IntentType, intent.RawIntent, attachments) {
+		t.Fatal("AutoResearch data must not be downgraded to a one-shot Custom_Benchmark")
+	}
+}
+
 func TestDetectIntentTypeRequiresResearchContextForGenericAutoOptimize(t *testing.T) {
 	if got := DetectIntentType("请自动优化这条 SQL 查询"); got == "AutoResearch" {
 		t.Fatalf("generic optimization was incorrectly routed to AutoResearch: %s", got)

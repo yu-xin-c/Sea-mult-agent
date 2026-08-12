@@ -6,11 +6,13 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import type { ExecutionDisplayMode } from '../../app/hooks/useScholarRuntime';
 import type { Task } from '../../contracts/api';
+import { AblationTreeView } from '../ablation/AblationTreeView';
 import { AutoResearchTrialView } from '../autoresearch/AutoResearchTrialView';
 import { ClaimEvidenceGraphView } from '../claim-evidence/ClaimEvidenceGraphView';
+import { ExperimentResearchView } from '../experiment/ExperimentResearchView';
 import { getAgentIcon, getAgentLabel } from '../shared/agentVisuals';
 
-type CompactMode = Exclude<ExecutionDisplayMode, 'report-expanded' | 'plot-expanded' | 'evidence-expanded' | 'trials-expanded'>;
+type CompactMode = Exclude<ExecutionDisplayMode, 'report-expanded' | 'plot-expanded' | 'evidence-expanded' | 'trials-expanded' | 'ablation-expanded'>;
 
 interface ExecutionSidebarProps {
   selectedTask: Task;
@@ -33,6 +35,7 @@ const resolveCompactMode = (displayMode: ExecutionDisplayMode): CompactMode => {
   if (displayMode === 'plot-expanded') return 'plot';
   if (displayMode === 'evidence-expanded') return 'evidence';
   if (displayMode === 'trials-expanded') return 'trials';
+  if (displayMode === 'ablation-expanded') return 'ablation';
   return displayMode;
 };
 
@@ -68,7 +71,14 @@ export function ExecutionSidebar(props: ExecutionSidebarProps) {
       {displayMode === 'evidence-expanded' ? (
         <ExpandedEvidenceView title={selectedTask.Name} rawGraph={executionStructuredData} onClose={() => onChangeDisplayMode('evidence')} />
       ) : displayMode === 'trials-expanded' ? (
-        <ExpandedTrialView title={selectedTask.Name} rawLedger={executionStructuredData || executionResult} onClose={() => onChangeDisplayMode('trials')} />
+        <ExpandedTrialView
+          title={selectedTask.Name}
+          rawLedger={executionStructuredData || executionResult}
+          experiment={selectedTask.Type === 'experiment_run' || selectedTask.Type === 'experiment_validate'}
+          onClose={() => onChangeDisplayMode('trials')}
+        />
+      ) : displayMode === 'ablation-expanded' ? (
+        <ExpandedAblationView title={selectedTask.Name} rawPlan={executionStructuredData || executionResult} onClose={() => onChangeDisplayMode('ablation')} />
       ) : displayMode === 'plot-expanded' ? (
         <ExpandedPlotView executionImage={executionImage} onClose={() => onChangeDisplayMode('plot')} />
       ) : displayMode === 'report-expanded' ? (
@@ -96,17 +106,18 @@ export function ExecutionSidebar(props: ExecutionSidebarProps) {
 interface ExpandedTrialViewProps {
   title: string;
   rawLedger: string;
+  experiment?: boolean;
   onClose: () => void;
 }
 
-function ExpandedTrialView({ title, rawLedger, onClose }: ExpandedTrialViewProps) {
+function ExpandedTrialView({ title, rawLedger, experiment = false, onClose }: ExpandedTrialViewProps) {
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-white p-6">
       <div className="mb-4 flex flex-shrink-0 items-center justify-between border-b border-slate-200 pb-4">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-sm font-semibold text-cyan-800">
             <FlaskConical className="h-4 w-4" />
-            AutoResearch Trials
+            {experiment ? 'Scientific AutoResearch' : 'AutoResearch Trials'}
           </div>
           <h2 className="mt-1 truncate text-xl font-semibold text-slate-900">{title}</h2>
         </div>
@@ -121,7 +132,41 @@ function ExpandedTrialView({ title, rawLedger, onClose }: ExpandedTrialViewProps
         </button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto border border-slate-200">
-        <AutoResearchTrialView rawLedger={rawLedger} expanded />
+        {experiment ? <ExperimentResearchView raw={rawLedger} expanded /> : <AutoResearchTrialView rawLedger={rawLedger} expanded />}
+      </div>
+    </div>
+  );
+}
+
+interface ExpandedAblationViewProps {
+  title: string;
+  rawPlan: string;
+  onClose: () => void;
+}
+
+function ExpandedAblationView({ title, rawPlan, onClose }: ExpandedAblationViewProps) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col bg-white p-6">
+      <div className="mb-4 flex flex-shrink-0 items-center justify-between border-b border-slate-200 pb-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm font-semibold text-cyan-800">
+            <GitBranch className="h-4 w-4" />
+            Ablation Thought Tree
+          </div>
+          <h2 className="mt-1 truncate text-xl font-semibold text-slate-900">{title}</h2>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
+          title="退出全屏消融树"
+          aria-label="退出全屏消融树"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-hidden border border-slate-200">
+        <AblationTreeView rawPlan={rawPlan} expanded />
       </div>
     </div>
   );
@@ -271,7 +316,10 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
     onChangeDisplayMode,
   } = props;
   const ablationBudget = selectedTask.Type === 'ablation_design' ? selectedTask.Inputs : undefined;
+  const hasAblationEvidence = selectedTask.Type === 'ablation_design' && Boolean(executionStructuredData || executionResult);
   const hasAutoResearchEvidence = (selectedTask.Type === 'autoresearch_run' || selectedTask.Type === 'autoresearch_validate') && Boolean(executionStructuredData || executionResult);
+  const hasExperimentEvidence = (selectedTask.Type === 'experiment_run' || selectedTask.Type === 'experiment_validate') && Boolean(executionStructuredData || executionResult);
+  const hasTrialEvidence = hasAutoResearchEvidence || hasExperimentEvidence;
 
   return (
     <>
@@ -366,7 +414,7 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
                   <span className="sm:hidden">代码</span>
                 </button>
               )}
-              {hasAutoResearchEvidence && (
+              {hasTrialEvidence && (
                 <button
                   onClick={() => onChangeDisplayMode('trials')}
                   className={`flex-1 py-3 text-xs font-black text-center border-b-2 flex items-center justify-center gap-1 transition-all ${
@@ -374,7 +422,18 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
                   }`}
                 >
                   <ChartNoAxesCombined className="h-4 w-4" />
-                  {selectedTask.Type === 'autoresearch_validate' ? '验收' : '实验'}
+                  {selectedTask.Type === 'autoresearch_validate' || selectedTask.Type === 'experiment_validate' ? '验收' : '实验'}
+                </button>
+              )}
+              {hasAblationEvidence && (
+                <button
+                  onClick={() => onChangeDisplayMode('ablation')}
+                  className={`flex-1 py-3 text-xs font-black text-center border-b-2 flex items-center justify-center gap-1 transition-all ${
+                    activeMode === 'ablation' ? 'border-cyan-600 text-cyan-700' : 'border-transparent text-gray-400 hover:text-gray-600'
+                  }`}
+                >
+                  <GitBranch className="h-4 w-4" />
+                  方案树
                 </button>
               )}
               {executionImage && (
@@ -399,7 +458,7 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
                   证据图
                 </button>
               )}
-              {reportAgents.has(selectedTask.AssignedTo) && executionResult && !hasAutoResearchEvidence && (
+              {reportAgents.has(selectedTask.AssignedTo) && executionResult && !hasTrialEvidence && !hasAblationEvidence && (
                 <button
                   onClick={() => onChangeDisplayMode('report')}
                   className={`flex-1 py-3 text-xs font-black text-center border-b-2 flex items-center justify-center gap-1 transition-all ${
@@ -449,6 +508,16 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
                 <Maximize2 className="h-4 w-4" />
               </button>
             )}
+            {activeMode === 'ablation' && (
+              <button
+                onClick={() => onChangeDisplayMode('ablation-expanded')}
+                className="ml-3 p-2.5 text-cyan-700 hover:bg-cyan-50 rounded-xl transition-all active:scale-90 border border-cyan-100 shadow-sm"
+                title="全屏查看消融树"
+                aria-label="全屏查看消融树"
+              >
+                <Maximize2 className="h-4 w-4" />
+              </button>
+            )}
           </div>
         )}
 
@@ -472,7 +541,13 @@ function ExecutionSidebarShell(props: ExecutionSidebarShellProps) {
             </>
           ) : activeMode === 'trials' ? (
             <div className="min-h-[32rem] flex-1 overflow-hidden border border-slate-200 bg-white">
-              <AutoResearchTrialView rawLedger={executionStructuredData || executionResult} />
+              {hasExperimentEvidence
+                ? <ExperimentResearchView raw={executionStructuredData || executionResult} />
+                : <AutoResearchTrialView rawLedger={executionStructuredData || executionResult} />}
+            </div>
+          ) : activeMode === 'ablation' ? (
+            <div className="min-h-[32rem] flex-1 overflow-hidden border border-slate-200 bg-white">
+              <AblationTreeView rawPlan={executionStructuredData || executionResult} />
             </div>
           ) : activeMode === 'code' ? (
             <div className="bg-gray-50 rounded-2xl border border-gray-200 p-6 flex-1 overflow-y-auto shadow-inner prose prose-slate prose-sm max-w-none text-gray-800 h-64">

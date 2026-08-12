@@ -1,4 +1,4 @@
-<mxfile host="Electron" modified="2026-08-11T20:30:00.000Z" agent="Codex" version="31.1.8" type="device">
+<mxfile host="Electron" modified="2026-08-12T01:50:00.000Z" agent="Codex" version="31.1.8" type="device">
   <diagram id="scholar-agent-overview" name="ScholarAgent Overview">
     <mxGraphModel dx="1440" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1440" pageHeight="900" math="0" shadow="0" background="#F8FAFC">
       <root>
@@ -15,17 +15,17 @@
         <mxCell id="brand" value="Sea-Mult-Agent" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=22;fontStyle=1;fontColor=#173B6C;" vertex="1" parent="1">
           <mxGeometry x="60" y="29" width="230" height="56" as="geometry" />
         </mxCell>
-        <mxCell id="title" value="ScholarAgent 如何完成一次论文复现" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=31;fontStyle=1;fontColor=#173B6C;" vertex="1" parent="1">
+        <mxCell id="title" value="ScholarAgent 如何完成一次复现与自动研究" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=31;fontStyle=1;fontColor=#173B6C;" vertex="1" parent="1">
           <mxGeometry x="300" y="20" width="820" height="48" as="geometry" />
         </mxCell>
-        <mxCell id="subtitle" value="从论文、仓库和数据出发，在受控环境中运行、修复，并给出可核验结果" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=15;fontColor=#64748B;" vertex="1" parent="1">
+        <mxCell id="subtitle" value="从论文、代码和数据出发，在预算内真实运行候选，找到可验证的更好方案" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=15;fontColor=#64748B;" vertex="1" parent="1">
           <mxGeometry x="300" y="65" width="820" height="28" as="geometry" />
         </mxCell>
         <mxCell id="boundary_badge" value="模型提建议  ·  系统做裁判" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFF7E6;strokeColor=#F59E0B;strokeWidth=1.5;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=13;fontStyle=1;fontColor=#8A5A00;" vertex="1" parent="1">
           <mxGeometry x="1160" y="36" width="240" height="38" as="geometry" />
         </mxCell>
 
-        <mxCell id="flow_title" value="一次复现，五步完成" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=22;fontStyle=1;fontColor=#173B6C;" vertex="1" parent="1">
+        <mxCell id="flow_title" value="一次科研任务，五步闭环" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=22;fontStyle=1;fontColor=#173B6C;" vertex="1" parent="1">
           <mxGeometry x="40" y="108" width="280" height="32" as="geometry" />
         </mxCell>
         <mxCell id="input_zone" value="你提供材料与目标" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#EAF2FF;strokeColor=#B8D0FA;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12.5;fontStyle=1;fontColor=#2458A6;" vertex="1" parent="1">
@@ -62,7 +62,7 @@
         <mxCell id="input_data" value="CSV" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#7AA7EC;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=13;fontStyle=1;fontColor=#2458A6;" vertex="1" parent="1">
           <mxGeometry x="204" y="270" width="52" height="36" as="geometry" />
         </mxCell>
-        <mxCell id="step1_body" value="&lt;div style=&quot;line-height:1.75&quot;&gt;论文或研究目标&lt;br&gt;GitHub 仓库与 commit&lt;br&gt;自有数据、预算和验收标准&lt;/div&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacing=2;fontFamily=Helvetica;fontSize=14;fontColor=#334155;" vertex="1" parent="1">
+        <mxCell id="step1_body" value="&lt;div style=&quot;line-height:1.75&quot;&gt;论文或研究问题&lt;br&gt;代码仓库与固定版本&lt;br&gt;自有数据、指标和预算&lt;/div&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacing=2;fontFamily=Helvetica;fontSize=14;fontColor=#334155;" vertex="1" parent="1">
           <mxGeometry x="62" y="340" width="204" height="108" as="geometry" />
         </mxCell>
         <mxCell id="step1_note" value="你只需要说清楚目标" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#EAF2FF;strokeColor=#C5DAF8;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12.5;fontStyle=1;fontColor=#2458A6;" vertex="1" parent="1">
@@ -99,7 +99,7 @@
         <mxCell id="dag_label" value="计划已校验" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontStyle=1;fontColor=#6741B5;" vertex="1" parent="1">
           <mxGeometry x="470" y="272" width="70" height="28" as="geometry" />
         </mxCell>
-        <mxCell id="step2_body" value="&lt;div style=&quot;line-height:1.75&quot;&gt;识别是论文复现、数据评测还是自动实验&lt;br&gt;锁定代码版本、指标和预算&lt;br&gt;生成执行图（DAG），检查步骤依赖&lt;/div&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacing=2;fontFamily=Helvetica;fontSize=14;fontColor=#334155;" vertex="1" parent="1">
+        <mxCell id="step2_body" value="&lt;div style=&quot;line-height:1.75&quot;&gt;选择修代码或搜索方法与参数&lt;br&gt;冻结数据、评测器、版本和预算&lt;br&gt;生成执行图（DAG）并检查依赖&lt;/div&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacing=2;fontFamily=Helvetica;fontSize=14;fontColor=#334155;" vertex="1" parent="1">
           <mxGeometry x="340" y="340" width="204" height="108" as="geometry" />
         </mxCell>
         <mxCell id="step2_note" value="先把任务边界固定下来" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#F1ECFF;strokeColor=#D6C8FA;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12.5;fontStyle=1;fontColor=#6741B5;" vertex="1" parent="1">
@@ -115,7 +115,7 @@
         <mxCell id="step3_num" value="3" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#F3E8FF;strokeColor=#A855F7;strokeWidth=1.5;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=17;fontStyle=1;fontColor=#7E22CE;" vertex="1" parent="1">
           <mxGeometry x="614" y="202" width="38" height="38" as="geometry" />
         </mxCell>
-        <mxCell id="step3_title" value="专业 Agent 协作" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=18;fontStyle=1;fontColor=#173B6C;" vertex="1" parent="1">
+        <mxCell id="step3_title" value="Agent 与领域适配" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontFamily=Helvetica;fontSize=18;fontStyle=1;fontColor=#173B6C;" vertex="1" parent="1">
           <mxGeometry x="662" y="201" width="164" height="40" as="geometry" />
         </mxCell>
         <mxCell id="step3_visual" value="" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FCF7FF;strokeColor=#E7D5F7;" vertex="1" parent="1">
@@ -133,10 +133,10 @@
         <mxCell id="agent_coord" value="协作" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#A855F7;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12;fontStyle=1;fontColor=#7E22CE;" vertex="1" parent="1">
           <mxGeometry x="786" y="270" width="30" height="36" as="geometry" />
         </mxCell>
-        <mxCell id="step3_body" value="&lt;div style=&quot;line-height:1.75&quot;&gt;Librarian 阅读论文和主张&lt;br&gt;Research Coding 调试仓库并提补丁&lt;br&gt;Data 分析指标，Chat / Coder 补位&lt;/div&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacing=2;fontFamily=Helvetica;fontSize=14;fontColor=#334155;" vertex="1" parent="1">
+        <mxCell id="step3_body" value="&lt;div style=&quot;line-height:1.75&quot;&gt;Librarian 理解论文和主张&lt;br&gt;Research Coding 调试代码并提候选&lt;br&gt;领域 Adapter 统一数据与评测协议&lt;/div&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacing=2;fontFamily=Helvetica;fontSize=14;fontColor=#334155;" vertex="1" parent="1">
           <mxGeometry x="618" y="340" width="204" height="108" as="geometry" />
         </mxCell>
-        <mxCell id="step3_note" value="每个 Agent 只做擅长的事" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#F3E8FF;strokeColor=#DEC5F5;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12.5;fontStyle=1;fontColor=#7E22CE;" vertex="1" parent="1">
+        <mxCell id="step3_note" value="通用 Harness，领域能力可插拔" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#F3E8FF;strokeColor=#DEC5F5;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12.5;fontStyle=1;fontColor=#7E22CE;" vertex="1" parent="1">
           <mxGeometry x="614" y="468" width="212" height="36" as="geometry" />
         </mxCell>
 
@@ -161,7 +161,7 @@
         <mxCell id="docker_tag" value="Docker" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFFFFF;strokeColor=#F59E0B;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=11;fontStyle=1;fontColor=#8A5A00;" vertex="1" parent="1">
           <mxGeometry x="1058" y="272" width="38" height="32" as="geometry" />
         </mxCell>
-        <mxCell id="step4_body" value="&lt;div style=&quot;line-height:1.75&quot;&gt;准备运行镜像并安装依赖&lt;br&gt;执行真实命令，收集日志和指标&lt;br&gt;遇到错误时有限分析、修复和重跑&lt;/div&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacing=2;fontFamily=Helvetica;fontSize=14;fontColor=#334155;" vertex="1" parent="1">
+        <mxCell id="step4_body" value="&lt;div style=&quot;line-height:1.75&quot;&gt;准备运行镜像并安装依赖&lt;br&gt;逐个执行代码或配置候选&lt;br&gt;收集真实日志、指标与资源消耗&lt;/div&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacing=2;fontFamily=Helvetica;fontSize=14;fontColor=#334155;" vertex="1" parent="1">
           <mxGeometry x="896" y="340" width="204" height="108" as="geometry" />
         </mxCell>
         <mxCell id="step4_note" value="不是只写代码，是真的跑" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#FFF7E6;strokeColor=#F3D59B;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12.5;fontStyle=1;fontColor=#8A5A00;" vertex="1" parent="1">
@@ -195,7 +195,7 @@
         <mxCell id="verify_check" value="✓" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fillColor=#FFFFFF;strokeColor=#22A06B;strokeWidth=2;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=24;fontStyle=1;fontColor=#22A06B;" vertex="1" parent="1">
           <mxGeometry x="1296" y="265" width="44" height="44" as="geometry" />
         </mxCell>
-        <mxCell id="step5_body" value="&lt;div style=&quot;line-height:1.75&quot;&gt;公开测试引导候选搜索&lt;br&gt;改进则保留，退化则自动回滚&lt;br&gt;最佳结果再用隐藏测试复验&lt;/div&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacing=2;fontFamily=Helvetica;fontSize=14;fontColor=#334155;" vertex="1" parent="1">
+        <mxCell id="step5_body" value="&lt;div style=&quot;line-height:1.75&quot;&gt;公开评测引导 Keep / Reject&lt;br&gt;达到目标或预算上限就停止&lt;br&gt;最佳结果再用 Holdout 独立复验&lt;/div&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=top;spacing=2;fontFamily=Helvetica;fontSize=14;fontColor=#334155;" vertex="1" parent="1">
           <mxGeometry x="1174" y="340" width="204" height="108" as="geometry" />
         </mxCell>
         <mxCell id="step5_note" value="交付可审计的结果报告" style="rounded=1;whiteSpace=wrap;html=1;arcSize=8;fillColor=#EAF8F3;strokeColor=#C4E8D8;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12.5;fontStyle=1;fontColor=#167052;" vertex="1" parent="1">
@@ -313,7 +313,7 @@
           <mxGeometry x="1195" y="770" width="1" height="58" as="geometry" />
         </mxCell>
 
-        <mxCell id="footer" value="同一套受控流程也用于自有数据 Benchmark 与预算受限的 AutoResearch。" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12.5;fontColor=#64748B;" vertex="1" parent="1">
+        <mxCell id="footer" value="同一套 Harness 支持不同论文领域；RAG 只是首个内置的零配置 Adapter。" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;fontFamily=Helvetica;fontSize=12.5;fontColor=#64748B;" vertex="1" parent="1">
           <mxGeometry x="340" y="862" width="760" height="22" as="geometry" />
         </mxCell>
       </root>

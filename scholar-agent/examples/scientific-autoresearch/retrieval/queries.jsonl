@@ -1,0 +1,8 @@
+{"id":"q-search-1","query":"E42 pump alarm reset steps","relevant_doc_ids":["ops-procedure-pump-reset"],"split":"search"}
+{"id":"q-search-2","query":"HX17 exchanger temperature drift maintenance","relevant_doc_ids":["ops-procedure-hx-clean"],"split":"search"}
+{"id":"q-search-3","query":"rotate database service credentials","relevant_doc_ids":["it-credential-rotation"],"split":"search"}
+{"id":"q-search-4","query":"J6 robot joint oscillation calibration","relevant_doc_ids":["robot-procedure-j6-tune"],"split":"search"}
+{"id":"q-search-5","query":"invoice purchase order quantity mismatch","relevant_doc_ids":["finance-invoice-match"],"split":"search"}
+{"id":"q-holdout-1","query":"P09 conveyor overload alarm recovery","relevant_doc_ids":["line-procedure-p09-clear"],"split":"holdout"}
+{"id":"q-holdout-2","query":"renew internal gateway certificate chain","relevant_doc_ids":["security-cert-renewal"],"split":"holdout"}
+{"id":"q-holdout-3","query":"C31 compressor surge response","relevant_doc_ids":["compressor-procedure-surge"],"split":"holdout"}

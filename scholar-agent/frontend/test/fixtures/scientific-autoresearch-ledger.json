@@ -1,0 +1,164 @@
+{
+  "version": "experiment.ledger/v1",
+  "status": "completed",
+  "domain": "retrieval",
+  "adapter": "retrieval.v1",
+  "metric_key": "ndcg_at_k",
+  "direction": "maximize",
+  "target_score": 0.6,
+  "baseline_score": 0.4,
+  "best_score": 0.6,
+  "max_trials": 6,
+  "completed_trials": 3,
+  "accepted_trials": 1,
+  "stop_reason": "target_score_reached",
+  "strategy_space": [
+    {
+      "name": "bm25",
+      "description": "sparse lexical BM25 baseline",
+      "parameters": [
+        { "name": "k1", "description": "term-frequency saturation", "values": [0.8, 1.2, 1.5, 1.8, 2.2], "default": 1.5 },
+        { "name": "b", "description": "document-length normalization", "values": [0.2, 0.5, 0.75, 1.0], "default": 0.75 }
+      ]
+    },
+    {
+      "name": "tfidf",
+      "description": "TF-IDF cosine retrieval",
+      "parameters": [
+        { "name": "ngram_max", "description": "maximum token n-gram", "values": [1, 2], "default": 1 },
+        { "name": "sublinear_tf", "description": "log-scale term frequency", "values": [false, true], "default": true }
+      ]
+    },
+    {
+      "name": "hybrid_rrf",
+      "description": "BM25 and TF-IDF reciprocal-rank fusion",
+      "parameters": [
+        { "name": "k1", "description": "term-frequency saturation", "values": [0.8, 1.2, 1.5, 1.8, 2.2], "default": 1.5 },
+        { "name": "b", "description": "document-length normalization", "values": [0.2, 0.5, 0.75, 1.0], "default": 0.75 },
+        { "name": "ngram_max", "description": "maximum token n-gram", "values": [1, 2], "default": 1 },
+        { "name": "sublinear_tf", "description": "log-scale term frequency", "values": [false, true], "default": true },
+        { "name": "alpha", "description": "BM25 share in reciprocal-rank fusion", "values": [0.2, 0.5, 0.8], "default": 0.5 },
+        { "name": "rrf_k", "description": "reciprocal-rank smoothing", "values": [10, 30, 60], "default": 60 }
+      ]
+    },
+    {
+      "name": "graph_hybrid",
+      "description": "hybrid retrieval with explicit corpus-link expansion",
+      "parameters": [
+        { "name": "k1", "description": "term-frequency saturation", "values": [0.8, 1.2, 1.5, 1.8, 2.2], "default": 1.5 },
+        { "name": "b", "description": "document-length normalization", "values": [0.2, 0.5, 0.75, 1.0], "default": 0.75 },
+        { "name": "ngram_max", "description": "maximum token n-gram", "values": [1, 2], "default": 1 },
+        { "name": "sublinear_tf", "description": "log-scale term frequency", "values": [false, true], "default": true },
+        { "name": "alpha", "description": "BM25 share in reciprocal-rank fusion", "values": [0.2, 0.5, 0.8], "default": 0.5 },
+        { "name": "rrf_k", "description": "reciprocal-rank smoothing", "values": [10, 30, 60], "default": 60 },
+        { "name": "graph_weight", "description": "linked-document propagation weight", "values": [0.25, 0.75, 1.25], "default": 1.25 },
+        { "name": "graph_depth", "description": "maximum graph expansion hops", "values": [1, 2], "default": 1 }
+      ]
+    }
+  ],
+  "best_candidate": {
+    "id": "candidate-11eb14ea18e6",
+    "parent_id": "",
+    "strategy": "graph_hybrid",
+    "parameters": {
+      "alpha": 0.5,
+      "b": 0.75,
+      "graph_depth": 1,
+      "graph_weight": 1.25,
+      "k1": 1.5,
+      "ngram_max": 1,
+      "rrf_k": 60,
+      "sublinear_tf": true
+    },
+    "depth": 0,
+    "changed_parameter": "",
+    "reason": "compare method branch against the baseline"
+  },
+  "trials": [
+    {
+      "number": 0,
+      "candidate": {
+        "id": "candidate-0512f026791f",
+        "parent_id": "",
+        "strategy": "bm25",
+        "parameters": { "b": 0.75, "k1": 1.5 },
+        "depth": 0,
+        "changed_parameter": "",
+        "reason": "baseline default"
+      },
+      "status": "kept",
+      "decision": "baseline",
+      "reason": "frozen baseline",
+      "metrics": { "ndcg_at_k": 0.4, "mrr": 0.4, "recall_at_k": 0.4 },
+      "score": 0.4,
+      "delta_from_best": null,
+      "duration_ms": 1680,
+      "error": ""
+    },
+    {
+      "number": 1,
+      "candidate": {
+        "id": "candidate-57e9b628a810",
+        "parent_id": "",
+        "strategy": "tfidf",
+        "parameters": { "ngram_max": 1, "sublinear_tf": true },
+        "depth": 0,
+        "changed_parameter": "",
+        "reason": "compare method branch against the baseline"
+      },
+      "status": "rejected",
+      "decision": "reject",
+      "reason": "improvement 0.0000 is below min_delta",
+      "metrics": { "ndcg_at_k": 0.4, "mrr": 0.4, "recall_at_k": 0.4 },
+      "score": 0.4,
+      "delta_from_best": 0,
+      "duration_ms": 1790,
+      "error": ""
+    },
+    {
+      "number": 2,
+      "candidate": {
+        "id": "candidate-2e10dbe67b0c",
+        "parent_id": "",
+        "strategy": "hybrid_rrf",
+        "parameters": { "alpha": 0.5, "b": 0.75, "k1": 1.5, "ngram_max": 1, "rrf_k": 60, "sublinear_tf": true },
+        "depth": 0,
+        "changed_parameter": "",
+        "reason": "compare method branch against the baseline"
+      },
+      "status": "rejected",
+      "decision": "reject",
+      "reason": "improvement 0.0000 is below min_delta",
+      "metrics": { "ndcg_at_k": 0.4, "mrr": 0.4, "recall_at_k": 0.4 },
+      "score": 0.4,
+      "delta_from_best": 0,
+      "duration_ms": 1840,
+      "error": ""
+    },
+    {
+      "number": 3,
+      "candidate": {
+        "id": "candidate-11eb14ea18e6",
+        "parent_id": "",
+        "strategy": "graph_hybrid",
+        "parameters": { "alpha": 0.5, "b": 0.75, "graph_depth": 1, "graph_weight": 1.25, "k1": 1.5, "ngram_max": 1, "rrf_k": 60, "sublinear_tf": true },
+        "depth": 0,
+        "changed_parameter": "",
+        "reason": "compare method branch against the baseline"
+      },
+      "status": "kept",
+      "decision": "keep",
+      "reason": "improved best score by 0.2000",
+      "metrics": { "ndcg_at_k": 0.6, "mrr": 0.6, "recall_at_k": 0.6 },
+      "score": 0.6,
+      "delta_from_best": 0.2,
+      "duration_ms": 1810,
+      "error": ""
+    }
+  ],
+  "resource_usage": {
+    "evaluator_runs": 4,
+    "evaluator_time_ms": 7120,
+    "wall_duration_ms": 7190
+  }
+}

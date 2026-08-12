@@ -2,11 +2,11 @@
 
 本文描述 `scholar-agent/` 当前已经实现并可运行的架构。它以代码为准，重点说明服务边界、核心数据模型、Agent 调度、论文复现、Benchmark Harness、持久化与安全边界。早期设想和尚未接入主链的模块不会被写成现有能力。
 
-最后核对日期：2026-08-11。
+最后核对日期：2026-08-12。
 
 ## 1. 架构目标
 
-ScholarAgent 是一个面向科研任务的单机多 Agent 执行系统。它把用户目标转换为带依赖和产物契约的 DAG，在受限容器中执行代码，并把节点状态、日志、指标和报告实时返回前端。
+ScholarAgent 是一个面向论文复现和预算受限自动研究的单机多 Agent 执行系统。它把用户目标转换为带依赖和产物契约的 DAG，在受限容器中执行代码，并把节点状态、日志、候选树、指标和报告实时返回前端。RAG 是领域 Adapter 示例，不是核心架构边界。
 
 当前架构遵循四个原则：
 
@@ -142,7 +142,7 @@ scholar-agent/
 [`planner.go`](../backend/internal/planner/planner.go) 输出 `PlanGraph`。规划顺序如下：
 
 1. API 用规则提取任务类型、仓库 URL、论文信息、复现模式和附件。
-2. 自有数据 Benchmark 始终生成固定的 11 节点 DAG；AutoResearch 始终生成固定的 8 节点 DAG。
+2. 自有数据 Benchmark 生成固定 11 节点 DAG；仓库代码 AutoResearch 生成固定 8 节点 DAG；上传数据的方法/参数 AutoResearch 生成固定 7 节点 DAG。
 3. 其他任务在配置 LLM 后优先调用 Planner Agent。
 4. 模型输出会经过任务类型归一化、Agent 白名单、Artifact 契约和 DAG 校验。
 5. 模型不可用或输出不合法时，回退到确定性模板。
@@ -155,7 +155,7 @@ scholar-agent/
 | `Framework_Evaluation` | 共同协议、并行框架实现、独立运行和比较报告 |
 | `Code_Execution` | 代码生成、依赖、运行和结果验证 |
 | `Custom_Benchmark` | 用户数据分析、仓库适配、预检、正式评测和证据校验 |
-| `AutoResearch` | 冻结研究契约、baseline、有限候选、Keep/Reject、回滚、公开重放/隐藏 holdout 和资源证据 |
+| `AutoResearch` | 仓库代码补丁，或由 Domain Adapter 驱动的方法/参数候选；统一执行 Keep/Reject、目标停止、Holdout 和资源证据 |
 | `General` | 通用研究或处理节点 |
 
 [`internal/Intent`](../backend/internal/Intent/) 和 Python 意图服务目前不是这条生产路径的一部分。当前 API 使用 [`buildRuleIntentContext`](../backend/internal/api/plan_runtime.go)，Planner Agent 负责后续拓扑生成。
@@ -203,6 +203,10 @@ Scheduler 负责：
 | `ResearchSpec` | AutoResearch 可编辑/保护文件、命令、指标、方向、阈值、搜索预算与验证次数 |
 | `ResearchTrialLedger` | baseline 和每个候选的补丁哈希、命令、指标、决策、停止原因与资源摘要 |
 | `ResearchValidationReport` | 最佳文件完整性、重复 evaluator 结果、均值、标准差、失败率与资源摘要 |
+| `ExperimentDatasetManifest` | 领域 Adapter 产出的数据映射、能力、资产路径和 SHA-256 |
+| `ExperimentResearchSpec` | 方法分支、参数有限域、搜索/Holdout 命令、指标、目标和预算 |
+| `ExperimentTrialLedger` | 配置候选父子关系、单参数变化、指标、Keep/Reject、最佳配置和停止原因 |
+| `ExperimentValidationReport` | 最佳配置在独立 Holdout 进程中的 baseline 对照、目标判定和样例证据 |
 
 ```mermaid
 stateDiagram-v2
@@ -231,7 +235,7 @@ Artifact 同时承担数据接口和可追踪证据的作用。例如 `repo_url`
 | `LibrarianAgent` | 论文解析、资料归纳、方法声明提取和实验前冻结 Claim Rubric |
 | `CoderAgent` | 代码生成、依赖解析、运行时准备、安装、执行与修复 |
 | `DataAgent` | 指标分析、论文对比、Claim-to-Evidence 判定、报告和受限消融设计 |
-| `ResearchCodingAgent` | 论文仓库代码调试、数据契约与 Benchmark，以及冻结规格驱动的 AutoResearch Keep/Reject 循环 |
+| `ResearchCodingAgent` | 论文仓库调试、数据 Benchmark、代码补丁 AutoResearch，以及 Domain Adapter 驱动的方法/参数 AutoResearch |
 
 Librarian、Coder、Data 和 Chat 使用 Eino 编排 OpenAI-compatible Chat Model。模型地址、模型名和密钥通过环境变量或配置文件提供。
 
@@ -239,11 +243,14 @@ Librarian、Coder、Data 和 Chat 使用 Eino 编排 OpenAI-compatible Chat Mode
 
 ToT 只用于“轻量消融设计”，实现位于 [`ablation_tot.go`](../backend/internal/agent/ablation_tot.go)：
 
-1. 模型扩展参数、模块、数据规模、随机种子和运行成本候选。
-2. 模型评估信息增益、相关性、可复现性与风险。
-3. Go 代码重新限幅、打分，并在实验数、GPU 时间和总时长预算内选择不同类别的候选。
+1. 模型生成参数、模块、数据规模、随机种子和运行成本五类一级方向，Go 去重并补齐类别。
+2. 模型评估一级分支，Go 使用固定公式评分，并选出预算可行的高价值父节点。
+3. 模型只细化这些父节点，产生带 `parent_id`、`depth` 和 `expansion_reason` 的二级单变量候选。
+4. Go 校验父子谱系、重新评估与打分，并在实验数、GPU 时间、总时长和类别多样性预算内选择；每个候选记录独立的入选或剪枝原因。
 
-搜索深度固定为 2，候选分支最多 8，默认最多选择 3 个实验。模型失败时使用确定性候选和评分，不会无限展开思维树。
+搜索深度固定为 2，一级分支最多 5，展开 beam 最多 3，所有候选合计最多 8，默认最多选择 3 个实验。模型失败时保留已完成层级并使用确定性候选或评分，不会无限展开思维树。前端通过 `ablation_plan` 中的谱系、入选和剪枝字段直接渲染方案树。
+
+这里的树发生在**实验设计阶段**：第二层由论文上下文和模型评估驱动，不读取尚未执行的真实实验结果。实际候选能否提升指标，仍由后续 Sandbox/AutoResearch 执行、冻结 evaluator 与 Artifact 证明。
 
 ### 7.2 ReAct 的位置
 
@@ -270,6 +277,8 @@ Planner TaskNode
                 -> 数据契约 -> 适配器 -> 预检修复 -> 正式运行 -> Go 指标重算
             -> AutoResearch Harness
                 -> ResearchSpec -> baseline -> 候选补丁 -> Keep/Reject -> TrialLedger -> 最终验证
+            -> Experiment Harness
+                -> Domain Adapter -> ExperimentSpec -> 方法/参数候选树 -> 目标停止 -> Holdout
 ```
 
 它在启动时复用 Coder 的 Chat Model 和 Sandbox Client，但不复用 Coder 的任务状态。每次调试的运行次数、文件备份和补丁清单都只存在于当前任务内，跨节点状态通过显式 Artifact 传递。模型只能提出结构化方案或代码内容；路径检查、写入、回滚、源码指纹和结果校验都由 Go harness 完成。
@@ -350,6 +359,19 @@ Benchmark Harness 的信任边界不是“模型说成功”，而是：
 它的关键边界是：模型只提出 editable 文件候选，Go harness 冻结 evaluator、benchmark、命令、指标、搜索预算和验证次数；eval/guard 直接引用的小型源码只读进入诊断上下文，数据文件不进入。候选必须给出失败用例到修改点的调用路径诊断。退化候选恢复到上一个最佳版本，最终结果必须按声明的 1 至 5 次重复运行并与 TrialLedger 对齐。当前最多 8 个 Trial、最长 3600 秒，每轮最多修改 3 个已有白名单文件。
 
 前端在现有 DAG、SSE 日志和 Artifact 面板上增加了 AutoResearch “实验”视图：展示 baseline/best、指标趋势、Keep/Reject、耗时、调用路径诊断、假设、候选文件哈希与命令资源摘要，并支持全屏及窄屏布局。重复验证报告还保存逐次分数、均值、总体标准差和失败率；当前不保存完整逐轮源码，所以还没有逐行 diff。完整模块文档见 [`autoresearch/`](autoresearch/)。
+
+### 10.1 数据与配置 AutoResearch
+
+用户上传数据并明确要求搜索方法、模块或超参数时，系统仍使用 `AutoResearch` 意图，但生成另一条固定主链：
+
+```text
+数据适配 -> 冻结 ExperimentSpec -> 创建运行时 -> 安装依赖
+    -> 方法/参数候选树 Keep/Reject -> Holdout 重复验收 -> 证据报告
+```
+
+`experimentDomainAdapter` 是领域边界。内置 `retrieval.v1` 能从语料、带标注查询和可选关系边自动生成契约；`portable.v1` 能加载任意论文领域上传的 `experiment.json`、evaluator 和数据。通用 Go Harness 不包含检索知识，只读取有限候选空间和 argv 命令，每次写一个候选配置后执行冻结 evaluator。
+
+一级候选是不同方法的默认配置，子候选一次只改变一个参数。`ExperimentTrialLedger` 同时保存冻结的 `strategy_space` 和真实 Trial；每个 Trial 记录 `parent_id`、`depth`、`changed_parameter`、完整参数、实际指标和 Keep/Reject 原因。前端据此生成可交互的策略树、候选详情和执行时间线，并把达到目标后未运行的参数分支显示为已剪枝。Search 只读取公开调参集；最终节点在独立 Holdout 文件上同时重跑 baseline 与最佳候选，并要求数据和 evaluator 哈希保持不变。完整协议见 [`autoresearch/09_general_scientific_autoresearch.md`](autoresearch/09_general_scientific_autoresearch.md)。
 
 ## 11. 文件上传与数据流
 
@@ -479,6 +501,7 @@ make eval
 - `docker-sandbox/internal/**/**_test.go`：容器策略与安全
 - `examples/paper-reproduction/`：可运行的论文复现链路验收
 - `examples/autoresearch/intent_router/`：冻结 evaluator 的轻量 AutoResearch 基线
+- `examples/scientific-autoresearch/retrieval/`：通用配置搜索内核的真实检索 Adapter 实验
 
 ## 17. 扩展方式
 
@@ -488,6 +511,8 @@ make eval
 2. 明确 `required_artifacts`、`output_artifacts` 和 `allowed_tools`。
 3. 在 Routed Task Executor 或对应 Agent 中实现执行逻辑。
 4. 为契约校验、成功、失败和 Artifact 传播补测试。
+
+新增科研领域优先实现 `experimentDomainAdapter`，或提供 Portable `experiment.json`，而不是复制一套搜索循环。Adapter 只负责数据映射、有限策略空间与 evaluator；预算、候选谱系、Keep/Reject、哈希和 Holdout 由通用 Harness 负责。
 
 ### 新增 Agent
 
@@ -516,7 +541,8 @@ make eval
 - Python 意图微服务尚未接入默认主链。
 - 默认容器可联网，Docker Socket 仍是高权限边界。
 - 论文完整复现和任意仓库 Benchmark 都不保证成功，系统只对实际执行证据负责。
-- AutoResearch 当前要求显式 ResearchSpec；保护文件哈希不能替代隐藏测试集、防数据泄漏评测服务或人工科研判断。
+- 代码候选 AutoResearch 要求显式 ResearchSpec；配置候选可使用 Portable Adapter，但除检索外尚不能保证从任意论文和数据零配置生成可靠 Adapter。
+- 保护文件哈希不能替代独立评测服务、防数据泄漏审计、多 seed 或人工科研判断；预算内最佳也不等于全局最优。
 
 面向生产部署的优先演进顺序应是：强认证与租户隔离、数据库和对象存储、异步任务队列、沙箱服务独立主机化、资源配额与生命周期清理，最后再考虑水平扩展 Planner 和 Agent。
 

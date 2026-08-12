@@ -5,6 +5,9 @@ import '@xyflow/react/dist/style.css';
 import '../src/index.css';
 
 import lightRagResult from '../../examples/autoresearch/real_repositories/results/2026-08-10_lightrag_target_stop_e2e.json';
+import progressiveAblationPlan from './fixtures/progressive-ablation-plan.json';
+import scientificExperimentLedger from './fixtures/scientific-autoresearch-ledger.json';
+import scientificExperimentValidation from './fixtures/scientific-autoresearch-validation.json';
 import type { ExecutionDisplayMode } from '../src/app/hooks/useScholarRuntime';
 import { LeftWorkspaceChat } from '../src/app/components/LeftWorkspace';
 import type { IntentContext, PlanGraph, Task } from '../src/contracts/api';
@@ -12,7 +15,7 @@ import { ExecutionSidebar } from '../src/features/execution/ExecutionSidebar';
 import { GraphPanel } from '../src/features/plan-graph/GraphPanel';
 import { buildGraphLayout, graphTaskToTask } from '../src/features/plan-graph/buildGraphLayout';
 
-type PreviewMode = 'dashboard' | 'run' | 'validation';
+type PreviewMode = 'dashboard' | 'run' | 'validation' | 'ablation' | 'experiment' | 'experiment-validation';
 
 const rawPlanGraph = lightRagResult.plan_graph as unknown as PlanGraph;
 const planGraph: PlanGraph = {
@@ -33,6 +36,46 @@ const findTask = (type: string): Task => {
 
 const runTask = findTask('autoresearch_run');
 const validationTask = findTask('autoresearch_validate');
+const ablationTask: Task = {
+  ID: 'ablation-design-preview',
+  Name: '设计受限 RAG 消融实验',
+  Type: 'ablation_design',
+  Description: '在 45 分钟预算内选择三组高价值消融。',
+  AssignedTo: 'data_agent',
+  Status: 'completed',
+  Dependencies: [],
+  Inputs: {
+    ablation_max_experiments: 3,
+    ablation_max_gpu_minutes: 20,
+    ablation_max_wall_minutes: 45,
+  },
+  Result: JSON.stringify(progressiveAblationPlan),
+  StructuredData: JSON.stringify(progressiveAblationPlan),
+};
+const experimentTask: Task = {
+  ID: 'scientific-autoresearch-preview',
+  Name: '运行方法与超参数自动研究',
+  Type: 'experiment_run',
+  Description: '在冻结的工业检索数据上按 NDCG@1 搜索方法与参数。',
+  AssignedTo: 'research_coding_agent',
+  Status: 'completed',
+  Dependencies: [],
+  Inputs: { experiment_max_trials: 6, experiment_target_score: 0.6 },
+  Result: JSON.stringify(scientificExperimentLedger),
+  StructuredData: JSON.stringify(scientificExperimentLedger),
+};
+const experimentValidationTask: Task = {
+  ID: 'scientific-autoresearch-validation-preview',
+  Name: '验证最佳实验候选',
+  Type: 'experiment_validate',
+  Description: '在搜索过程未使用的 Holdout 上启动两个新进程复验。',
+  AssignedTo: 'research_coding_agent',
+  Status: 'completed',
+  Dependencies: [experimentTask.ID],
+  Inputs: { experiment_validation_runs: 2 },
+  Result: JSON.stringify(scientificExperimentValidation),
+  StructuredData: JSON.stringify(scientificExperimentValidation),
+};
 const previewMode = (new URLSearchParams(window.location.search).get('view') || 'dashboard') as PreviewMode;
 const noOp = () => undefined;
 
@@ -79,8 +122,35 @@ export function RuntimePreview() {
   const initialLayout = useMemo(() => buildGraphLayout(planGraph), []);
   const [nodes, , onNodesChange] = useNodesState(initialLayout.nodes);
   const [edges, , onEdgesChange] = useEdgesState(initialLayout.edges);
-  const [displayMode, setDisplayMode] = useState<ExecutionDisplayMode>(previewMode === 'validation' ? 'trials-expanded' : 'trials');
+  const [displayMode, setDisplayMode] = useState<ExecutionDisplayMode>(
+    previewMode === 'validation' || previewMode === 'experiment' || previewMode === 'experiment-validation'
+      ? 'trials-expanded'
+      : previewMode === 'ablation' ? 'ablation-expanded' : 'trials',
+  );
   const logsEndRef = useRef<HTMLDivElement>(null);
+
+  if (previewMode === 'ablation') {
+    const state = taskState(ablationTask);
+    return (
+      <main className="flex h-screen overflow-hidden bg-slate-100">
+        <ExecutionSidebar
+          selectedTask={ablationTask}
+          width="100%"
+          isExecuting={false}
+          displayMode={displayMode}
+          executionLogs="[ToT] expanded 5 roots and 3 child branches"
+          executionResult={state.result}
+          executionCode={state.code}
+          executionStructuredData={state.structuredData}
+          executionImage={state.image}
+          logsEndRef={logsEndRef}
+          onClose={noOp}
+          onExecute={noOp}
+          onChangeDisplayMode={setDisplayMode}
+        />
+      </main>
+    );
+  }
 
   if (previewMode === 'validation') {
     const state = taskState(validationTask);
@@ -92,6 +162,32 @@ export function RuntimePreview() {
           isExecuting={false}
           displayMode={displayMode}
           executionLogs="[Validation] hidden holdout completed: 3/3 runs passed"
+          executionResult={state.result}
+          executionCode={state.code}
+          executionStructuredData={state.structuredData}
+          executionImage={state.image}
+          logsEndRef={logsEndRef}
+          onClose={noOp}
+          onExecute={noOp}
+          onChangeDisplayMode={setDisplayMode}
+        />
+      </main>
+    );
+  }
+
+  if (previewMode === 'experiment' || previewMode === 'experiment-validation') {
+    const task = previewMode === 'experiment' ? experimentTask : experimentValidationTask;
+    const state = taskState(task);
+    return (
+      <main className="flex h-screen overflow-hidden bg-slate-100">
+        <ExecutionSidebar
+          selectedTask={task}
+          width="100%"
+          isExecuting={false}
+          displayMode={displayMode}
+          executionLogs={previewMode === 'experiment'
+            ? '[Experiment] baseline=0.4000\n[Trial 3] keep graph_hybrid=0.6000\n[Experiment] target_score_reached'
+            : '[Validation] holdout baseline=0.3333 candidate=0.6667 passed=2/2'}
           executionResult={state.result}
           executionCode={state.code}
           executionStructuredData={state.structuredData}

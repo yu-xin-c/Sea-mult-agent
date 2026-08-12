@@ -49,7 +49,9 @@ func (p *Planner) BuildPlan(ctx context.Context, intent models.IntentContext) (*
 
 	var nodes []*models.TaskNode
 	var err error
-	if isCustomDatasetBenchmarkIntent(intent) {
+	if isDatasetExperimentIntent(intent) {
+		nodes = buildDatasetExperimentNodes(intent)
+	} else if isCustomDatasetBenchmarkIntent(intent) {
 		nodes = buildCustomDatasetBenchmarkNodes(intent)
 	} else if isAutoResearchIntent(intent) {
 		nodes = buildAutoResearchNodes(intent)
@@ -73,7 +75,11 @@ func (p *Planner) BuildPlan(ctx context.Context, intent models.IntentContext) (*
 		case "Custom_Benchmark":
 			nodes = buildCustomDatasetBenchmarkNodes(intent)
 		case "AutoResearch":
-			nodes = buildAutoResearchNodes(intent)
+			if isDatasetExperimentIntent(intent) {
+				nodes = buildDatasetExperimentNodes(intent)
+			} else {
+				nodes = buildAutoResearchNodes(intent)
+			}
 		default:
 			nodes = buildGeneralNodesV2(intent)
 		}
@@ -83,7 +89,12 @@ func (p *Planner) BuildPlan(ctx context.Context, intent models.IntentContext) (*
 	fillInitialStatuses(nodes)
 	plan.Nodes = nodes
 	plan.Edges = edges
-	if isAutoResearchIntent(intent) {
+	if isDatasetExperimentIntent(intent) {
+		inputs := buildDatasetExperimentInputs(intent)
+		if wallSeconds, ok := inputs["experiment_max_wall_seconds"].(int); ok {
+			plan.Budget.MaxDurationSec = wallSeconds + 900
+		}
+	} else if isAutoResearchIntent(intent) {
 		inputs := buildAutoResearchInputs(intent)
 		if wallSeconds, ok := inputs["autoresearch_max_wall_seconds"].(int); ok {
 			plan.Budget.MaxDurationSec = wallSeconds + 900
@@ -322,6 +333,182 @@ func allowedToolsForAgent(agent string) []string {
 	default:
 		return []string{"conversation.respond"}
 	}
+}
+
+func buildDatasetExperimentNodes(intent models.IntentContext) []*models.TaskNode {
+	context := intent.RawIntent
+	inputs := buildDatasetExperimentInputs(intent)
+	prepareData := newNode(
+		"Adapt Research Dataset",
+		"experiment_dataset_prepare",
+		"research_coding_agent",
+		nil,
+		nil,
+		[]string{"workspace_path", "experiment_dataset_manifest", "experiment_dataset_report"},
+		false,
+		context,
+	)
+	prepareData.Inputs = copyBenchmarkInputs(inputs)
+	prepareData.Inputs["uploaded_files"] = intent.Entities["uploaded_files"]
+
+	freeze := newNode(
+		"Freeze Experiment Search Contract",
+		"experiment_spec",
+		"research_coding_agent",
+		[]string{prepareData.ID},
+		[]string{"workspace_path", "experiment_dataset_manifest"},
+		[]string{"experiment_spec", "experiment_spec_report", "dependency_spec"},
+		false,
+		context,
+	)
+	freeze.Inputs = copyBenchmarkInputs(inputs)
+
+	prepareRuntime := newNode(
+		"Prepare Experiment Runtime",
+		"prepare_runtime",
+		"sandbox_agent",
+		[]string{freeze.ID},
+		[]string{"workspace_path", "dependency_spec"},
+		[]string{"runtime_session"},
+		false,
+		context,
+	)
+	install := newNode(
+		"Install Experiment Dependencies",
+		"install_dependencies",
+		"sandbox_agent",
+		[]string{prepareRuntime.ID},
+		[]string{"workspace_path", "runtime_session", "dependency_spec"},
+		[]string{"prepared_runtime", "dependency_install_report"},
+		false,
+		context,
+	)
+	run := newNode(
+		"Run Bounded Experiment Search",
+		"experiment_run",
+		"research_coding_agent",
+		[]string{install.ID},
+		[]string{"workspace_path", "prepared_runtime", "experiment_spec"},
+		[]string{"experiment_trial_ledger", "experiment_best_candidate", "experiment_run_report"},
+		false,
+		context,
+	)
+	run.Inputs = copyBenchmarkInputs(inputs)
+	if wallSeconds, ok := inputs["experiment_max_wall_seconds"].(int); ok {
+		run.TimeoutSeconds = wallSeconds + 30
+	}
+	validate := newNode(
+		"Validate Best Experiment On Holdout",
+		"experiment_validate",
+		"research_coding_agent",
+		[]string{run.ID},
+		[]string{"workspace_path", "prepared_runtime", "experiment_spec", "experiment_trial_ledger", "experiment_best_candidate"},
+		[]string{"experiment_validation_report", "experiment_best_metrics"},
+		false,
+		context,
+	)
+	validate.RetryLimit = 0
+	report := newNode(
+		"Summarize Scientific Research Evidence",
+		"verify_result",
+		"data_agent",
+		[]string{validate.ID},
+		[]string{"experiment_dataset_report", "experiment_spec_report", "experiment_run_report", "experiment_trial_ledger", "experiment_validation_report", "experiment_best_metrics"},
+		[]string{"evaluation_report"},
+		false,
+		context,
+	)
+	return []*models.TaskNode{prepareData, freeze, prepareRuntime, install, run, validate, report}
+}
+
+func isDatasetExperimentIntent(intent models.IntentContext) bool {
+	if intent.Entities == nil || intent.Entities["uploaded_files"] == nil {
+		return false
+	}
+	if boolEntity(intent.Entities, "needs_dataset_research") {
+		return true
+	}
+	if !isAutoResearchIntent(intent) {
+		return false
+	}
+	normalized := strings.ToLower(intent.RawIntent)
+	return hasAny(normalized,
+		"策略", "超参数", "参数搜索", "方法选择", "最优方法", "最优配置", "自动调优",
+		"strategy", "hyperparameter", "parameter search", "method selection", "best config",
+		"rag", "retrieval", "bm25", "graphrag", "检索",
+	)
+}
+
+func buildDatasetExperimentInputs(intent models.IntentContext) map[string]any {
+	maxTrials := boundedIntentNumber(intent.RawIntent, []string{
+		`(?i)(?:最多|最大|max(?:imum)?)\s*(\d+)\s*(?:次|轮|个)?\s*(?:试验|实验|trials?|experiments?|候选)`,
+	}, 12, 1, 40)
+	maxWallMinutes := boundedIntentNumber(intent.RawIntent, []string{
+		`(?i)(?:总耗时|总时长|wall(?:[- ]?time)?|时间预算|预算)\s*(?:不超过|最多|[:：]?)?\s*(\d+)\s*(?:minutes?|分钟)`,
+	}, 15, 1, 60)
+	validationRuns := boundedIntentNumber(intent.RawIntent, []string{
+		`(?i)(?:重复验证|独立复验|重复复验|validation\s+runs?)\s*(?:最多|不超过|[:：=]?)?\s*(\d+)\s*(?:次|轮|runs?)?`,
+	}, 3, 1, 5)
+	inputs := map[string]any{
+		"experiment_max_trials":       maxTrials,
+		"experiment_max_wall_seconds": maxWallMinutes * 60,
+		"experiment_validation_runs":  validationRuns,
+	}
+	if domain := strings.TrimSpace(stringEntity(intent.Entities, "research_domain", "")); domain != "" {
+		inputs["research_domain"] = domain
+	}
+	if adapter := strings.TrimSpace(stringEntity(intent.Entities, "experiment_adapter", "")); adapter != "" {
+		inputs["experiment_adapter"] = adapter
+	}
+	if value, ok := optionalIntentFloat(intent.RawIntent, []string{
+		`(?i)(?:目标(?:分数|指标)?|target(?:\s+score)?|bench(?:mark)?(?:\s+score)?)\s*(?:达到|为|是|[:：=]|>=)?\s*([-+]?(?:\d+(?:\.\d+)?|\.\d+))`,
+	}); ok {
+		inputs["experiment_target_score"] = value
+	}
+	if value, ok := optionalIntentFloat(intent.RawIntent, []string{
+		`(?i)(?:holdout|隐藏集|留出集)(?:\s*目标|\s*target)?\s*(?:达到|为|是|[:：=]|>=)?\s*([-+]?(?:\d+(?:\.\d+)?|\.\d+))`,
+	}); ok {
+		inputs["experiment_holdout_target_score"] = value
+	}
+	if value, ok := optionalBoundedIntentNumber(intent.RawIntent, []string{
+		`(?i)(?:top[_ -]?k|cutoff|召回深度|检索条数)\s*(?:为|是|[:：=])?\s*(\d+)`,
+	}, 1, 100); ok {
+		inputs["experiment_cutoff"] = value
+	}
+	normalized := strings.ToLower(intent.RawIntent)
+	if matches := regexp.MustCompile(`(?i)\b(ndcg|recall|mrr)\s*@\s*(\d+)`).FindStringSubmatch(intent.RawIntent); len(matches) == 3 {
+		metric := strings.ToLower(matches[1])
+		if metric == "ndcg" || metric == "recall" {
+			metric += "_at_k"
+		}
+		inputs["experiment_metric"] = metric
+		if _, exists := inputs["experiment_cutoff"]; !exists {
+			if cutoff, err := strconv.Atoi(matches[2]); err == nil && cutoff >= 1 && cutoff <= 100 {
+				inputs["experiment_cutoff"] = cutoff
+			}
+		}
+	}
+	for _, metric := range []string{"ndcg_at_k", "recall_at_k", "mrr"} {
+		if _, exists := inputs["experiment_metric"]; !exists && strings.Contains(normalized, metric) {
+			inputs["experiment_metric"] = metric
+			break
+		}
+	}
+	return inputs
+}
+
+func optionalIntentFloat(value string, patterns []string) (float64, bool) {
+	for _, pattern := range patterns {
+		matches := regexp.MustCompile(pattern).FindStringSubmatch(value)
+		if len(matches) < 2 {
+			continue
+		}
+		parsed, err := strconv.ParseFloat(matches[1], 64)
+		if err == nil {
+			return parsed, true
+		}
+	}
+	return 0, false
 }
 
 func buildAutoResearchNodes(intent models.IntentContext) []*models.TaskNode {
@@ -1415,6 +1602,13 @@ func bilingualTaskName(name string) string {
 
 func exactTaskNameTranslations() map[string]string {
 	return map[string]string{
+		"Adapt Research Dataset":                                        "适配研究数据集",
+		"Freeze Experiment Search Contract":                             "冻结实验搜索契约",
+		"Prepare Experiment Runtime":                                    "准备实验运行环境",
+		"Install Experiment Dependencies":                               "安装实验依赖",
+		"Run Bounded Experiment Search":                                 "运行受限实验搜索",
+		"Validate Best Experiment On Holdout":                           "在留出集验收最佳实验",
+		"Summarize Scientific Research Evidence":                        "汇总自动研究证据",
 		"Profile Uploaded Dataset":                                      "分析上传数据集",
 		"Retrieve Benchmark Repository":                                 "获取评测目标仓库",
 		"Prepare Benchmark Workspace":                                   "准备评测工作区",
@@ -1559,6 +1753,10 @@ func validateCriticalNodeContracts(intent models.IntentContext, nodes []*models.
 	hasAutoResearchSpec := false
 	hasAutoResearchRun := false
 	hasAutoResearchValidation := false
+	hasExperimentDataset := false
+	hasExperimentSpec := false
+	hasExperimentRun := false
+	hasExperimentValidation := false
 
 	for _, node := range nodes {
 		if node == nil {
@@ -1566,6 +1764,26 @@ func validateCriticalNodeContracts(intent models.IntentContext, nodes []*models.
 		}
 
 		switch node.Type {
+		case "experiment_dataset_prepare":
+			hasExperimentDataset = true
+			if node.AssignedTo != "research_coding_agent" || !containsArtifact(node.OutputArtifacts, "workspace_path") || !containsArtifact(node.OutputArtifacts, "experiment_dataset_manifest") {
+				return fmt.Errorf("experiment_dataset_prepare node %q must output a workspace and dataset manifest", node.Name)
+			}
+		case "experiment_spec":
+			hasExperimentSpec = true
+			if node.AssignedTo != "research_coding_agent" || !containsArtifact(node.RequiredArtifacts, "experiment_dataset_manifest") || !containsArtifact(node.OutputArtifacts, "experiment_spec") || !containsArtifact(node.OutputArtifacts, "dependency_spec") {
+				return fmt.Errorf("experiment_spec node %q has an incomplete frozen contract", node.Name)
+			}
+		case "experiment_run":
+			hasExperimentRun = true
+			if node.AssignedTo != "research_coding_agent" || !containsArtifact(node.RequiredArtifacts, "prepared_runtime") || !containsArtifact(node.RequiredArtifacts, "experiment_spec") || !containsArtifact(node.OutputArtifacts, "experiment_trial_ledger") {
+				return fmt.Errorf("experiment_run node %q has an incomplete execution contract", node.Name)
+			}
+		case "experiment_validate":
+			hasExperimentValidation = true
+			if node.AssignedTo != "research_coding_agent" || !containsArtifact(node.RequiredArtifacts, "experiment_trial_ledger") || !containsArtifact(node.RequiredArtifacts, "experiment_best_candidate") || !containsArtifact(node.OutputArtifacts, "experiment_validation_report") {
+				return fmt.Errorf("experiment_validate node %q has an incomplete validation contract", node.Name)
+			}
 		case "generate_code":
 			hasGeneratedCode = true
 			if node.AssignedTo != "coder_agent" {
@@ -1720,8 +1938,12 @@ func validateCriticalNodeContracts(intent models.IntentContext, nodes []*models.
 		}
 	}
 	if intent.IntentType == "AutoResearch" {
-		if !hasRepoDiscovery || !hasRepoPrepare || !hasAutoResearchSpec || !hasPrepareRuntime || !hasInstallDependencies || !hasAutoResearchRun || !hasAutoResearchValidation {
-			return fmt.Errorf("AutoResearch plan is missing one or more required canonical nodes")
+		if isDatasetExperimentIntent(intent) {
+			if !hasExperimentDataset || !hasExperimentSpec || !hasPrepareRuntime || !hasInstallDependencies || !hasExperimentRun || !hasExperimentValidation {
+				return fmt.Errorf("dataset AutoResearch plan is missing one or more required canonical nodes")
+			}
+		} else if !hasRepoDiscovery || !hasRepoPrepare || !hasAutoResearchSpec || !hasPrepareRuntime || !hasInstallDependencies || !hasAutoResearchRun || !hasAutoResearchValidation {
+			return fmt.Errorf("repository AutoResearch plan is missing one or more required canonical nodes")
 		}
 	}
 

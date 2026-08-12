@@ -408,6 +408,13 @@ func buildRuleIntentContext(rawIntent string) models.IntentContext {
 	}
 	if intentType == "AutoResearch" {
 		context.Entities["needs_autoresearch"] = true
+		if containsAny(rawIntent, []string{"rag", "RAG", "retrieval", "BM25", "GraphRAG", "检索", "知识库问答"}) {
+			context.Entities["needs_dataset_research"] = true
+			context.Entities["research_domain"] = "retrieval"
+			context.Entities["experiment_adapter"] = "retrieval.v1"
+		} else if containsAny(rawIntent, []string{"上传数据", "数据集", "策略", "超参数", "参数搜索", "方法选择", "最优配置", "strategy", "hyperparameter", "parameter search"}) {
+			context.Entities["needs_dataset_research"] = true
+		}
 		if match := routeRepositoryRevisionRe.FindStringSubmatch(rawIntent); len(match) > 1 {
 			context.Entities["repository_revision"] = strings.ToLower(match[1])
 		}

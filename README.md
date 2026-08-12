@@ -2,7 +2,7 @@
 
 # Sea-Mult-Agent
 
-**ScholarAgent: 从论文理解到沙箱实验的多智能体科研执行系统**
+**ScholarAgent: 面向论文复现与预算受限自动研究的多智能体科研执行系统**
 
 [![Go](https://img.shields.io/badge/Go-1.26.1-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=111827)](https://react.dev/)
@@ -16,9 +16,11 @@
 
 ![ScholarAgent beginner-friendly workflow](ScholarAgentOverview.png)
 
-Sea-Mult-Agent 面向论文复现、自有数据仓库评测和受限自动实验。Intent Router 与 Planner 把用户目标转换为经过校验的 DAG，Scheduler 通过类型化 Artifact 把节点路由给 Librarian、Coder、Research Coding 和 Data 等专业 Agent；模型负责理解问题和提出候选，Go Harness 负责文件写入、真实执行、指标判定、回滚与最终验收。日志、状态和结构化证据通过 SSE 返回工作台。
+Sea-Mult-Agent 面向论文复现、自有数据评测和预算受限的 Scientific AutoResearch。用户可以给出论文仓库，也可以上传自己的研究数据、评测目标和候选方法空间；系统在固定指标与预算下自动尝试代码补丁或方法/超参数配置，真实执行后 Keep/Reject，达到目标即停止，并在 Holdout 上复验最佳候选。RAG 只是首个内置领域 Adapter，不是项目边界。
 
-总图先用五个步骤说明系统如何完成一次复现，可编辑源文件见 [ArchitectureDiagram.drawio](ArchitectureDiagram.drawio)，完整组件边界见[项目架构文档](scholar-agent/docs/project_architecture.md)。其中 Native Docker 是当前默认执行引擎；OpenSandbox 仅为可选 fallback，BERT/Qwen 意图模型也未接入默认生产请求链。
+Intent Router 与 Planner 把目标转换为经过校验的 DAG，Scheduler 通过类型化 Artifact 路由给 Librarian、Coder、Research Coding 和 Data 等专业 Agent。模型负责论文理解、仓库适配和提出可证伪候选；确定性 Go Harness 掌握数据/evaluator 哈希、文件写入、真实执行、指标判定、回滚、预算和最终验收。日志、状态和结构化证据通过 SSE 返回工作台。
+
+总图用五个步骤说明系统如何完成一次复现或预算受限自动研究，可编辑源文件见 [ArchitectureDiagram.drawio](ArchitectureDiagram.drawio)，完整组件边界见[项目架构文档](scholar-agent/docs/project_architecture.md)。其中 Native Docker 是当前默认执行引擎；OpenSandbox 仅为可选 fallback，BERT/Qwen 意图模型也未接入默认生产请求链。
 
 > [!NOTE]
 > 本项目目前是具备持久化、恢复、审批、预算和受限沙箱能力的单机研究原型，不是已完成多租户安全认证的生产服务。Docker 沙箱仍具有较高宿主机权限，部署前请阅读[项目状态与安全说明](#project-status)。
@@ -35,11 +37,13 @@ Sea-Mult-Agent 面向论文复现、自有数据仓库评测和受限自动实�
 | **专业 Agent 路由** | 根据任务类型路由到 Chat、Librarian、Coder、Research Coding 或 Data；沙箱作为确定性执行服务独立运行 |
 | **真实隔离执行** | 通过独立 Go 沙箱服务调用原生 Docker，支持持久工作区与产物回传 |
 | **仓库优先的论文复现** | 发现或使用指定 GitHub 仓库，准备依赖并运行受控 smoke 实验 |
-| **预算受限的消融设计** | ToT 评估参数、模块、数据规模、随机种子和运行成本候选，只执行预算内的高价值组合 |
+| **预算受限的消融设计** | 两层 ToT 先比较参数、模块、数据、种子和成本方向，再细化高价值父分支；Go 校验谱系并只选择预算内组合 |
 | **研究材料上传** | 在工作台附加论文、配置、笔记和小型数据文件，按用户隔离并传入复现流程 |
 | **科研仓库 Coding Agent** | 对论文代码做受限调试、补丁回滚和重跑，也能为自有数据生成仓库 Benchmark 适配器 |
 | **自有数据仓库评测** | Research Coding Agent 生成受限适配器，经 8 条预检、ReAct 修复和指标重算后运行用户数据 |
 | **受限 AutoResearch 循环** | 冻结仓库提交、评测器与数据，只允许修改白名单文件；重复测量后 Keep/Reject、退化回滚、目标分数停止，并隐藏复验最佳候选 |
+| **通用实验配置搜索** | 通过 `experiment.spec/v1` 描述方法分支与参数有限域，按真实指标生成结果驱动候选树；支持内置领域 Adapter 或任意论文的 Portable Adapter |
+| **检索/RAG 示例 Adapter** | 上传语料、查询与相关文档标注后，自动比较 BM25、TF-IDF、RRF 和显式关系边图增强检索；它是通用协议示例，不是产品边界 |
 | **逐主张复现验收** | 实验前冻结分层 Rubric，实验后把论文主张、判定准则与真实 Artifact 绑定成可视化证据图 |
 | **实时可观测执行** | SSE 推送计划、节点、日志和 Artifact 事件，前端同步展示执行状态 |
 | **可靠执行与治理** | 任务租约、迟到结果隔离、取消/重试、持久化恢复、预算和人工审批 |
@@ -120,6 +124,27 @@ Attention Is All You Need，使用 smoke 模式运行轻量注意力消融，
 
 ### Run Bounded AutoResearch
 
+AutoResearch 有两个入口：论文仓库的代码候选模式，以及自有数据的方法/配置候选模式。
+
+#### Search Methods And Hyperparameters On Your Data
+
+例如在 Web UI 上传带 `id/text/links` 的语料，以及带 `query/relevant_doc_ids/split` 的评测问题后输入：
+
+```text
+请在这批工业数据上做自动研究，比较 RAG 检索策略和超参数。
+固定 NDCG@1，最多 6 次实验，总时长 3 分钟，目标分数 0.60，独立复验 2 次。
+```
+
+系统会执行 `数据适配 -> 冻结方法与参数空间 -> 沙箱 -> 候选搜索 -> Holdout -> 报告`。一级候选比较方法，子候选一次只改变一个参数；每轮都保存父节点、完整配置、真实指标和 Keep/Reject 原因。非检索论文可以上传 `experiment.json`、领域 evaluator 和数据，通过 Portable Adapter 复用同一 Harness。
+
+真实轻量示例中，固定 `NDCG@1` 后，BM25 baseline 为 `0.4000`，图增强分支在第 3 个候选达到 `0.6000` 并停止；未参与搜索的 Holdout 从 `0.3333` 提升到 `0.6667`，两个新进程通过 `2/2`。详见[检索 Adapter 示例](scholar-agent/examples/scientific-autoresearch/retrieval/)和[通用 Scientific AutoResearch 协议](scholar-agent/docs/autoresearch/09_general_scientific_autoresearch.md)。这表示“给定候选空间与预算内观察到的最佳结果”，不表示全局最优。
+
+![Scientific AutoResearch candidate search](scholar-agent/docs/assets/scientific-autoresearch-search.png)
+
+这不是单独绘制的示意图，而是产品中的交互式候选搜索视图。后端把冻结的方法/参数空间和真实 Trial 谱系写入 `experiment.ledger/v1`；前端按“冻结空间、建立基线、展开方法、细化参数、Holdout 验收”展示进度。用户可以点击任一分支查看完整配置、指标、耗时和 Keep/Reject 原因，也可以切换到时间线核对真实执行顺序。上图中 BM25 是基线，TF-IDF 与普通 RRF 被 Reject，`graph_hybrid` 提升后 Keep；达到目标后尚未执行的参数候选会明确标记为已剪枝。对应的搜索/隐藏集分离与 `2/2` 复验界面见[完整协议文档](scholar-agent/docs/autoresearch/09_general_scientific_autoresearch.md)。
+
+#### Optimize A Paper Repository
+
 仓库中准备 `autoresearch.spec/v1` 配置后，在 Web UI 输入：
 
 ```text
@@ -137,7 +162,7 @@ Attention Is All You Need，使用 smoke 模式运行轻量注意力消融，
 |---|---|---|
 | [karpathy/autoresearch](https://github.com/karpathy/autoresearch) | 小改动、固定预算、真实指标以及 Keep/Reject 循环 | 核心循环已实现，并扩展为跨仓库 ResearchSpec、多文件白名单、回滚和 TrialLedger |
 | [ReAct](https://arxiv.org/abs/2210.03629) | 错误观察、结构化修复动作和重跑 | 已用于依赖安装与 Benchmark 预检；不负责科研指标判定 |
-| [Tree of Thoughts](https://arxiv.org/abs/2305.10601) | 展开多个消融候选，再按信息增益、成本和风险选择 | 已用于轻量消融设计；不接管 AutoResearch 每轮 Keep/Reject |
+| [Tree of Thoughts](https://arxiv.org/abs/2305.10601) | 展开、评估和剪枝多个候选路径 | 论文理解阶段使用两层 ToT 选择高价值消融；配置搜索阶段另有基于真实指标的候选父子树，不把模型私有思维当证据 |
 | [The AI Scientist](https://arxiv.org/abs/2408.06292) | 将想法、代码、实验、可视化和报告连接为长科研链 | 属于端到端方向启发，不宣称全自动科学发现或自动科学真值 |
 | [Agent Laboratory](https://arxiv.org/abs/2501.04227) | 文献、实验和写作阶段的专业 Agent 分工与用户介入 | 专业角色已实现；完整人工审批检查点仍在路线图 |
 | [PaperBench](https://arxiv.org/abs/2504.01848) | 用分层 Rubric 拆解论文复现，并逐项绑定证据 | 已实现 Claim Rubric 与 Claim-to-Evidence Graph；它属于上层复现验收，不替代主指标 |
@@ -146,9 +171,9 @@ Attention Is All You Need，使用 smoke 模式运行轻量注意力消融，
 | [CORE-Bench 2026 analysis](https://arxiv.org/abs/2606.26158) | 从准确率扩展到可靠性、效率、OOD、scaffold 和人机协作 | 已覆盖重复复验和部分资源证据；OOD、多 seed 与人机协作尚未完成 |
 | [MLE-bench](https://arxiv.org/abs/2410.07095) | 同时观察任务效果和计算资源投入 | 已记录命令次数与耗时，尚不包含 GPU、token 和费用账本 |
 | [Microsoft R&D-Agent](https://github.com/microsoft/RD-Agent) | Research/Development 分工，以及多次实验的统计报告方式 | 已输出重复验证的均值、标准差和失败率；当前不会自动注入不同 seed |
-| [Auto-Research-Recipes](https://github.com/cxcscmu/Auto-Research-Recipes) | 任务无关核心、Task Adapter、外部 evaluator 和可发布 Artifact | 已沉淀统一三文件任务包；尚无分支候选 parent lineage |
+| [Auto-Research-Recipes](https://github.com/cxcscmu/Auto-Research-Recipes) | 任务无关核心、Task Adapter、外部 evaluator 和可发布 Artifact | 已实现通用 `experiment.* /v1`、内置/Portable Adapter 与配置候选 lineage；代码补丁模式仍使用线性 TrialLedger |
 | [Arbor](https://github.com/RUC-NLPIR/Arbor) | Coordinator/Executor、想法树、隔离 worktree 和开发/heldout 分离 | 已有隔离工作区和搜索/隐藏验收边界；并行树搜索与 checkpoint 未实现 |
-| [AI Scientist v2](https://github.com/SakanaAI/AI-Scientist-v2) | 渐进式 Agent tree search 与实验管理 | 当前只有线性 TrialLedger、反馈和回滚，不宣称已实现树搜索 |
+| [AI Scientist v2](https://github.com/SakanaAI/AI-Scientist-v2) | 渐进式 Agent tree search 与实验管理 | 消融设计已有两层方案树，但 AutoResearch 代码搜索仍是线性 TrialLedger，不宣称已实现结果驱动树搜索 |
 | [Deep Research Agent Stochasticity](https://arxiv.org/abs/2602.23271) | 独立运行存在方差，需要重复测量和聚合 | baseline 与每个候选已支持重复 evaluator、标准差和方向相关 worst |
 
 这些方法位于不同决策层：ToT 选择高价值消融，ReAct 处理有限故障恢复，AutoResearch 按冻结指标执行 Keep/Reject，PaperBench 风格 Rubric 与证据图负责上层论文验收。完整来源事实、代码落点和过度声明风险见 [AutoResearch 项目介绍](scholar-agent/docs/autoresearch/00_project_introduction.md)与[证据表](scholar-agent/docs/autoresearch/refs/evidence-map.md)。
@@ -192,9 +217,10 @@ Researcher / Paper / Repository / Dataset
          Chat  Librarian    Coder  Research Coding     Data
                     |          |     /       |       \     |
              Claim Rubric   Runtime  Paper  Benchmark  AutoResearch
-                                    Debug    Adapter
-                                      \        |        /
-                                       Go Policy Gate
+                                    Debug    Adapter      |
+                                      \        |     +----+----------------+
+                                       Go Policy Gate  Code Patch   Config Search
+                                                               Domain Adapter
                                    |
               Sandbox Client -> docker-sandbox -> Native Docker
                                    |
@@ -221,7 +247,7 @@ Researcher / Paper / Repository / Dataset
 | **Coder** | 仓库发现、代码准备、依赖分析和修复 |
 | **Sandbox** | 运行时准备、依赖安装与隔离实验执行 |
 | **Data** | 指标汇总、论文声明对比、证据图判定、报告与图表生成 |
-| **Research Coding** | 论文仓库代码调试、受限补丁与重跑、自有数据 Benchmark 适配，以及冻结规格驱动的 AutoResearch 循环 |
+| **Research Coding** | 论文仓库调试、自有数据 Benchmark 适配、代码补丁 AutoResearch，以及由 Domain Adapter 驱动的方法/超参数候选搜索 |
 | **Chat** | 通用问答与轻量任务入口 |
 
 ## API

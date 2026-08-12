@@ -2,24 +2,24 @@
 
 ## 1. 项目定位
 
-ScholarAgent AutoResearch 是 Sea-Mult-Agent 中面向科研代码仓库的受限自动实验子系统。它接收一个已有可运行 baseline 的仓库和显式 `ResearchSpec`，精确冻结仓库提交、白名单文件、guard、evaluator、主指标、重复测量、目标分数和预算。候选只有达到预声明的聚合提升才会保留；失败、退化或越界修改会被拒绝并回滚。搜索结束后，系统脱离候选模型执行最终验证，并区分公开 evaluator 重放与模型不可见 holdout。
+ScholarAgent AutoResearch 是 Sea-Mult-Agent 中面向论文与科研系统的受限自动研究子系统。它把研究任务归一化为两类候选：修改白名单论文源码的 `code_patch`，以及切换方法、模块和超参数的 `strategy_config`。两类流程都会冻结数据、evaluator、主指标、目标和预算；候选只有经过真实执行并达到预声明提升才会保留，搜索结束后还要在未参与选优的 Holdout 上复验。
 
 一句话概括：
 
-> 把“让 Agent 反复改代码”变成一个评测标准不漂移、修改范围受控、过程可追踪、结果可复验的科研实验闭环。
+> 把“让 Agent 自己试方法”变成一个数据与评测不漂移、候选空间受控、过程可追踪、结果可复验的科研实验闭环。
 
 | 项目属性 | 当前内容 |
 |---|---|
 | 所属系统 | Sea-Mult-Agent / ScholarAgent |
-| 主要输入 | Git 仓库、`autoresearch.spec/v1`、可选上传附件 |
+| 主要输入 | 论文/Git 仓库、自有数据、候选方法空间、evaluator、指标和预算 |
 | 主要输出 | TrialLedger、最佳候选、重复验证统计、执行资源证据、可视化实验记录 |
 | 执行环境 | Docker 沙箱；具体任务可使用 CPU 或配置后的 GPU |
-| 当前契约 | `autoresearch.spec/v1`、`autoresearch.ledger/v1`、`autoresearch.validation/v1` |
-| 当前定位 | 可运行研究原型，不是零配置通用 AutoML，也不是全自动科学家 |
+| 当前契约 | 代码模式 `autoresearch.* /v1`；配置模式 `experiment.* /v1` |
+| 当前定位 | 通用受限 AutoResearch 内核 + 领域 Adapter；不是全自动科学家，也不承诺全局最优 |
 
 ## 2. 为什么需要专用 AutoResearch
 
-一次性 Coding Agent 通常以“代码是否修改完成、测试是否通过”为终点。科研优化还需要持续回答四个问题：
+一次性 Coding Agent 通常以“代码是否修改完成、测试是否通过”为终点。通用 AutoML 又常把搜索写死在单一模型族。科研优化还需要持续回答四个问题：
 
 1. 评测器、数据、指标和预算是否在搜索开始前固定。
 2. 失败或退化的修改是否真的恢复到了上一个最佳版本。
@@ -34,14 +34,16 @@ AutoResearch 因此不把 LLM 当作拥有最终决定权的研究者。模型�
 
 架构图提供[可编辑 SVG 源文件](../assets/autoresearch-architecture.svg)。四个区域分别表示确定性编排、冻结研究契约、受限沙箱执行，以及证据与产品界面。
 
-生产计划固定包含仓库发现、工作区准备、规格冻结、运行时创建、依赖安装、候选循环、重复最终验证和证据汇总。即使系统启用了 LLM Planner，模型也不能删除规格冻结或验证节点。
+代码候选计划包含仓库发现、工作区准备、规格冻结、运行时、候选循环和最终验证；配置候选计划包含数据适配、实验契约、运行时、候选搜索、Holdout 和证据汇总。即使系统启用了 LLM Planner，模型也不能删除规格冻结或验证节点。
 
 ## 4. 核心能力
 
 | 模块 | 已实现能力 | 作用 |
 |---|---|---|
-| 确定性规划 | 为明确的 AutoResearch 意图生成固定 8 节点 DAG | 防止模型临时省略安全关键步骤 |
+| 确定性规划 | 为代码候选生成固定 8 节点 DAG，为数据配置候选生成固定 7 节点 DAG | 防止模型临时省略安全关键步骤 |
 | `ResearchSpec` | 声明 commit、editable、protected、命令、指标、方向、阈值、目标、重复次数、依赖和预算 | 在搜索前冻结研究目标和允许范围 |
+| `ExperimentResearchSpec` | 声明领域 Adapter、方法分支、参数有限域、搜索/Holdout 命令、指标和预算 | 让任意领域的配置候选复用同一 Harness |
+| Domain Adapter | 内置 `retrieval.v1` 与可移植 `portable.v1` | 把领域数据和 evaluator 转换为通用实验协议 |
 | Research Coding Agent | 读取有限源码上下文并生成结构化候选 | 把仓库级代码修改交给专用子 Agent |
 | Baseline | 任何模型改动前先运行 guard 和 evaluator | 没有有效基线就不启动搜索 |
 | 候选白名单 | 最多 8 个已有 editable 文件，每轮最多修改 3 个 | 限制修改范围并保持补丁可审阅 |
@@ -50,7 +52,7 @@ AutoResearch 因此不把 LLM 当作拥有最终决定权的研究者。模型�
 | 完整性检查 | 保护文件 SHA-256 与非 editable 工作区指纹 | 发现 evaluator、数据或其他源码的持久篡改 |
 | TrialLedger | 记录假设、命令、耗时、输出摘要、指标、决策、文件哈希和资源摘要 | 让最佳候选来源及执行投入可以追溯 |
 | 重复最终验证 | 不调用候选模型，重新核对哈希并执行 1 至 5 组公开重放或隐藏 holdout | 用逐次结果、均值、标准差和失败率发现漂移，并限制公开测试过拟合的结论 |
-| 前端可视化 | 展示 baseline/best、趋势、Keep/Reject、耗时、补丁和资源摘要 | 用户无需阅读原始 JSON 即可理解实验过程 |
+| 前端可视化 | 展示 baseline/best、趋势、Keep/Reject、补丁或参数父子树、Holdout 和资源摘要 | 用户无需阅读原始 JSON 即可理解实验过程 |
 | 证据链集成 | 可与论文 Rubric、Claim-to-Evidence Graph 和 Benchmark Adapter 协同 | 把局部指标提升放回论文复现和自有数据评测语境 |
 
 ## 5. 借鉴了哪些项目和论文
@@ -61,7 +63,7 @@ AutoResearch 因此不把 LLM 当作拥有最终决定权的研究者。模型�
 |---|---|---|---|
 | [karpathy/autoresearch](https://github.com/karpathy/autoresearch) | 在小型真实训练任务中反复改代码，以固定时长和单一指标比较，提升则保留，否则丢弃 | Baseline、有限候选、固定预算、真实 evaluator、Keep/Reject 和实验账本 | 最直接的循环原型。ScholarAgent 扩展为跨仓库 `ResearchSpec`、多文件白名单、保护文件、DAG 和最终验证 |
 | [ReAct](https://arxiv.org/abs/2210.03629) | 让推理、动作和环境观察交错进行，根据新错误更新下一步行动 | 依赖安装和 Benchmark 预检使用“错误日志 -> 结构化修复动作 -> 重跑”的有限循环 | 只用于局部故障恢复；动作有白名单和次数上限，不保存模型隐藏思维链，也不负责 Keep/Reject |
-| [Tree of Thoughts](https://arxiv.org/abs/2305.10601) | 同时探索多个候选路径，评估后选择、回溯或剪枝 | 轻量消融先生成候选，再按信息增益、相关性、可复现性、时间成本和风险做预算选择 | 只用于实验设计，不进入每一轮 AutoResearch 代码搜索 |
+| [Tree of Thoughts](https://arxiv.org/abs/2305.10601) | 同时探索多个候选路径，评估后选择、回溯或剪枝 | 轻量消融先生成五类一级方向，评分后只细化高价值父分支，再按信息增益、相关性、可复现性、时间成本和风险做预算剪枝 | 两层谱系只用于实验设计，不读取真实 Trial 结果，也不进入每一轮 AutoResearch 代码搜索 |
 | [The AI Scientist](https://arxiv.org/abs/2408.06292) | 将想法、代码、实验、可视化、论文写作和模拟评审连接为开放式科研链 | AutoResearch 的 Artifact 可继续交给结果分析、可视化和报告模块 | 属于端到端方向启发。本项目没有宣称全自动科学发现，也不把自动 reviewer 当作科学真值 |
 | [Agent Laboratory](https://arxiv.org/abs/2501.04227) | 以文献、实验、写作阶段组织研究 Agent，并支持用户在各阶段反馈 | ScholarAgent 使用 Librarian、Coder、Research Coding、Sandbox 和 Data 等专业角色 | 专业分工已经实现；规格审批、扩大 GPU 预算和导出补丁前的完整人工检查点仍在路线图 |
 | [PaperBench](https://arxiv.org/abs/2504.01848) | 用作者参与编写的分层 rubric，将 20 篇论文复现拆成 8,316 个可评分任务 | 论文复现链先冻结 Claim Rubric，再把主张、准则与真实 Artifact 绑定为 Claim-to-Evidence Graph | Rubric 影响上层复现验收，不替代 AutoResearch 内部的冻结主指标 |
@@ -70,9 +72,9 @@ AutoResearch 因此不把 LLM 当作拥有最终决定权的研究者。模型�
 | [CORE-Bench 2026 分析](https://arxiv.org/abs/2606.26158) | 将 Agent 评价从准确率扩展到构念有效性、OOD、效率、可靠性、模型与 scaffold、人机协作 | 重复验证和命令资源证据先覆盖可靠性与效率的一小部分；OOD 和人工协作继续进入路线图 | 不能据此声称完成全面 Agent 评估 |
 | [MLE-bench](https://arxiv.org/abs/2410.07095) | 在真实机器学习工程任务上评测 Agent，并研究不同资源扩展方式 | TrialLedger 与验证报告显式汇总命令数量和耗时 | 只是评价维度借鉴；当前摘要不含 GPU、token 或费用 |
 | [Microsoft R&D-Agent](https://github.com/microsoft/RD-Agent) | 将研究提议与开发实现分工，并对部分公开评测报告多次独立 seed 的均值与标准差 | 最佳候选可重复启动验证进程，报告逐次分数、均值、标准差和失败率 | 当前不会自动切换 seed，不能称为等价多 seed 评测 |
-| [Auto-Research-Recipes](https://github.com/cxcscmu/Auto-Research-Recipes) | 以任务无关核心配合 Task Adapter、外部 evaluator 和发布 Artifact | 真实仓库实验统一为 spec、公开 evaluator、隐藏 holdout 三文件包 | 当前只有线性 TrialLedger，没有分支 parent lineage |
+| [Auto-Research-Recipes](https://github.com/cxcscmu/Auto-Research-Recipes) | 以任务无关核心配合 Task Adapter、外部 evaluator 和发布 Artifact | 真实仓库实验统一为 spec、公开 evaluator、隐藏 holdout 三文件包 | AutoResearch 代码候选仍使用线性 TrialLedger，没有 parent lineage；与消融设计树是不同层 |
 | [Arbor](https://github.com/RUC-NLPIR/Arbor) | Coordinator/Executor、想法树、隔离 worktree、开发与 heldout 分离 | 隔离仓库工作区和公开搜索/隐藏验收边界 | 没有实现并行 worktree、树搜索或 checkpoint |
-| [AI Scientist v2](https://github.com/SakanaAI/AI-Scientist-v2) | 渐进式 Agent tree search 与实验管理 | 候选反馈、TrialLedger 和回滚为后续分支管理打基础 | 当前仍是线性循环，不能称为已实现 tree search |
+| [AI Scientist v2](https://github.com/SakanaAI/AI-Scientist-v2) | 渐进式 Agent tree search 与实验管理 | 两层消融方案树已保存父子谱系；候选反馈、TrialLedger 和回滚为后续代码分支管理打基础 | AutoResearch 仍是线性循环，不能称为已实现结果驱动 tree search |
 | [Stochasticity in Deep Research Agents](https://arxiv.org/abs/2602.23271) | 分析同类研究 Agent 独立执行之间的结果方差 | 搜索 baseline 和每个候选重复测量，保存样本、标准差并保守聚合 | 重放 evaluator 不等价于完整 Agent 多次独立运行 |
 
 更细的来源事实、本地代码落点和风险标记见[项目介绍证据表](refs/evidence-map.md)。
@@ -86,7 +88,7 @@ flowchart LR
     Q["研究目标"] --> T["可选 ToT<br/>选择高价值消融"]
     T --> P["确定性 Planner<br/>冻结 DAG 与预算"]
     P --> R["有限 ReAct<br/>修复依赖或预检错误"]
-    R --> A["AutoResearch<br/>指标驱动 Keep/Reject"]
+    R --> A["AutoResearch<br/>代码补丁或配置候选"]
     A --> V["公开重放 / 隐藏 holdout"]
     V --> C["Rubric + Claim-to-Evidence<br/>解释论文主张覆盖"]
 ```
@@ -95,7 +97,7 @@ flowchart LR
 |---|---|---|
 | ToT 消融设计 | 预算内优先做哪些参数、模块、数据规模、随机种子或成本实验 | 不修改 evaluator，不决定候选代码是否 Keep |
 | ReAct 局部修复 | 根据 pip 或预检错误选择有限修复动作并重跑 | 不展开无界搜索，不改变科研指标 |
-| AutoResearch 循环 | 候选代码是否在冻结指标上真实改善 | 不自动判断论文主张是否成立 |
+| AutoResearch 循环 | 候选代码或方法配置是否在冻结指标上真实改善 | 不自动判断论文主张是否成立，不证明候选空间外的全局最优 |
 | Rubric 与证据图 | 运行 Artifact 是否覆盖论文的分层主张和验收准则 | 不反向篡改搜索阶段的分数 |
 
 ## 7. 相比原始 autoresearch 和通用 Agent 的差异
@@ -120,7 +122,7 @@ flowchart LR
 
 ## 8. 用户如何使用
 
-目标仓库至少需要满足三个条件：有可以执行的 baseline、能够输出结构化主指标的 evaluator，以及一份明确 editable/protected 范围的 `ResearchSpec`。
+用户可以选择两种入口。代码模式要求仓库有可执行 baseline、结构化 evaluator 和明确 editable/protected 范围；配置模式要求带标注的数据、有限方法/参数空间以及搜索和 Holdout evaluator。检索领域可直接上传语料与查询标注，其他领域可上传 Portable Adapter。
 
 示例请求：
 
@@ -160,21 +162,23 @@ flowchart LR
 | `research_validation_report` | 验证模式、逐次状态、搜索/隐藏分数、均值、标准差、失败率、完整性和资源证据 |
 | `research_best_metrics` | 经全部请求轮次验证后发布的主指标与稳定性摘要 |
 
+配置搜索对应输出 `experiment_spec`、`experiment_trial_ledger`、`experiment_best_candidate`、`experiment_validation_report` 和 `experiment_best_metrics`。完整协议与接入方式见[通用 Scientific AutoResearch](09_general_scientific_autoresearch.md)。
+
 ## 9. 当前完成度与可信边界
 
 | 状态 | 能力 |
 |---|---|
-| 已实现 | 固定 DAG、精确 commit、ResearchSpec、上传 spec、重复 baseline/候选测量、目标停止、Keep/Reject、回滚、哈希保护、TrialLedger、公开重放、模型不可见 holdout、命令资源摘要和 Trial 可视化 |
-| 已实现但有前提 | 跨仓库运行要求仓库已有兼容 baseline、evaluator 和明确 spec；GPU 运行要求部署侧配置 Docker GPU 与匹配镜像 |
+| 已实现 | 代码/配置双候选模式、固定 DAG、精确 commit、ResearchSpec、ExperimentSpec、目标停止、Keep/Reject、回滚、哈希保护、TrialLedger、隐藏 Holdout、资源摘要和候选树可视化 |
+| 已实现但有前提 | 跨仓库代码模式要求兼容 baseline 和 spec；任意领域配置模式要求 Portable Adapter；当前仅检索 Adapter 可从数据零配置生成 |
 | 部分实现 | 重复进程验证已记录均值、标准差和失败率，但不会自动切换 seed；执行资源摘要还不是完整 GPU 成本账本；账本按节点结束写入，还不能从任意 Trial 中点恢复 |
 | 尚未实现 | 独立隐藏评测服务、多 seed 统计接受规则、OOD 套件、完整人工检查点、逐行代码 diff 和自动导出 PR |
-| 明确不承诺 | 自动生成科学真值、自动判断一个指标提升即可证明论文、零配置适配任意仓库、已优于通用 Agent |
+| 明确不承诺 | 自动生成科学真值、单一指标即可证明论文、任意论文零配置成功、预算内最佳等于全局最优、已优于通用 Agent |
 
 哈希保护可以证明命令前后持久文件没有变化，但不能单独排除可见测试集过拟合、运行时 monkey patch、侧信道或 GPU 非确定性。高价值实验仍应使用隐藏数据、只读挂载、多 seed、人工审批和独立环境复现。
 
 ## 10. 示例与界面
 
-仓库提供一个不依赖网络、GPU或第三方 Python 包的[意图路由 AutoResearch 示例](../../examples/autoresearch/intent_router/)，用于验证规格、baseline、候选筛选、重复验证和 evaluator 契约；另有通过远端完整 API/Docker 链执行的 [rank-bm25、Tenacity、LightRAG 与 GraphRAG 真实仓库示例](../../examples/autoresearch/real_repositories/)，保留实际 commit、完整 plan graph、公开搜索样本和隐藏验收报告。当前任务包已锁定这些 commit，锁定机制另由 LightRAG 对照验证。前端会在 `autoresearch_run` 节点展示指标趋势、Keep/Reject、目标、耗时、假设、补丁哈希和资源摘要。
+仓库提供一个不依赖网络、GPU或第三方 Python 包的[意图路由 AutoResearch 示例](../../examples/autoresearch/intent_router/)，以及通过远端完整 API/Docker 链执行的 [rank-bm25、Tenacity、LightRAG 与 GraphRAG 真实仓库示例](../../examples/autoresearch/real_repositories/)。配置候选模式另提供[工业检索数据真实轻量实验](../../examples/scientific-autoresearch/retrieval/)，真实比较四个方法分支并通过 Holdout。前端分别展示代码补丁证据或方法/参数候选树。
 
 ![AutoResearch 隐藏验证可视化](../assets/autoresearch-validation-view.jpg)
 
@@ -191,4 +195,4 @@ flowchart LR
 
 ## 11. 可直接使用的项目简介
 
-ScholarAgent AutoResearch 是一个面向科研代码仓库的受限自动实验系统。它借鉴 `karpathy/autoresearch` 的“小改动、固定预算、真实指标、Keep/Reject”循环，并结合 ReAct 的局部错误修复、Tree of Thoughts 的预算内消融设计、PaperBench 的分层 Rubric、CORE-Bench 的专用复现 Agent、Auto-Research-Recipes 的任务适配边界，以及可靠性研究对重复测量的要求。系统通过版本化 ResearchSpec 冻结提交、文件范围、评测器、命令、指标、重复规则、目标和预算，由专用 Research Coding Agent 提出候选，再由确定性 Go harness 在 Docker 沙箱中执行、判定和回滚；每轮实验写入 TrialLedger，最终最佳候选还需通过明确标注的公开重放或模型不可见 holdout。项目的重点不是让 Agent 无边界地“自主科研”，而是让自动实验过程更可控、可追踪、可解释和可复现。
+ScholarAgent AutoResearch 是一个面向论文代码和自有研究数据的受限自动研究系统。它同时支持白名单代码补丁与方法/超参数配置候选：领域 Adapter 把数据、方法空间和 evaluator 转成版本化契约，Research Coding Agent 或确定性候选生成器提出可证伪实验，Go Harness 在 Docker 沙箱中掌握执行、Keep/Reject、回滚、目标停止和 Holdout 验收。系统借鉴 `karpathy/autoresearch` 的真实指标循环、ReAct 的局部修复、Tree of Thoughts 的预算内消融设计、PaperBench 的分层 Rubric、CORE-Bench 的专用复现 Agent和 Auto-Research-Recipes 的 Task Adapter 边界。项目不承诺无边界自主科研，而是让跨论文自动实验逐步变成可适配、可追踪、可解释和可复验的工程流程。

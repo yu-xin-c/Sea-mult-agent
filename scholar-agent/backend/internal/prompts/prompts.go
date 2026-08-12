@@ -74,7 +74,7 @@ func DataPromptInput(input string) string {
 }
 
 const AblationCandidateSystemPrompt = `You design lightweight scientific ablation studies using a bounded Tree of Thoughts.
-Return strict JSON only. Expand no more than eight candidate branches. Every branch must change one factor, keep a baseline, state a falsifiable hypothesis, name measurable metrics, and estimate wall-clock and GPU minutes. Allowed categories are parameter, module, data_scale, seed_stability, and runtime_cost. Do not propose full training when a bounded smoke experiment can answer the question.`
+Return strict JSON only. Propose no more than five first-level branches, ideally one per allowed category. Every branch must change one factor, keep a baseline, state a falsifiable hypothesis, name measurable metrics, and estimate wall-clock and GPU minutes. Allowed categories are parameter, module, data_scale, seed_stability, and runtime_cost. Do not propose full training when a bounded smoke experiment can answer the question.`
 
 func AblationCandidateUserPrompt(context string, budget models.AblationBudget) string {
 	return fmt.Sprintf(`Design candidate ablation branches for the following paper-reproduction task.
@@ -87,6 +87,25 @@ Budget: max_experiments=%d, max_gpu_minutes=%d, max_wall_minutes=%d.
 Return:
 {"candidates":[{"id":"...","parent_id":"root","category":"parameter|module|data_scale|seed_stability|runtime_cost","title":"...","hypothesis":"...","change":"...","metrics":["..."],"estimated_minutes":10,"estimated_gpu_minutes":0}]}`,
 		context, budget.MaxExperiments, budget.MaxGPUMinutes, budget.MaxWallMinutes)
+}
+
+const AblationExpansionSystemPrompt = `You refine promising scientific ablation branches in the second level of a bounded Tree of Thoughts.
+Return strict JSON only. Each child must name one supplied parent_id, keep the parent's category, isolate one factor more precisely than its parent, and state a falsifiable hypothesis, concrete change, measurable metrics, wall-clock estimate, GPU estimate, and a short expansion_reason. Do not repeat the parent unchanged, combine multiple parents, introduce a new category, or propose full training when a bounded experiment is sufficient.`
+
+func AblationExpansionUserPrompt(context, parents string, budget models.AblationBudget, maximum int) string {
+	return fmt.Sprintf(`Refine the following scored parent branches into at most %d second-level ablation candidates.
+
+Context:
+%s
+
+Eligible parents:
+%s
+
+Budget: max_experiments=%d, max_gpu_minutes=%d, max_wall_minutes=%d.
+
+Return:
+{"candidates":[{"id":"...","parent_id":"one supplied parent id","category":"same category as parent","title":"...","hypothesis":"...","change":"...","metrics":["..."],"estimated_minutes":10,"estimated_gpu_minutes":0,"expansion_reason":"why this child is more informative than its parent"}]}`,
+		maximum, context, parents, budget.MaxExperiments, budget.MaxGPUMinutes, budget.MaxWallMinutes)
 }
 
 const AblationEvaluationSystemPrompt = `You evaluate branches in a bounded scientific Tree of Thoughts.

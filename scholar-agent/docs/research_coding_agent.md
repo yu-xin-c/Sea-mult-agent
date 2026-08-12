@@ -7,6 +7,7 @@
 1. 论文仓库代码运行失败或结果差异明显时，定位有限源码上下文，生成最小补丁并在同一沙箱中重跑。
 2. 用户上传自有数据后，为指定公开仓库生成独立 Benchmark 适配器，完成预检、修复、正式评测和证据校验。
 3. 根据冻结的 `ResearchSpec` 执行有预算的 AutoResearch 循环，用真实指标 Keep/Reject 候选，回滚退化修改并对最佳结果执行公开重放或隐藏 holdout。
+4. 根据 `ExperimentResearchSpec` 执行跨领域方法/超参数搜索；领域 Adapter 负责数据与 evaluator，通用 Harness 负责候选树、目标停止和 Holdout。
 
 底层 `CoderAgent` 继续提供通用代码生成、依赖解析和沙箱能力；Research Coding Agent 负责仓库级诊断、受控写入、重跑和证据闭环。它不会把一次代码运行成功解释成论文结论已经复现。
 
@@ -26,6 +27,7 @@ flowchart LR
     D --> PH["Paper Debug Harness<br/>诊断、受限补丁、重跑、回滚"]
     D --> BH["Benchmark Harness<br/>数据分析、适配、预检、执行、校验"]
     D --> AH["AutoResearch Harness<br/>冻结规格、Baseline、Keep/Reject、复验"]
+    D --> EH["Experiment Harness<br/>Domain Adapter、配置候选树、Holdout"]
 
     PH --> X["Sandbox Service<br/>执行真实仓库入口"]
     BH --> X
@@ -47,6 +49,9 @@ flowchart LR
 | Benchmark harness | [`benchmark_harness.go`](../backend/internal/agent/benchmark_harness.go) | 小样本预检、有限修复、正式运行、输出检查和指标重算 |
 | AutoResearch harness | [`autoresearch.go`](../backend/internal/agent/autoresearch.go) | 冻结研究规格、候选白名单写入、Keep/Reject、回滚、TrialLedger、重复复验和资源汇总 |
 | AutoResearch 模型 | [`models/autoresearch.go`](../backend/internal/models/autoresearch.go) | `ResearchSpec`、Trial、Ledger、最佳候选和验证报告版本化契约 |
+| Experiment harness | [`experiment_research.go`](../backend/internal/agent/experiment_research.go) | 通用策略/参数候选、真实 evaluator、目标停止、TrialLedger 和 Holdout |
+| Experiment Adapter | [`experiment_retrieval_adapter.go`](../backend/internal/agent/experiment_retrieval_adapter.go)、[`experiment_portable_adapter.go`](../backend/internal/agent/experiment_portable_adapter.go) | 内置检索数据适配，以及任意领域 Portable 契约 |
+| Experiment 模型 | [`models/experiment_research.go`](../backend/internal/models/experiment_research.go) | 数据清单、方法/参数空间、候选谱系、评测和验证契约 |
 | Prompt 契约 | [`prompts.go`](../backend/internal/prompts/prompts.go) | 约束模型返回结构、修复范围和禁止行为 |
 | 计划路由 | [`planner.go`](../backend/internal/planner/planner.go) | 生成论文调试、Benchmark 和固定 AutoResearch DAG |
 | 运行时路由 | [`executor.go`](../backend/internal/scheduler/executor.go) | 把上游 Artifact 转为任务输入，并将 Agent 输出写回计划 Artifact |
@@ -69,6 +74,10 @@ flowchart LR
 | `autoresearch_spec` | `workspace_path`、`repo_manifest`、显式或上传 spec | AutoResearch Harness | `research_spec`、spec 报告、`dependency_spec` |
 | `autoresearch_run` | `workspace_path`、`prepared_runtime`、冻结 `research_spec` | AutoResearch Harness | `research_trial_ledger`、最佳候选和运行报告 |
 | `autoresearch_validate` | spec、TrialLedger、最佳候选和同一运行时 | AutoResearch Harness | 重复验证统计、资源证据和最佳指标 |
+| `experiment_dataset_prepare` | 上传数据和领域提示 | Domain Adapter | `workspace_path`、数据清单和映射报告 |
+| `experiment_spec` | 数据清单、指标、目标与预算 | Domain Adapter + Contract Validator | `experiment_spec`、依赖和冻结报告 |
+| `experiment_run` | 工作区、运行时和 ExperimentSpec | Generic Experiment Harness | 参数候选树、最佳配置和运行报告 |
+| `experiment_validate` | spec、TrialLedger、最佳配置和运行时 | Generic Holdout Validator | Holdout 重复结果、样例证据和最佳指标 |
 
 不在白名单中的任务会直接失败，不会回退到通用模型执行。
 
@@ -79,7 +88,7 @@ flowchart LR
 | Repository Nodes | 确定性发现仓库、克隆并准备工作区 | 生成或修复仓库代码 |
 | `CoderAgent` | 通用代码生成、依赖解析；当前也承载 `sandbox_agent` 的运行时实现 | 根据论文运行错误修改仓库源码 |
 | `Sandbox Agent` | 作为逻辑角色创建隔离运行时、安装解析后的依赖 | 决定该改哪段论文代码 |
-| `ResearchCodingAgent` | 在已有工作区和运行时中诊断、受控修改、重跑、回滚、AutoResearch 筛选和记录证据 | 论文检索、容器生命周期、自动定义科研真值、最终科研结论判断 |
+| `ResearchCodingAgent` | 在已有工作区和运行时中诊断、受控修改、重跑、回滚、代码或配置 AutoResearch 筛选和记录证据 | 论文检索、容器生命周期、自动定义科研真值、保证任意领域零配置适配、最终科研结论判断 |
 | `DataAgent` | 对比论文声明、分析指标、选择受限消融、生成报告 | 写入或修复仓库源码 |
 
 因此，环境搭建错误先由依赖安装链处理；进入 `paper_code_execute` 后仍然失败，且证据指向仓库代码缺陷时，才进入源码调试链。缺数据、checkpoint、凭证、硬件或论文口径不一致不属于代码补丁可以解决的问题。
@@ -136,6 +145,25 @@ baseline 在模型第一次调用前运行。editable 源码使用结构化 JSON
 完整规格、状态机、安全边界和可运行示例见 [`docs/autoresearch/`](autoresearch/)。
 
 前端对 `research_trial_ledger` 使用专用视图，而不是把它作为通用 JSON 展示。类型解析与异常降级位于 [`trialLedger.ts`](../frontend/src/features/autoresearch/trialLedger.ts)，[`AutoResearchTrialView.tsx`](../frontend/src/features/autoresearch/AutoResearchTrialView.tsx) 展示 baseline/best、指标趋势、Keep/Reject、耗时、调用路径诊断、假设、补丁哈希和命令资源摘要；用户可从执行侧栏切换“实验”页签并进入全屏视图。当前账本不保存每轮完整源码，因此界面不会生成不可验证的逐行 diff。
+
+## 方法与超参数 AutoResearch
+
+配置搜索把领域知识移出核心循环。`experimentDomainAdapter` 只负责准备冻结资产和声明离散候选空间；`experiment_research.go` 不理解具体算法，统一执行以下状态机：
+
+```text
+领域默认配置 baseline
+    -> 其他方法默认配置（一级方法消融）
+    -> 单参数相邻值（子候选）
+    -> evaluator 真实指标
+        -> Keep：更新最佳并继续展开
+        -> Reject：保留记录，不改变最佳
+    -> target / trial / wall-time / space stop
+    -> 新进程 Holdout baseline vs best
+```
+
+每个候选的 ID 由 `strategy + parameters` 的规范 JSON 哈希生成，重复路径只执行一次。配置文件写入 `.scholar/experiment/runtime/`，不能覆盖数据或 runner；命令只替换一个 `{config_path}` 占位符。evaluator 必须输出 `experiment.evaluation/v1`，并回传实际读取资产的 SHA-256。前端 [`ExperimentResearchView.tsx`](../frontend/src/features/experiment/ExperimentResearchView.tsx) 展示方法根分支、单参数子分支、Keep/Reject、最佳配置、停止原因和 Holdout 样例证据。
+
+当前 `retrieval.v1` 是首个内置 Adapter；`portable.v1` 允许其他论文领域上传 `experiment.json`、evaluator 与数据。详细协议和真实示例见 [`autoresearch/09_general_scientific_autoresearch.md`](autoresearch/09_general_scientific_autoresearch.md)。
 
 ## 论文代码调试
 

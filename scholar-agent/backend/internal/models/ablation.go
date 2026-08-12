@@ -11,6 +11,7 @@ type AblationBudget struct {
 type AblationCandidate struct {
 	ID                  string   `json:"id"`
 	ParentID            string   `json:"parent_id,omitempty"`
+	Depth               int      `json:"depth"`
 	Category            string   `json:"category"`
 	Title               string   `json:"title"`
 	Hypothesis          string   `json:"hypothesis"`
@@ -23,17 +24,21 @@ type AblationCandidate struct {
 	Reproducibility     float64  `json:"reproducibility"`
 	Risk                float64  `json:"risk"`
 	Score               float64  `json:"score"`
+	ExpansionReason     string   `json:"expansion_reason,omitempty"`
 	EvaluationReason    string   `json:"evaluation_reason,omitempty"`
+	DecisionReason      string   `json:"decision_reason,omitempty"`
 }
 
 // AblationPlan records all explored branches and the budget-feasible selection.
 type AblationPlan struct {
 	Strategy        string              `json:"strategy"`
 	MaxDepth        int                 `json:"max_depth"`
+	ActualDepth     int                 `json:"actual_depth"`
 	BranchLimit     int                 `json:"branch_limit"`
 	Budget          AblationBudget      `json:"budget"`
 	Candidates      []AblationCandidate `json:"candidates"`
 	Selected        []AblationCandidate `json:"selected"`
+	ExpandedParents []string            `json:"expanded_parent_ids,omitempty"`
 	PrunedIDs       []string            `json:"pruned_ids,omitempty"`
 	SelectionReason string              `json:"selection_reason"`
 }

@@ -16,10 +16,12 @@ export type ExecutionDisplayMode =
   | 'plot'
   | 'evidence'
   | 'trials'
+  | 'ablation'
   | 'report-expanded'
   | 'plot-expanded'
   | 'evidence-expanded'
-  | 'trials-expanded';
+  | 'trials-expanded'
+  | 'ablation-expanded';
 
 interface ExecutionState {
   selectedTask: Task | null;
@@ -68,7 +70,8 @@ const updateNodeStatus = (node: Node, status: string): Node => {
 
 const detectBestDisplayMode = (task: Task, state: NodeExecutionState): ExecutionDisplayMode => {
   if (task.Type === 'claim_evidence_build' && state.structuredData) return 'evidence';
-  if ((task.Type === 'autoresearch_run' || task.Type === 'autoresearch_validate') && (state.structuredData || state.result)) return 'trials';
+  if ((task.Type === 'autoresearch_run' || task.Type === 'autoresearch_validate' || task.Type === 'experiment_run' || task.Type === 'experiment_validate') && (state.structuredData || state.result)) return 'trials';
+  if (task.Type === 'ablation_design' && (state.structuredData || state.result)) return 'ablation';
   if (state.imageBase64) return 'plot';
   if (state.code && !state.result) return 'code';
   if (state.result && isReportAgent(task.AssignedTo)) return 'report';
@@ -415,7 +418,7 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
 
               if (task.Type === 'claim_evidence_build' && structuredData) {
                 dispatchExecution({ type: 'set-display-mode', mode: 'evidence' });
-              } else if ((task.Type === 'autoresearch_run' || task.Type === 'autoresearch_validate') && (structuredData || finalResult)) {
+              } else if ((task.Type === 'autoresearch_run' || task.Type === 'autoresearch_validate' || task.Type === 'experiment_run' || task.Type === 'experiment_validate') && (structuredData || finalResult)) {
                 dispatchExecution({ type: 'set-display-mode', mode: 'trials' });
               } else if (imageBase64) dispatchExecution({ type: 'set-display-mode', mode: 'plot' });
               else if (isReportAgent(task.AssignedTo)) {

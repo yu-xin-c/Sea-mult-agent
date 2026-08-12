@@ -311,7 +311,7 @@ func normalizePlannerTaskType(bp plannerNodeBlueprint) string {
 	}
 
 	switch rawType {
-	case "framework_research", "framework_recommendation", "generate_code", "resolve_dependencies", "prepare_runtime", "install_dependencies", "execute_code", "paper_code_execute", "paper_parse", "claim_rubric_extract", "repo_discovery", "repo_prepare", "ablation_design", "paper_compare", "claim_evidence_build", "result_visualization", "fix_and_rerun", "verify_result", "render_plot", "general_research", "general_synthesis", "general_process", "dataset_profile", "benchmark_adapter_generate", "benchmark_adapter_preflight", "benchmark_execute", "benchmark_validate", "autoresearch_spec", "autoresearch_run", "autoresearch_validate":
+	case "framework_research", "framework_recommendation", "generate_code", "resolve_dependencies", "prepare_runtime", "install_dependencies", "execute_code", "paper_code_execute", "paper_parse", "claim_rubric_extract", "repo_discovery", "repo_prepare", "ablation_design", "paper_compare", "claim_evidence_build", "result_visualization", "fix_and_rerun", "verify_result", "render_plot", "general_research", "general_synthesis", "general_process", "dataset_profile", "benchmark_adapter_generate", "benchmark_adapter_preflight", "benchmark_execute", "benchmark_validate", "autoresearch_spec", "autoresearch_run", "autoresearch_validate", "experiment_dataset_prepare", "experiment_spec", "experiment_run", "experiment_validate":
 		return rawType
 	}
 
@@ -360,7 +360,7 @@ func containsAny(s string, keywords ...string) bool {
 
 func normalizePlannerAssignedTo(bp plannerNodeBlueprint) string {
 	switch bp.Type {
-	case "dataset_profile", "benchmark_adapter_generate", "benchmark_adapter_preflight", "benchmark_execute", "benchmark_validate", "paper_code_execute", "fix_and_rerun", "autoresearch_spec", "autoresearch_run", "autoresearch_validate":
+	case "dataset_profile", "benchmark_adapter_generate", "benchmark_adapter_preflight", "benchmark_execute", "benchmark_validate", "paper_code_execute", "fix_and_rerun", "autoresearch_spec", "autoresearch_run", "autoresearch_validate", "experiment_dataset_prepare", "experiment_spec", "experiment_run", "experiment_validate":
 		return "research_coding_agent"
 	case "generate_code", "resolve_dependencies", "repo_discovery", "repo_prepare":
 		return "coder_agent"
@@ -407,6 +407,17 @@ func applyPlannerNodeDefaults(bp plannerNodeBlueprint) plannerNodeBlueprint {
 	case "autoresearch_validate":
 		bp.RequiredArtifacts = ensureArtifacts(bp.RequiredArtifacts, "workspace_path", "prepared_runtime", "research_spec", "research_trial_ledger", "research_best_candidate")
 		bp.OutputArtifacts = ensureArtifacts(bp.OutputArtifacts, "research_validation_report", "research_best_metrics")
+	case "experiment_dataset_prepare":
+		bp.OutputArtifacts = ensureArtifacts(bp.OutputArtifacts, "workspace_path", "experiment_dataset_manifest", "experiment_dataset_report")
+	case "experiment_spec":
+		bp.RequiredArtifacts = ensureArtifacts(bp.RequiredArtifacts, "workspace_path", "experiment_dataset_manifest")
+		bp.OutputArtifacts = ensureArtifacts(bp.OutputArtifacts, "experiment_spec", "experiment_spec_report", "dependency_spec")
+	case "experiment_run":
+		bp.RequiredArtifacts = ensureArtifacts(bp.RequiredArtifacts, "workspace_path", "prepared_runtime", "experiment_spec")
+		bp.OutputArtifacts = ensureArtifacts(bp.OutputArtifacts, "experiment_trial_ledger", "experiment_best_candidate", "experiment_run_report")
+	case "experiment_validate":
+		bp.RequiredArtifacts = ensureArtifacts(bp.RequiredArtifacts, "workspace_path", "prepared_runtime", "experiment_spec", "experiment_trial_ledger", "experiment_best_candidate")
+		bp.OutputArtifacts = ensureArtifacts(bp.OutputArtifacts, "experiment_validation_report", "experiment_best_metrics")
 	}
 	return bp
 }

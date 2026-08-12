@@ -1,0 +1,69 @@
+{
+  "version": "experiment.example.result/v1",
+  "executed_at": "2026-08-12T01:20:44+08:00",
+  "mode": "real_local_cpu",
+  "domain": "retrieval",
+  "adapter": "retrieval.v1",
+  "environment": {
+    "platform": "macOS-26.3.2-arm64-arm-64bit",
+    "python": "3.12.13",
+    "rank_bm25": "0.2.2",
+    "scikit_learn": "1.9.0",
+    "networkx": "3.6.1",
+    "numpy": "2.5.2"
+  },
+  "contract": {
+    "metric": "ndcg_at_k",
+    "cutoff": 1,
+    "direction": "maximize",
+    "target_score": 0.6,
+    "max_trials": 6,
+    "max_wall_seconds": 180,
+    "validation_runs": 2,
+    "documents": 13,
+    "search_cases": 5,
+    "holdout_cases": 3
+  },
+  "source_sha256": {
+    "corpus.jsonl": "8fe4f19c1d7ccc15373cf9be6cb6100b62b884726edf1c66a8824186851152ca",
+    "queries.jsonl": "62d0888b21ed538d7ab1af959715566f99a40555b925bea148360bb447b1ffeb",
+    "retrieval_runner.py": "241789d9061ec10f01c8e8f9b3822043e12b92aa3060f729befca417ba1e0bec"
+  },
+  "search": {
+    "baseline": {
+      "strategy": "bm25",
+      "parameters": { "k1": 1.5, "b": 0.75 },
+      "score": 0.4
+    },
+    "trials": [
+      { "number": 1, "strategy": "tfidf", "score": 0.4, "decision": "reject" },
+      { "number": 2, "strategy": "hybrid_rrf", "score": 0.4, "decision": "reject" },
+      { "number": 3, "strategy": "graph_hybrid", "score": 0.6, "decision": "keep" }
+    ],
+    "best": {
+      "strategy": "graph_hybrid",
+      "parameters": {
+        "k1": 1.5,
+        "b": 0.75,
+        "ngram_max": 1,
+        "sublinear_tf": true,
+        "alpha": 0.5,
+        "rrf_k": 60,
+        "graph_weight": 1.25,
+        "graph_depth": 1
+      },
+      "score": 0.6
+    },
+    "stop_reason": "target_score_reached",
+    "completed_trials": 3
+  },
+  "holdout": {
+    "baseline_score": 0.3333333333333333,
+    "candidate_score": 0.6666666666666666,
+    "requested_runs": 2,
+    "passed_runs": 2,
+    "status": "validated",
+    "candidate_scores": [0.6666666666666666, 0.6666666666666666]
+  },
+  "claim_scope": "This proves the frozen retrieval adapter and generic bounded experiment harness executed end to end on the included lightweight dataset. It is not an official RAG benchmark or evidence that every research task can be adapted without domain work."
+}
