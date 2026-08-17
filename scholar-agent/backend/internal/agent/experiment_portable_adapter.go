@@ -178,6 +178,14 @@ func (a portableExperimentAdapter) BuildSpec(task *models.Task, workspacePath st
 		validationRuns = 3
 	}
 	spec.MaxTrials = boundedTaskInt(task, "experiment_max_trials", maxTrials, 1, 40)
+	parallelTrials := spec.MaxParallelTrials
+	if parallelTrials == 0 {
+		parallelTrials = 1
+	}
+	spec.MaxParallelTrials = boundedTaskInt(task, "experiment_max_parallel_trials", parallelTrials, 1, 4)
+	if spec.EvaluationIsolation == "" {
+		spec.EvaluationIsolation = models.ExperimentExecutionSerial
+	}
 	spec.MaxWallSeconds = boundedTaskInt(task, "experiment_max_wall_seconds", maxWallSeconds, 30, 3600)
 	spec.ValidationRuns = boundedTaskInt(task, "experiment_validation_runs", validationRuns, 1, 5)
 	if target, err := optionalExperimentTaskFloat(task, "experiment_target_score", -1e12, 1e12); err != nil {

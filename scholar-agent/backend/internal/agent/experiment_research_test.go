@@ -9,7 +9,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"scholar-agent-backend/internal/models"
 	"scholar-agent-backend/internal/sandbox"
@@ -17,13 +19,50 @@ import (
 
 type scriptedExperimentSandbox struct {
 	workspace string
+	mu        sync.Mutex
 	calls     int
 	failAfter int
+	active    int
+	peak      int
+	delay     time.Duration
 }
 
 type localExperimentSandbox struct {
 	workspace string
 	python    string
+}
+
+type scriptedResearchOptimizer struct {
+	selections  []optimizerSelectionRequest
+	outcomes    []models.ExperimentExperienceOutcome
+	validations []optimizerValidationRecord
+}
+
+func (s *scriptedResearchOptimizer) Profile(_ context.Context, request optimizerProfileRequest) (models.ExperimentDatasetFeatureProfile, error) {
+	profile := experimentFallbackFeatureProfile(request.Manifest)
+	profile.Extractor = "python-dataset-profiler/v1"
+	profile.Numeric["avg_query_tokens"] = 2.5
+	return profile, nil
+}
+
+func (s *scriptedResearchOptimizer) Select(_ context.Context, request optimizerSelectionRequest) (optimizerSelectionResponse, error) {
+	s.selections = append(s.selections, request)
+	predicted := 0.05
+	return optimizerSelectionResponse{
+		Version: optimizerSelectionVersion, PolicyVersion: "contextual-ucb/v1",
+		CandidateID: request.Candidates[0].ID, Propensity: 0.5, PredictedReward: &predicted,
+		ReasonCodes: []string{"fixture_policy"},
+	}, nil
+}
+
+func (s *scriptedResearchOptimizer) RecordOutcome(_ context.Context, outcome models.ExperimentExperienceOutcome) error {
+	s.outcomes = append(s.outcomes, outcome)
+	return nil
+}
+
+func (s *scriptedResearchOptimizer) RecordValidation(_ context.Context, validation optimizerValidationRecord) error {
+	s.validations = append(s.validations, validation)
+	return nil
 }
 
 func (s *localExperimentSandbox) ExecCommandStream(ctx context.Context, _ string, command []string, onChunk func(string, string)) (*sandbox.PythonRunResponse, error) {
@@ -56,8 +95,22 @@ func (s *localExperimentSandbox) ExecCommandStream(ctx context.Context, _ string
 }
 
 func (s *scriptedExperimentSandbox) ExecCommandStream(_ context.Context, _ string, command []string, onChunk func(string, string)) (*sandbox.PythonRunResponse, error) {
+	s.mu.Lock()
 	s.calls++
-	if s.failAfter > 0 && s.calls >= s.failAfter {
+	callNumber := s.calls
+	s.active++
+	s.peak = max(s.peak, s.active)
+	delay := s.delay
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.active--
+		s.mu.Unlock()
+	}()
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+	if s.failAfter > 0 && callNumber >= s.failAfter {
 		return &sandbox.PythonRunResponse{ExitCode: 1, Stderr: "fixture evaluator failure"}, nil
 	}
 	configPath, queryPath := "", ""
@@ -117,7 +170,8 @@ func TestDatasetExperimentRunsStrategySearchAndHoldoutValidation(t *testing.T) {
 		Type: "experiment_dataset_prepare", Description: "对上传数据做 RAG 策略自动研究",
 		Inputs: map[string]any{"uploaded_files": uploads, "research_domain": "retrieval", "experiment_adapter": "retrieval.v1"},
 	}
-	agent := &ResearchCodingAgent{Name: "research_coding_agent"}
+	optimizer := &scriptedResearchOptimizer{}
+	agent := &ResearchCodingAgent{Name: "research_coding_agent", Optimizer: optimizer}
 	if err := agent.ExecuteTask(t.Context(), prepare, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -130,6 +184,9 @@ func TestDatasetExperimentRunsStrategySearchAndHoldoutValidation(t *testing.T) {
 	}
 	if manifest.Domain != "retrieval" || manifest.Counts["search_cases"] != 2 || manifest.Counts["holdout_cases"] != 2 || !manifest.Capabilities["graph_links"] {
 		t.Fatalf("unexpected dataset manifest: %#v", manifest)
+	}
+	if manifest.FeatureProfile == nil || manifest.FeatureProfile.Extractor != "python-dataset-profiler/v1" || manifest.FeatureProfile.Numeric["avg_query_tokens"] != 2.5 {
+		t.Fatalf("Python optimizer feature profile was not frozen: %#v", manifest.FeatureProfile)
 	}
 
 	freeze := &models.Task{
@@ -177,6 +234,38 @@ func TestDatasetExperimentRunsStrategySearchAndHoldoutValidation(t *testing.T) {
 	if ledger.Trials[2].Candidate.ParentID != "" || ledger.Trials[2].Candidate.Depth != 0 {
 		t.Fatalf("method branch should remain a root-level ablation: %#v", ledger.Trials[2].Candidate)
 	}
+	if len(optimizer.selections) != 2 || len(optimizer.outcomes) != 2 || ledger.Trials[1].PolicyDecision == nil || ledger.Trials[1].PolicyDecision.PolicyVersion != "contextual-ucb/v1" || ledger.Trials[1].Reward == nil {
+		t.Fatalf("policy decisions and outcomes must be auditable: selections=%d outcomes=%d trial=%#v", len(optimizer.selections), len(optimizer.outcomes), ledger.Trials[1])
+	}
+
+	parallelSpec := spec
+	parallelSpec.MaxTrials = 3
+	parallelSpec.MaxParallelTrials = 3
+	parallelSpec.EvaluationIsolation = models.ExperimentExecutionReadOnly
+	parallelPayload, err := json.Marshal(parallelSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parallelSandbox := &scriptedExperimentSandbox{workspace: workspace, delay: 25 * time.Millisecond}
+	parallelAgent := &ResearchCodingAgent{Name: "research_coding_agent", Sandbox: parallelSandbox}
+	parallelRun := &models.Task{Type: "experiment_run", Inputs: map[string]any{
+		"workspace_path": workspace, "prepared_runtime": "dk-parallel-fixture", "experiment_spec": string(parallelPayload),
+	}}
+	if err := parallelAgent.ExecuteTask(t.Context(), parallelRun, nil); err != nil {
+		t.Fatal(err)
+	}
+	var parallelLedger models.ExperimentTrialLedger
+	if err := json.Unmarshal([]byte(parallelRun.Result), &parallelLedger); err != nil {
+		t.Fatal(err)
+	}
+	if parallelLedger.CompletedTrials != 3 || parallelLedger.ResourceUsage.PeakParallelism != 3 || parallelSandbox.peak != 3 || parallelLedger.BestCandidate.Strategy != "hybrid_rrf" {
+		t.Fatalf("parallel strategy frontier was not executed as one bounded batch: ledger=%#v peak=%d", parallelLedger, parallelSandbox.peak)
+	}
+	for index, trial := range parallelLedger.Trials[1:] {
+		if trial.Batch != 1 || trial.Worker != index+1 {
+			t.Fatalf("parallel trial lost batch/worker evidence: %#v", trial)
+		}
+	}
 
 	validate := &models.Task{
 		Type: "experiment_validate",
@@ -195,10 +284,13 @@ func TestDatasetExperimentRunsStrategySearchAndHoldoutValidation(t *testing.T) {
 	if report.Status != "validated" || report.PassedRuns != 3 || len(report.Runs) != 3 || report.Runs[0].CandidateScore != 0.82 {
 		t.Fatalf("unexpected holdout validation: %#v", report)
 	}
+	if len(optimizer.validations) != 1 || optimizer.validations[0].CampaignID != ledger.CampaignID || optimizer.validations[0].Status != "validated" {
+		t.Fatalf("validated campaign was not promoted to optimizer history: %#v", optimizer.validations)
+	}
 
 	sandboxRunner.failAfter = sandboxRunner.calls + 1
 	failedValidation := &models.Task{Type: "experiment_validate", Inputs: validate.Inputs}
-	err := agent.ExecuteTask(t.Context(), failedValidation, nil)
+	err = agent.ExecuteTask(t.Context(), failedValidation, nil)
 	if err == nil || failedValidation.Status != models.StatusFailed {
 		t.Fatalf("evaluator infrastructure failure must fail validation task: status=%s err=%v", failedValidation.Status, err)
 	}
@@ -319,7 +411,7 @@ func TestRetrievalExperimentRealRunnerEndToEnd(t *testing.T) {
 			},
 		},
 	}
-	agent := &ResearchCodingAgent{Name: "research_coding_agent"}
+	agent := &ResearchCodingAgent{Name: "research_coding_agent", Optimizer: newHTTPResearchOptimizerFromEnv()}
 	if err := agent.ExecuteTask(t.Context(), prepare, nil); err != nil {
 		t.Fatal(err)
 	}

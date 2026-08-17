@@ -40,7 +40,7 @@ AutoResearch 因此不把 LLM 当作拥有最终决定权的研究者。模型�
 
 | 模块 | 已实现能力 | 作用 |
 |---|---|---|
-| 确定性规划 | 为代码候选生成固定 8 节点 DAG，为数据配置候选生成固定 7 节点 DAG | 防止模型临时省略安全关键步骤 |
+| 确定性规划 | 为代码候选生成固定 8 节点 DAG，为数据配置候选生成固定 8 节点 DAG；后者包含 ToT 设计与环境准备并行分支 | 防止模型临时省略安全关键步骤，同时缩短可重叠的准备时间 |
 | `ResearchSpec` | 声明 commit、editable、protected、命令、指标、方向、阈值、目标、重复次数、依赖和预算 | 在搜索前冻结研究目标和允许范围 |
 | `ExperimentResearchSpec` | 声明领域 Adapter、方法分支、参数有限域、搜索/Holdout 命令、指标和预算 | 让任意领域的配置候选复用同一 Harness |
 | Domain Adapter | 内置 `retrieval.v1` 与可移植 `portable.v1` | 把领域数据和 evaluator 转换为通用实验协议 |

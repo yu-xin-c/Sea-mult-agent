@@ -44,16 +44,20 @@ type RoutedTaskExecutor struct {
 	Data           AgentRunner
 	Coder          AgentRunner
 	ResearchCoding AgentRunner
+	Benchmark      AgentRunner
 }
 
-func NewRoutedTaskExecutor(librarian, data, coder AgentRunner, researchCoding ...AgentRunner) *RoutedTaskExecutor {
+func NewRoutedTaskExecutor(librarian, data, coder AgentRunner, specialized ...AgentRunner) *RoutedTaskExecutor {
 	executor := &RoutedTaskExecutor{
 		Librarian: librarian,
 		Data:      data,
 		Coder:     coder,
 	}
-	if len(researchCoding) > 0 {
-		executor.ResearchCoding = researchCoding[0]
+	if len(specialized) > 0 {
+		executor.ResearchCoding = specialized[0]
+	}
+	if len(specialized) > 1 {
+		executor.Benchmark = specialized[1]
 	}
 	return executor
 }
@@ -182,6 +186,10 @@ func (e *RoutedTaskExecutor) resolveRunner(assignedTo string) (AgentRunner, erro
 	case "research_coding_agent":
 		if e.ResearchCoding != nil {
 			return e.ResearchCoding, nil
+		}
+	case "benchmark_agent":
+		if e.Benchmark != nil {
+			return e.Benchmark, nil
 		}
 	}
 	return nil, fmt.Errorf("no agent runner configured for %s", assignedTo)
@@ -333,7 +341,7 @@ func inferArtifactType(key string, runtimeTask *models.Task) string {
 	_ = runtimeTask
 	lowerKey := strings.ToLower(key)
 	switch {
-	case lowerKey == "claim_rubric" || lowerKey == "claim_evidence_graph" || lowerKey == "research_spec" || lowerKey == "research_validation_report" || strings.Contains(lowerKey, "trial_ledger") || strings.Contains(lowerKey, "best_candidate"):
+	case lowerKey == "claim_rubric" || lowerKey == "claim_evidence_graph" || lowerKey == "research_spec" || lowerKey == "research_validation_report" || strings.Contains(lowerKey, "benchmark_contract") || strings.Contains(lowerKey, "split_manifest") || strings.Contains(lowerKey, "trial_ledger") || strings.Contains(lowerKey, "best_candidate"):
 		return "json"
 	case strings.Contains(lowerKey, "plot") || strings.Contains(lowerKey, "image"):
 		return "image_base64"

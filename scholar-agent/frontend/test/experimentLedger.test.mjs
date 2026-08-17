@@ -8,18 +8,27 @@ test('parses a strategy and parameter search tree', () => {
   const ledger = {
     version: 'experiment.ledger/v1', status: 'completed', domain: 'retrieval', adapter: 'retrieval.v1',
     metric_key: 'ndcg_at_k', direction: 'maximize', target_score: 0.8,
-    baseline_score: 0.4, best_score: 0.82, max_trials: 8, completed_trials: 2, accepted_trials: 1,
+    baseline_score: 0.4, best_score: 0.82, max_trials: 8, max_parallel_trials: 2,
+    evaluation_isolation: 'shared-readonly/v1', designed_branches: 6, completed_trials: 2, accepted_trials: 1,
     strategy_space: [
       { name: 'bm25', description: 'baseline', parameters: [{ name: 'k1', description: 'saturation', values: [0.8, 1.5], default: 1.5 }] },
       { name: 'hybrid_rrf', description: 'fusion', parameters: [{ name: 'alpha', description: 'weight', values: [0.2, 0.5, 0.8], default: 0.5 }] },
     ],
     trials: [
-      { number: 0, candidate: candidate('base', 'bm25'), status: 'baseline', decision: 'keep', reason: 'baseline', metrics: { ndcg_at_k: 0.4 }, score: 0.4, duration_ms: 5 },
-      { number: 1, candidate: candidate('hybrid', 'hybrid_rrf'), status: 'kept', decision: 'keep', reason: 'gain', metrics: { ndcg_at_k: 0.82 }, score: 0.82, delta_from_best: 0.42, duration_ms: 7 },
-      { number: 2, candidate: candidate('alpha', 'hybrid_rrf', 'hybrid', 1), status: 'rejected', decision: 'reject', reason: 'no gain', metrics: { ndcg_at_k: 0.8 }, score: 0.8, delta_from_best: -0.02, duration_ms: 6 },
+      { number: 0, batch: 0, worker: 1, candidate: candidate('base', 'bm25'), status: 'baseline', decision: 'keep', reason: 'baseline', metrics: { ndcg_at_k: 0.4 }, score: 0.4, duration_ms: 5 },
+      {
+        number: 1, candidate: candidate('hybrid', 'hybrid_rrf'), status: 'kept', decision: 'keep', reason: 'gain',
+        metrics: { ndcg_at_k: 0.82 }, score: 0.82, delta_from_best: 0.42, reward: 0.419,
+        policy_decision: {
+          policy_version: 'contextual-ucb/v1', propensity: 0.45, predicted_reward: 0.12,
+          reason_codes: ['validated_history_available'], fallback: false,
+        },
+        batch: 1, worker: 1, duration_ms: 7,
+      },
+      { number: 2, batch: 1, worker: 2, candidate: candidate('alpha', 'hybrid_rrf', 'hybrid', 1), status: 'rejected', decision: 'reject', reason: 'no gain', metrics: { ndcg_at_k: 0.8 }, score: 0.8, delta_from_best: -0.02, duration_ms: 6 },
     ],
     best_candidate: candidate('hybrid', 'hybrid_rrf'), stop_reason: 'target_score_reached',
-    resource_usage: { evaluator_runs: 3, evaluator_time_ms: 18, wall_duration_ms: 22 },
+    resource_usage: { evaluator_runs: 3, evaluator_time_ms: 18, wall_duration_ms: 22, peak_parallelism: 2 },
   };
   const parsed = parseExperimentLedger(ledger);
   assert.equal(parsed.ok, true);
@@ -27,6 +36,12 @@ test('parses a strategy and parameter search tree', () => {
   assert.equal(parsed.ledger.trials[2].candidate.parentId, 'hybrid');
   assert.equal(parsed.ledger.bestCandidate.strategy, 'hybrid_rrf');
   assert.equal(parsed.ledger.strategySpace[1].parameters[0].values.length, 3);
+  assert.equal(parsed.ledger.trials[1].policyDecision.policyVersion, 'contextual-ucb/v1');
+  assert.equal(parsed.ledger.trials[1].policyDecision.propensity, 0.45);
+  assert.equal(parsed.ledger.trials[1].reward, 0.419);
+  assert.equal(parsed.ledger.maxParallelTrials, 2);
+  assert.equal(parsed.ledger.resourceUsage.peakParallelism, 2);
+  assert.equal(parsed.ledger.trials[2].worker, 2);
 });
 
 test('parses repeated holdout evidence and rejects broken lineage', () => {

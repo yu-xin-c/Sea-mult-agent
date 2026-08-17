@@ -9,6 +9,7 @@ backend.env.ps1
 # Logs and runtime output
 logs/
 *.log
+backend/data/private-benchmarks/
 
 # Local caches
 .gocache/

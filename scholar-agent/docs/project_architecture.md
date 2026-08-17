@@ -2,7 +2,7 @@
 
 本文描述 `scholar-agent/` 当前已经实现并可运行的架构。它以代码为准，重点说明服务边界、核心数据模型、Agent 调度、论文复现、Benchmark Harness、持久化与安全边界。早期设想和尚未接入主链的模块不会被写成现有能力。
 
-最后核对日期：2026-08-12。
+最后核对日期：2026-08-14。
 
 ## 1. 架构目标
 
@@ -36,12 +36,15 @@ flowchart LR
     RX --> LIB["Librarian Agent"]
     RX --> DATA["Data Agent"]
     RX --> CODER["Coder Agent"]
-    RX --> BENCH["Research Coding Agent<br/>Debug / Benchmark / AutoResearch"]
+    RX --> BA["Benchmark Agent<br/>Split / Metric / Hidden Eval"]
+    RX --> BENCH["Research Coding Agent<br/>Debug / Adapter / AutoResearch"]
 
     LIB --> LLM["OpenAI-compatible LLM"]
     DATA --> LLM
     CODER --> LLM
     BENCH --> LLM
+    BENCH --> RO["Python Research Optimizer<br/>Features / Contextual-UCB"]
+    RO --> ES["SQLite Experience Store"]
     PL --> LLM
 
     RX --> RD["确定性仓库节点"]
@@ -49,6 +52,7 @@ flowchart LR
 
     CODER --> SC["Sandbox Client"]
     BENCH --> SC
+	BA --> WS
     SC --> SS["docker-sandbox 服务"]
     SS --> WC["隔离工作容器"]
 
@@ -64,13 +68,14 @@ flowchart LR
     WS --> WC
 ```
 
-系统分成三个主要运行单元：
+系统分成四个主要运行单元：
 
 | 运行单元 | 默认端口 | 主要职责 |
 |---|---:|---|
 | `frontend` | `5173` | 对话、上传、PDF 阅读、DAG 展示、执行控制和结果查看 |
 | `backend` | `8080` | API、意图路由、Planner、Scheduler、Agent、PlanStore、SSE |
 | `docker-sandbox` | `8082`，Compose 仅绑定本机 | 创建容器、执行 Python/命令、流式回传 stdout/stderr、清理容器 |
+| `research-optimizer` | `8090`，Compose 仅绑定本机 | 数据集特征、候选优先级、策略决策记录和跨任务 SQLite 经验 |
 
 `ai-services/intent_recognition` 是可选 Python 原型服务。它不在默认 Compose 中启动，也没有接入当前 Backend 的生产请求链。
 
@@ -91,6 +96,7 @@ scholar-agent/
 │   ├── internal/events/        # 计划级内存事件总线
 │   └── internal/sandbox/       # Sandbox HTTP 客户端
 ├── docker-sandbox/             # 独立 Go 沙箱服务和 Docker 引擎
+├── research-optimizer/         # Python 学习面和 Experience Store
 ├── ai-services/                # 可选 Python AI 服务
 ├── examples/                   # 可运行示例和验收脚本
 ├── docs/                       # 架构、功能和实验文档
@@ -142,7 +148,7 @@ scholar-agent/
 [`planner.go`](../backend/internal/planner/planner.go) 输出 `PlanGraph`。规划顺序如下：
 
 1. API 用规则提取任务类型、仓库 URL、论文信息、复现模式和附件。
-2. 自有数据 Benchmark 生成固定 11 节点 DAG；仓库代码 AutoResearch 生成固定 8 节点 DAG；上传数据的方法/参数 AutoResearch 生成固定 7 节点 DAG。
+2. 自有数据 Benchmark 生成固定 13 节点 DAG；仓库代码 AutoResearch 生成固定 8 节点 DAG；上传数据的方法/参数 AutoResearch 生成固定 8 节点 DAG，其中 ToT 设计与运行环境准备是可并行分支。
 3. 其他任务在配置 LLM 后优先调用 Planner Agent。
 4. 模型输出会经过任务类型归一化、Agent 白名单、Artifact 契约和 DAG 校验。
 5. 模型不可用或输出不合法时，回退到确定性模板。
@@ -204,8 +210,8 @@ Scheduler 负责：
 | `ResearchTrialLedger` | baseline 和每个候选的补丁哈希、命令、指标、决策、停止原因与资源摘要 |
 | `ResearchValidationReport` | 最佳文件完整性、重复 evaluator 结果、均值、标准差、失败率与资源摘要 |
 | `ExperimentDatasetManifest` | 领域 Adapter 产出的数据映射、能力、资产路径和 SHA-256 |
-| `ExperimentResearchSpec` | 方法分支、参数有限域、搜索/Holdout 命令、指标、目标和预算 |
-| `ExperimentTrialLedger` | 配置候选父子关系、单参数变化、指标、Keep/Reject、最佳配置和停止原因 |
+| `ExperimentResearchSpec` | 方法分支、参数有限域、搜索/Holdout 命令、指标、目标、预算、并发上限和 evaluator 隔离模式 |
+| `ExperimentTrialLedger` | ToT 计划哈希、配置候选父子关系、batch/worker、峰值并发、指标、Keep/Reject、最佳配置和停止原因 |
 | `ExperimentValidationReport` | 最佳配置在独立 Holdout 进程中的 baseline 对照、目标判定和样例证据 |
 
 ```mermaid
@@ -235,7 +241,8 @@ Artifact 同时承担数据接口和可追踪证据的作用。例如 `repo_url`
 | `LibrarianAgent` | 论文解析、资料归纳、方法声明提取和实验前冻结 Claim Rubric |
 | `CoderAgent` | 代码生成、依赖解析、运行时准备、安装、执行与修复 |
 | `DataAgent` | 指标分析、论文对比、Claim-to-Evidence 判定、报告和受限消融设计 |
-| `ResearchCodingAgent` | 论文仓库调试、数据 Benchmark、代码补丁 AutoResearch，以及 Domain Adapter 驱动的方法/参数 AutoResearch |
+| `BenchmarkAgent` | 数据审计、train/validation/test 物理切分、泄漏检查、Metric/Reward 契约、隐藏标签验收和指标重算 |
+| `ResearchCodingAgent` | 论文仓库调试、Repository Adapter、代码补丁 AutoResearch，以及 Domain Adapter 驱动的方法/参数 AutoResearch |
 
 Librarian、Coder、Data 和 Chat 使用 Eino 编排 OpenAI-compatible Chat Model。模型地址、模型名和密钥通过环境变量或配置文件提供。
 
@@ -322,28 +329,30 @@ flowchart LR
 上传 CSV、TSV、JSON 或 JSONL 并要求对公开仓库做 Benchmark 时，系统生成固定流程：
 
 ```text
-数据分析 ------------------------------+
-                                      |
-仓库发现 -> 工作区准备 ----------------+-> 生成适配器
-                                            -> 解析依赖
-                                            -> 准备运行时
-                                            -> 安装依赖
-                                            -> 最多 8 条样本预检与修复
-                                            -> 正式运行
-                                            -> Go 端证据校验和指标重算
-                                            -> 最终报告
+Benchmark Agent 数据审计 -----------------------+
+仓库发现 -> 工作区准备 -------------------------+-> 安全切分与泄漏检查
+                                                   -> 冻结 Metric / Reward / Evaluator
+                                                   -> Research Coding 生成适配器
+                                                   -> 解析依赖与准备沙箱
+                                                   -> 最多 8 条 validation 预检与修复
+                                                   -> validation 正式运行
+                                                   -> 无标签 test 推理
+                                                   -> Benchmark Agent 隐藏指标重算
+                                                   -> 最终报告
 ```
 
 Benchmark Harness 的信任边界不是“模型说成功”，而是：
 
-- 上传文件、适配器和仓库源码均有哈希或指纹检查。
+- 原始文件、三个 split、Metric/Reward Contract、evaluator、适配器和仓库源码均有哈希或指纹检查。
+- 分类默认分层哈希，回归默认分位数分层；显式 group/time 列切换为组隔离或时间切分。
+- `test_features` 不包含目标列，隐藏标签位于容器工作区之外。
 - 生成代码只能写入 `.scholar/benchmark/`，目标仓库源码不能被修改。
 - 输出文件必须是普通文件，符号链接、超大文件和格式错误会被拒绝。
-- 分类指标由 Go 重算 `accuracy` 和 `macro_f1`。
-- 回归指标由 Go 重算 `mse` 和 `mae`。
-- 上报指标与逐样本结果不一致时整次运行失败。
+- 分类指标由 Go 重算 `accuracy` 和 `macro_f1`；回归重算 `mae` 和 `rmse`；简单生成重算 `exact_match` 和 `token_f1`。
+- 隐藏预测必须按冻结 ID 覆盖全部测试样本，Adapter 自报的隐藏指标不参与最终判定。
+- Reward 固定为候选优先级信号，不参与 Keep/Reject 或隐藏验收。
 
-论文调试与 Benchmark 契约见 [`research_coding_agent.md`](research_coding_agent.md)。
+完整 Benchmark 边界见 [`benchmark_agent.md`](benchmark_agent.md)，论文仓库适配与调试见 [`research_coding_agent.md`](research_coding_agent.md)。
 
 ## 10. AutoResearch 流程
 
@@ -365,13 +374,17 @@ Benchmark Harness 的信任边界不是“模型说成功”，而是：
 用户上传数据并明确要求搜索方法、模块或超参数时，系统仍使用 `AutoResearch` 意图，但生成另一条固定主链：
 
 ```text
-数据适配 -> 冻结 ExperimentSpec -> 创建运行时 -> 安装依赖
-    -> 方法/参数候选树 Keep/Reject -> Holdout 重复验收 -> 证据报告
+数据适配 -> 冻结 ExperimentSpec -> +-> 两层 ToT 实验设计 --------+
+                                  \-> 创建运行时 -> 安装依赖 ---+
+                                      -> 多策略候选批次 Keep/Reject
+                                      -> Holdout 重复验收 -> 证据报告
 ```
 
 `experimentDomainAdapter` 是领域边界。内置 `retrieval.v1` 能从语料、带标注查询和可选关系边自动生成契约；`portable.v1` 能加载任意论文领域上传的 `experiment.json`、evaluator 和数据。通用 Go Harness 不包含检索知识，只读取有限候选空间和 argv 命令，每次写一个候选配置后执行冻结 evaluator。
 
-一级候选是不同方法的默认配置，子候选一次只改变一个参数。`ExperimentTrialLedger` 同时保存冻结的 `strategy_space` 和真实 Trial；每个 Trial 记录 `parent_id`、`depth`、`changed_parameter`、完整参数、实际指标和 Keep/Reject 原因。前端据此生成可交互的策略树、候选详情和执行时间线，并把达到目标后未运行的参数分支显示为已剪枝。Search 只读取公开调参集；最终节点在独立 Holdout 文件上同时重跑 baseline 与最佳候选，并要求数据和 evaluator 哈希保持不变。完整协议见 [`autoresearch/09_general_scientific_autoresearch.md`](autoresearch/09_general_scientific_autoresearch.md)。
+一级候选是不同方法的默认配置，子候选一次只改变一个参数。Go 从已冻结资产抽取有界规范样本，Python Research Optimizer 不挂载工作区，只根据 `DatasetFeatureProfile` 和已验证历史选择下一候选；Go 会复核数据指纹、确认候选仍在当前队列、概率和预测值为有限数，并在服务不可用或响应非法时退回 FIFO。只读 evaluator 可以声明最多 4 路同层并发；Portable Adapter 默认使用 `serial/v1`，未声明 `shared-readonly/v1` 时拒绝并行。并发结果按 Policy 选择顺序确定性入账，而不是按完成先后抢占最佳值。`ExperimentTrialLedger` 同时保存冻结的 `strategy_space`、ToT 计划哈希和真实 Trial；每个 Trial 记录 `parent_id`、`depth`、`changed_parameter`、`batch`、`worker`、完整参数、Policy 版本、选择概率、预测/实际 Reward、指标和 Keep/Reject 原因。前端据此生成可交互的策略树、候选详情和执行时间线，并把达到目标后未运行的参数分支显示为已剪枝。
+
+科学接受与学习奖励严格分离：Keep/Reject 仍只由冻结主指标和 `min_delta` 决定；Reward 使用相对 baseline 的方向归一化增益减去运行成本，仅供后续候选排序。Search 只读取公开调参集；最终节点在独立 Holdout 文件上同时重跑 baseline 与最佳候选，并要求数据和 evaluator 哈希保持不变。只有 Holdout 状态为 `validated` 的 campaign 才会进入跨任务策略历史，Reject 和失败候选仍保留以避免幸存者偏差。完整协议见 [`autoresearch/09_general_scientific_autoresearch.md`](autoresearch/09_general_scientific_autoresearch.md)和 [`autoresearch/10_python_research_optimizer.md`](autoresearch/10_python_research_optimizer.md)。
 
 ## 11. 文件上传与数据流
 
@@ -552,6 +565,7 @@ make eval
 - [Agent Runtime P0/P1](agent_runtime_p0_p1.md)
 - [受限 ToT 消融与文件上传](tot_ablation_and_uploads.md)
 - [Research Coding Agent](research_coding_agent.md)
+- [Benchmark Agent](benchmark_agent.md)
 - [AutoResearch 模块文档](autoresearch/)
 - [Claim-to-Evidence Graph](claim_evidence_graph.md)
 - [后端规划与模型参考](backend_planner_models_reference.md)

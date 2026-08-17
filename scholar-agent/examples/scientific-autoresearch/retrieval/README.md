@@ -32,7 +32,7 @@ Planner 会生成 7 节点主链：
 
 ## 真实结果
 
-2026-08-12 在本机 CPU 上使用 Python 3.12.13、rank-bm25 0.2.2、scikit-learn 1.9.0 和 networkx 3.6.1 运行：
+2026-08-12 在本机 CPU 上使用 Python 3.12.13、rank-bm25 0.2.2、scikit-learn 1.9.0 和 networkx 3.6.1 运行确定性 FIFO 基线：
 
 | 阶段 | BM25 baseline | 最佳候选 | 结果 |
 |---|---:|---:|---|
@@ -49,9 +49,21 @@ SCHOLAR_EXPERIMENT_PYTHON=/path/to/python \
 
 Python 环境需要安装 `rank-bm25`、`scikit-learn` 和 `networkx`。普通 `go test ./...` 会跳过这条外部依赖测试，不影响默认回归。
 
+### Python 策略经验复验
+
+2026-08-13 又通过真实 HTTP Research Optimizer 连续执行两次相同冻结任务。第一轮没有历史，冷启动先试 `hybrid_rrf`，再试 `graph_hybrid`；Holdout 通过后，第二轮从 SQLite 读取该经验，直接把 `graph_hybrid` 排到第一个：
+
+| 运行 | 可用历史 | 首个候选 | 候选 Trial | Search | Holdout |
+|---|---|---|---:|---:|---:|
+| Campaign 1 | 无 | `hybrid_rrf` | 2 | 0.4000 -> 0.6000 | 0.3333 -> 0.6667，2/2 |
+| Campaign 2 | 1 个已验证同数据任务 | `graph_hybrid` | 1 | 0.4000 -> 0.6000 | 0.3333 -> 0.6667，2/2 |
+
+第二轮 `graph_hybrid` 的选择概率为 `0.9333`，预测 Reward `0.1999494`，实际 Reward `0.19995`。完整决策、Outcome、数据库计数和声明边界见 [`optimizer_experience_result.json`](optimizer_experience_result.json)。这是单个小数据集上的链路验证，只证明经验被持久化并改变了候选顺序，不证明已经学会跨数据集泛化。
+
 ## 结果边界
 
 - 搜索集提升证明 Harness 在冻结小样例上找到了更好的候选，不等于生产数据最优。
 - Holdout 未参与候选选择，因此比搜索分数更可信；但 3 条 Holdout 仍然很小。
 - 真正工业使用应提供足够覆盖业务分布、失败成本和时间切片的标注评测集。
 - 没有查询及相关文档/答案标注时，系统会拒绝宣称某个策略更优。
+- 当前 Contextual-UCB 的节省来自同数据历史；是否能在未见数据集上节省预算，需要积累更多已验证 campaign 后按数据集切分评估。

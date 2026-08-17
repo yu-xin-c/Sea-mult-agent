@@ -5,15 +5,15 @@
 `research_coding_agent` 是一个面向科研仓库的受限 Coding Sub-Agent，负责三类需要真实阅读、修改和验证代码的工作：
 
 1. 论文仓库代码运行失败或结果差异明显时，定位有限源码上下文，生成最小补丁并在同一沙箱中重跑。
-2. 用户上传自有数据后，为指定公开仓库生成独立 Benchmark 适配器，完成预检、修复、正式评测和证据校验。
+2. 接收 Benchmark Agent 已冻结的数据与指标契约，为指定公开仓库生成独立 Adapter，完成公开预检、修复、validation 运行和无标签 test 推理。
 3. 根据冻结的 `ResearchSpec` 执行有预算的 AutoResearch 循环，用真实指标 Keep/Reject 候选，回滚退化修改并对最佳结果执行公开重放或隐藏 holdout。
-4. 根据 `ExperimentResearchSpec` 执行跨领域方法/超参数搜索；领域 Adapter 负责数据与 evaluator，通用 Harness 负责候选树、目标停止和 Holdout。
+4. 根据 `ExperimentResearchSpec` 执行跨领域方法/超参数搜索；领域 Adapter 负责数据与 evaluator，通用 Harness 负责候选树、受限同层并发、确定性入账、目标停止和 Holdout。
 
 底层 `CoderAgent` 继续提供通用代码生成、依赖解析和沙箱能力；Research Coding Agent 负责仓库级诊断、受控写入、重跑和证据闭环。它不会把一次代码运行成功解释成论文结论已经复现。
 
 ## 总体架构
 
-Research Coding Agent 不是独立调度器，也不负责从零完成整条论文复现。它是 Scheduler 后面的专用执行器：Planner 把仓库级调试或 Benchmark 节点分配给 `research_coding_agent`，Scheduler 汇集上游 Artifact 后调用统一入口，Agent 再按 `task.type` 进入论文调试或 Benchmark harness。
+Research Coding Agent 不是独立调度器，也不负责从零定义 Benchmark。Benchmark Agent 先完成数据审计、切分、Metric/Reward 冻结和隐藏验收；Research Coding Agent 只处理需要阅读仓库或执行仓库代码的 Adapter 节点。
 
 ```mermaid
 flowchart LR
@@ -23,11 +23,13 @@ flowchart LR
     R["Repository Nodes<br/>确定性发现仓库、准备工作区"] -->|"workspace_path / repo_manifest"| S
     C["CoderAgent<br/>通用代码生成、依赖解析"] -->|"dependency_spec"| S
     E["Sandbox Agent<br/>运行时准备、依赖安装"] -->|"prepared_runtime"| S
+	B["Benchmark Agent<br/>数据切分、Metric/Reward、隐藏验收"] -->|"benchmark_contract / public splits"| S
 
     D --> PH["Paper Debug Harness<br/>诊断、受限补丁、重跑、回滚"]
-    D --> BH["Benchmark Harness<br/>数据分析、适配、预检、执行、校验"]
+    D --> BH["Repository Benchmark Harness<br/>适配、公开预检、validation、无标签 test 推理"]
     D --> AH["AutoResearch Harness<br/>冻结规格、Baseline、Keep/Reject、复验"]
     D --> EH["Experiment Harness<br/>Domain Adapter、配置候选树、Holdout"]
+    EH --> RO["Python Research Optimizer<br/>Features、Contextual-UCB、Experience"]
 
     PH --> X["Sandbox Service<br/>执行真实仓库入口"]
     BH --> X
@@ -45,6 +47,7 @@ flowchart LR
 | Agent 入口 | [`research_coding_agent.go`](../backend/internal/agent/research_coding_agent.go) | 注入 Chat Model 和 Sandbox Client；校验任务类型并分发 |
 | 论文调试 harness | [`paper_debug_harness.go`](../backend/internal/agent/paper_debug_harness.go) | 收集错误上下文、请求最小补丁、校验并写入、重跑、回滚、生成证据 |
 | 数据分析 | [`benchmark_dataset.go`](../backend/internal/agent/benchmark_dataset.go) | 确定性读取上传数据并建立 `dataset_manifest` |
+| Benchmark Agent | [`benchmark_agent.go`](../backend/internal/agent/benchmark_agent.go)、[`benchmark_contract_agent.go`](../backend/internal/agent/benchmark_contract_agent.go) | 数据审计、可复现 split、泄漏检查、Metric/Reward 契约和隐藏指标重算 |
 | 适配器生成 | [`benchmark_adapter.go`](../backend/internal/agent/benchmark_adapter.go) | 选择仓库入口方案、生成受控适配器并执行静态策略检查 |
 | Benchmark harness | [`benchmark_harness.go`](../backend/internal/agent/benchmark_harness.go) | 小样本预检、有限修复、正式运行、输出检查和指标重算 |
 | AutoResearch harness | [`autoresearch.go`](../backend/internal/agent/autoresearch.go) | 冻结研究规格、候选白名单写入、Keep/Reject、回滚、TrialLedger、重复复验和资源汇总 |
@@ -52,31 +55,33 @@ flowchart LR
 | Experiment harness | [`experiment_research.go`](../backend/internal/agent/experiment_research.go) | 通用策略/参数候选、真实 evaluator、目标停止、TrialLedger 和 Holdout |
 | Experiment Adapter | [`experiment_retrieval_adapter.go`](../backend/internal/agent/experiment_retrieval_adapter.go)、[`experiment_portable_adapter.go`](../backend/internal/agent/experiment_portable_adapter.go) | 内置检索数据适配，以及任意领域 Portable 契约 |
 | Experiment 模型 | [`models/experiment_research.go`](../backend/internal/models/experiment_research.go) | 数据清单、方法/参数空间、候选谱系、评测和验证契约 |
+| Research Optimizer Client | [`research_optimizer_client.go`](../backend/internal/agent/research_optimizer_client.go) | 版本化 HTTP 契约、返回校验、Reward 和确定性回退 |
+| Python Research Optimizer | [`research-optimizer/`](../research-optimizer/) | 数据特征、Contextual-UCB 候选排序和 SQLite 跨任务经验 |
 | Prompt 契约 | [`prompts.go`](../backend/internal/prompts/prompts.go) | 约束模型返回结构、修复范围和禁止行为 |
 | 计划路由 | [`planner.go`](../backend/internal/planner/planner.go) | 生成论文调试、Benchmark 和固定 AutoResearch DAG |
 | 运行时路由 | [`executor.go`](../backend/internal/scheduler/executor.go) | 把上游 Artifact 转为任务输入，并将 Agent 输出写回计划 Artifact |
 
-`ResearchCodingAgent` 本身只保存两个共享依赖：Chat Model 和 Sandbox Client。每个任务的运行次数、备份、诊断和补丁记录都保存在当前调用的局部状态中；跨节点数据通过 Artifact 传递，不依赖 Agent 内存中的隐藏会话。
+`ResearchCodingAgent` 保存 Chat Model、Sandbox Client 和可选 Research Optimizer Client。每个任务的运行次数、备份、诊断和补丁记录都保存在当前调用的局部状态中；跨节点数据通过 Artifact 传递，不依赖 Agent 内存中的隐藏会话。Optimizer 只决定队列中先尝试哪个合法候选，不能写工作区、运行 evaluator 或决定 Keep/Reject。
 
 ### 任务入口
 
-统一入口 `ExecuteTask` 只接受下面 10 类任务：
+统一入口 `ExecuteTask` 只接受已注册的仓库调试、Adapter、AutoResearch 和 Experiment 任务：
 
 | Task type | 必要上游输入 | 执行模块 | 主要输出 |
 |---|---|---|---|
 | `paper_code_execute` | `workspace_path`、`code_file_path`、`prepared_runtime`、`repo_manifest` | Paper Debug Harness | `run_metrics`、`paper_debug_report`、`paper_patch_manifest` |
 | `fix_and_rerun` | 上述输入，加 `run_metrics`、`paper_debug_report`、`comparison_report` | Paper Debug Harness | `rerun_metrics`、`rerun_report`、`gap_debug_report`、`gap_patch_manifest` |
-| `dataset_profile` | 上传文件及列映射 | Dataset Profiler | `dataset_manifest` |
-| `benchmark_adapter_generate` | `dataset_manifest`、`workspace_path`、`repo_manifest` | Adapter Generator | 方案、适配器 spec 和代码 |
-| `benchmark_adapter_preflight` | 适配器、数据契约、`prepared_runtime` | Benchmark Harness | 冻结后的适配器和预检报告 |
-| `benchmark_execute` | 已通过预检的适配器和运行时 | Benchmark Harness | 经逐样本重算的指标、预测路径、运行清单 |
-| `benchmark_validate` | 数据契约、指标和运行清单 | Evidence Validator | 数据哈希、样本数、数值范围复核报告 |
+| `dataset_profile` | 上传文件及列映射 | 兼容 Dataset Profiler | `dataset_manifest` |
+| `benchmark_adapter_generate` | `benchmark_contract`、validation manifest、`workspace_path`、`repo_manifest` | Adapter Generator | 方案、适配器 spec 和代码 |
+| `benchmark_adapter_preflight` | 适配器、有标签 validation、无标签 preflight 契约、`prepared_runtime` | Benchmark Harness | 冻结后的适配器和双阶段预检报告 |
+| `benchmark_execute` | 已通过预检的适配器、公开/无标签 test manifest 和运行时 | Benchmark Harness | validation 指标、公开预测、隐藏预测和运行清单 |
+| `benchmark_validate` | 旧链兼容入口；新链由独立 Benchmark Agent 验收 | Legacy Evidence Validator | 基础数据哈希和数值范围报告 |
 | `autoresearch_spec` | `workspace_path`、`repo_manifest`、显式或上传 spec | AutoResearch Harness | `research_spec`、spec 报告、`dependency_spec` |
 | `autoresearch_run` | `workspace_path`、`prepared_runtime`、冻结 `research_spec` | AutoResearch Harness | `research_trial_ledger`、最佳候选和运行报告 |
 | `autoresearch_validate` | spec、TrialLedger、最佳候选和同一运行时 | AutoResearch Harness | 重复验证统计、资源证据和最佳指标 |
 | `experiment_dataset_prepare` | 上传数据和领域提示 | Domain Adapter | `workspace_path`、数据清单和映射报告 |
 | `experiment_spec` | 数据清单、指标、目标与预算 | Domain Adapter + Contract Validator | `experiment_spec`、依赖和冻结报告 |
-| `experiment_run` | 工作区、运行时和 ExperimentSpec | Generic Experiment Harness | 参数候选树、最佳配置和运行报告 |
+| `experiment_run` | 工作区、运行时、ExperimentSpec 和 ToT 消融计划 | Generic Experiment Harness | 带 batch/worker 的参数候选树、最佳配置和运行报告 |
 | `experiment_validate` | spec、TrialLedger、最佳配置和运行时 | Generic Holdout Validator | Holdout 重复结果、样例证据和最佳指标 |
 
 不在白名单中的任务会直接失败，不会回退到通用模型执行。
@@ -88,7 +93,8 @@ flowchart LR
 | Repository Nodes | 确定性发现仓库、克隆并准备工作区 | 生成或修复仓库代码 |
 | `CoderAgent` | 通用代码生成、依赖解析；当前也承载 `sandbox_agent` 的运行时实现 | 根据论文运行错误修改仓库源码 |
 | `Sandbox Agent` | 作为逻辑角色创建隔离运行时、安装解析后的依赖 | 决定该改哪段论文代码 |
-| `ResearchCodingAgent` | 在已有工作区和运行时中诊断、受控修改、重跑、回滚、代码或配置 AutoResearch 筛选和记录证据 | 论文检索、容器生命周期、自动定义科研真值、保证任意领域零配置适配、最终科研结论判断 |
+| `BenchmarkAgent` | 定义 split、Metric/Reward 契约，隔离 test 标签并重算最终指标 | 阅读或修改目标仓库、提出算法候选 |
+| `ResearchCodingAgent` | 在已有工作区和运行时中诊断、受控修改、重跑、回滚、Repository Adapter、代码或配置 AutoResearch | 定义科研真值、读取隐藏标签、单独宣布最终 Benchmark 通过 |
 | `DataAgent` | 对比论文声明、分析指标、选择受限消融、生成报告 | 写入或修复仓库源码 |
 
 因此，环境搭建错误先由依赖安装链处理；进入 `paper_code_execute` 后仍然失败，且证据指向仓库代码缺陷时，才进入源码调试链。缺数据、checkpoint、凭证、硬件或论文口径不一致不属于代码补丁可以解决的问题。
@@ -161,7 +167,7 @@ baseline 在模型第一次调用前运行。editable 源码使用结构化 JSON
     -> 新进程 Holdout baseline vs best
 ```
 
-每个候选的 ID 由 `strategy + parameters` 的规范 JSON 哈希生成，重复路径只执行一次。配置文件写入 `.scholar/experiment/runtime/`，不能覆盖数据或 runner；命令只替换一个 `{config_path}` 占位符。evaluator 必须输出 `experiment.evaluation/v1`，并回传实际读取资产的 SHA-256。前端 [`ExperimentResearchView.tsx`](../frontend/src/features/experiment/ExperimentResearchView.tsx) 展示方法根分支、单参数子分支、Keep/Reject、最佳配置、停止原因和 Holdout 样例证据。
+每个候选的 ID 由 `strategy + parameters` 的规范 JSON 哈希生成，重复路径只执行一次。配置文件写入 `.scholar/experiment/runtime/`，不能覆盖数据或 runner；命令只替换一个 `{config_path}` 占位符。evaluator 必须输出 `experiment.evaluation/v1`，并回传实际读取资产的 SHA-256。Python Optimizer 会在执行前记录候选集合、选中动作、Policy 版本和 propensity，执行后再接收由 Go 计算的结果与 Reward；Holdout 通过后才将该 campaign 标记为可学习历史。前端 [`ExperimentResearchView.tsx`](../frontend/src/features/experiment/ExperimentResearchView.tsx) 展示方法根分支、单参数子分支、策略选择、预测/实际 Reward、Keep/Reject、最佳配置、停止原因和 Holdout 样例证据。
 
 当前 `retrieval.v1` 是首个内置 Adapter；`portable.v1` 允许其他论文领域上传 `experiment.json`、evaluator 与数据。详细协议和真实示例见 [`autoresearch/09_general_scientific_autoresearch.md`](autoresearch/09_general_scientific_autoresearch.md)。
 
@@ -273,35 +279,36 @@ baseline 模式先运行再诊断；结果差异模式先读取 `comparison_repo
 
 ### 执行链
 
-系统为这类请求生成固定的 11 节点 DAG：
+系统为这类请求生成固定的 13 节点 DAG：
 
 ```text
-分析上传数据 --------------------------+
-                                      |
-获取仓库 -> 准备工作区 ----------------+-> 生成评测适配器
-                                            -> 解析依赖
-                                            -> 准备运行时
-                                            -> 安装依赖
-                                            -> 8 条样本预检与修复
-                                            -> 正式运行
-                                            -> 校验证据
-                                            -> 生成报告
+Benchmark 数据审计 ---------------------------+
+获取仓库 -> 准备工作区 -----------------------+-> 安全切分与泄漏检查
+                                                  -> 冻结 Metric / Reward
+                                                  -> 生成评测适配器
+                                                  -> 解析依赖与准备运行时
+                                                  -> 8 条 validation 预检与修复
+                                                  -> validation + 无标签 test 推理
+                                                  -> Benchmark 隐藏验收
+                                                  -> 生成报告
 ```
 
 对应的运行时任务类型如下：
 
 | 步骤 | Agent | Task type |
 |---|---|---|
-| 数据分析 | Research Coding | `dataset_profile` |
+| 数据审计 | Benchmark | `benchmark_dataset_audit` |
 | 仓库获取 | Coder | `repo_discovery` |
 | 工作区准备 | Coder | `repo_prepare` |
+| 安全切分 | Benchmark | `benchmark_split_materialize` |
+| 契约冻结 | Benchmark | `benchmark_contract_freeze` |
 | 适配器生成 | Research Coding | `benchmark_adapter_generate` |
 | 依赖解析 | Coder | `resolve_dependencies` |
 | 运行时准备 | Sandbox | `prepare_runtime` |
 | 依赖安装 | Sandbox | `install_dependencies` |
 | 预检与修复 | Research Coding | `benchmark_adapter_preflight` |
 | 正式评测 | Research Coding | `benchmark_execute` |
-| 证据校验 | Research Coding | `benchmark_validate` |
+| 隐藏验收 | Benchmark | `benchmark_validate` |
 | 汇总报告 | Data | `framework_report` |
 
 用户明确提供仓库 URL 时，仓库发现节点直接采用该 URL，跳过论文检索；仓库是否可克隆由后续工作区节点实际验证。
@@ -368,7 +375,7 @@ run_manifest.json
 
 ### 预检与 ReAct 修复
 
-正式运行前固定使用最多 8 条样本预检。预检失败时，错误日志和当前适配器会交给 ReAct 修复，但有以下边界：
+正式运行前先用最多 8 条有标签 validation 样本核对指标输出，再用同源但已删除目标列的固定样本核对纯推理和 `__benchmark_id` 覆盖。任一步失败时，错误日志和当前适配器会交给 ReAct 修复，但有以下边界：
 
 - 总尝试次数最多 3 次。
 - 只允许替换 `.scholar/benchmark/adapter.py`。

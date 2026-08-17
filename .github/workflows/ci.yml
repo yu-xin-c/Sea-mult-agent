@@ -23,6 +23,9 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: scholar-agent/frontend/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - run: npm ci
         working-directory: scholar-agent/frontend
       - run: npm run lint && npm run build
@@ -31,4 +34,6 @@ jobs:
         working-directory: scholar-agent/backend
       - run: go test ./...
         working-directory: scholar-agent/docker-sandbox
+      - run: python3 -m unittest discover -s tests -p 'test_*.py'
+        working-directory: scholar-agent/research-optimizer
       - run: python3 -m unittest discover -s examples/paper-reproduction -p 'test_*.py'

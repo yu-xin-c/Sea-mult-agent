@@ -5,6 +5,8 @@ import { createTaskNodeLabel } from './nodeLabelFactory';
 
 const NODE_WIDTH = 216;
 const NODE_HEIGHT = 92;
+const SEARCH_NODE_WIDTH = 680;
+const SEARCH_NODE_HEIGHT = 256;
 
 const getCompactColumnCount = () => (typeof window !== 'undefined' && window.innerWidth < 640 ? 2 : 3);
 
@@ -66,7 +68,7 @@ export const buildGraphLayout = (planGraph: PlanGraph): { nodes: Node[]; edges: 
   const newEdges: Edge[] = [];
 
   const levelMap: Record<string, number> = {};
-  const laneOrder = ['librarian_agent', 'coder_agent', 'research_coding_agent', 'sandbox_agent', 'data_agent', 'general_agent'];
+  const laneOrder = ['librarian_agent', 'benchmark_agent', 'coder_agent', 'research_coding_agent', 'sandbox_agent', 'data_agent', 'general_agent'];
   const tasksById = Object.fromEntries(planGraph.nodes.map((task) => [task.id, task]));
 
   const resolveLevel = (task: GraphTask): number => {
@@ -99,6 +101,7 @@ export const buildGraphLayout = (planGraph: PlanGraph): { nodes: Node[]; edges: 
     return counts;
   }, {});
   const maxTasksInLevel = Math.max(...Object.values(tasksPerLevel), 1);
+  const hasExperimentSearch = sortedTasks.some((task) => task.type === 'experiment_run');
   const useCompactLongChain = maxLevel >= 5 && maxTasksInLevel <= 2;
   const compactColumns = getCompactColumnCount();
   const compactStackGap = 112;
@@ -119,7 +122,27 @@ export const buildGraphLayout = (planGraph: PlanGraph): { nodes: Node[]; edges: 
     let sourcePosition = Position.Right;
     let targetPosition = Position.Left;
 
-    if (useCompactLongChain) {
+    if (hasExperimentSearch) {
+      const scientificPositions: Record<string, { x: number; y: number }> = {
+        experiment_dataset_prepare: { x: 32, y: 90 },
+        experiment_spec: { x: 272, y: 90 },
+        ablation_design: { x: 512, y: 28 },
+        prepare_runtime: { x: 512, y: 154 },
+        install_dependencies: { x: 752, y: 154 },
+        experiment_run: { x: 272, y: 292 },
+        experiment_validate: { x: 332, y: 602 },
+        verify_result: { x: 592, y: 602 },
+      };
+      position = scientificPositions[task.type] ?? position;
+      if (task.type === 'ablation_design' || task.type === 'install_dependencies') sourcePosition = Position.Bottom;
+      if (task.type === 'experiment_run') {
+        sourcePosition = Position.Bottom;
+        targetPosition = Position.Top;
+      }
+      if (task.type === 'experiment_validate') targetPosition = Position.Top;
+    }
+
+    if (useCompactLongChain && !hasExperimentSearch) {
       const row = Math.floor(level / compactColumns);
       const naturalColumn = level % compactColumns;
       const column = row % 2 === 0 ? naturalColumn : compactColumns - naturalColumn - 1;
@@ -144,13 +167,14 @@ export const buildGraphLayout = (planGraph: PlanGraph): { nodes: Node[]; edges: 
       data: {
         task: legacyTask,
         status: task.status,
-        step: taskIndex + 1,
-        label: createTaskNodeLabel({
+          step: taskIndex + 1,
+          label: createTaskNodeLabel({
           assignedTo: task.assigned_to,
           taskName: task.name,
-          status: task.status,
-          step: taskIndex + 1,
-        }),
+            status: task.status,
+            step: taskIndex + 1,
+            task: legacyTask,
+          }),
       },
       style: {
         borderRadius: '8px',
@@ -161,8 +185,8 @@ export const buildGraphLayout = (planGraph: PlanGraph): { nodes: Node[]; edges: 
         cursor: 'pointer',
         overflow: 'hidden',
         padding: 0,
-        width: NODE_WIDTH,
-        minHeight: NODE_HEIGHT,
+        width: task.type === 'experiment_run' ? SEARCH_NODE_WIDTH : NODE_WIDTH,
+        minHeight: task.type === 'experiment_run' ? SEARCH_NODE_HEIGHT : NODE_HEIGHT,
       },
     });
   });

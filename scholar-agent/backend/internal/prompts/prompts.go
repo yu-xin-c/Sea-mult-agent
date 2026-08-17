@@ -683,12 +683,12 @@ Your job is to output a valid task DAG in strict JSON.
 
 Rules:
 1. Output JSON only. No markdown, no comments.
-2. Allowed assigned_to values: librarian_agent, coder_agent, sandbox_agent, data_agent, research_coding_agent, general_agent.
+2. Allowed assigned_to values: librarian_agent, coder_agent, sandbox_agent, data_agent, benchmark_agent, research_coding_agent, general_agent.
 3. Allowed task type values are the canonical runtime types below. Do not invent new task types:
    framework_research, framework_recommendation,
    generate_code, resolve_dependencies, prepare_runtime, install_dependencies, execute_code, paper_code_execute,
    paper_parse, claim_rubric_extract, repo_discovery, repo_prepare, paper_compare, claim_evidence_build, result_visualization, fix_and_rerun,
-   dataset_profile, benchmark_adapter_generate, benchmark_adapter_preflight, benchmark_execute, benchmark_validate,
+   dataset_profile, benchmark_dataset_audit, benchmark_split_materialize, benchmark_contract_freeze, benchmark_adapter_generate, benchmark_adapter_preflight, benchmark_execute, benchmark_validate,
    autoresearch_spec, autoresearch_run, autoresearch_validate,
    verify_result, render_plot, general_research, general_synthesis, general_process.
 3. Each node must include:
@@ -797,7 +797,8 @@ The adapter contract is mandatory:
 - Add --repo-root to sys.path and use the real repository model/evaluation API.
 - Process no more than --limit rows.
 - Write metrics.json as a JSON object containing only measured numeric metrics.
-- Write predictions.jsonl with one JSON object per processed sample. Every object must contain prediction; labeled datasets must also contain target.
+- Write predictions.jsonl with one JSON object per processed sample. Every object must contain prediction and must copy __benchmark_id to id when that field exists. Labeled datasets must also contain target.
+- The final hidden test contains __benchmark_id but deliberately omits the target column. The adapter must still run inference, write id and prediction, and may write an empty metrics object for this input-only case. Never synthesize a target.
 - Write run_manifest.json with status, dataset_sha256, sample_count, seed, and adapter.
 - Compute dataset_sha256 from the actual dataset bytes.
 - Print one final JSON summary line containing status, sample_count, metrics, and dataset_sha256.

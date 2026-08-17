@@ -21,8 +21,18 @@ export interface ExperimentStrategyView {
   parameters: ExperimentParameterView[];
 }
 
+export interface ExperimentPolicyDecisionView {
+  policyVersion: string;
+  propensity: number;
+  predictedReward: number | null;
+  reasonCodes: string[];
+  fallback: boolean;
+}
+
 export interface ExperimentTrialView {
   number: number;
+  batch: number;
+  worker: number;
   candidate: ExperimentCandidateView;
   status: string;
   decision: string;
@@ -30,12 +40,15 @@ export interface ExperimentTrialView {
   metrics: Record<string, number>;
   score: number | null;
   deltaFromBest: number | null;
+  reward: number | null;
+  policyDecision: ExperimentPolicyDecisionView | null;
   durationMs: number;
   error: string;
 }
 
 export interface ExperimentLedgerView {
   version: 'experiment.ledger/v1';
+  campaignId: string;
   status: string;
   domain: string;
   adapter: string;
@@ -45,13 +58,17 @@ export interface ExperimentLedgerView {
   baselineScore: number;
   bestScore: number;
   maxTrials: number;
+  maxParallelTrials: number;
+  evaluationIsolation: string;
+  ablationPlanSha256: string;
+  designedBranches: number;
   completedTrials: number;
   acceptedTrials: number;
   stopReason: string;
   bestCandidate: ExperimentCandidateView;
   strategySpace: ExperimentStrategyView[];
   trials: ExperimentTrialView[];
-  resourceUsage: { evaluatorRuns: number; evaluatorTimeMs: number; wallDurationMs: number };
+  resourceUsage: { evaluatorRuns: number; evaluatorTimeMs: number; wallDurationMs: number; peakParallelism: number };
 }
 
 export interface ExperimentEvidenceView {
@@ -152,17 +169,43 @@ const parseStrategy = (value: unknown): ExperimentStrategyView | null => {
   };
 };
 
+const parsePolicyDecision = (value: unknown): ExperimentPolicyDecisionView | null => {
+  if (value === undefined || value === null) return null;
+  const decision = objectValue(value);
+  const propensity = numberValue(decision?.propensity);
+  const predictedReward = decision?.predicted_reward === undefined || decision.predicted_reward === null ? null : numberValue(decision.predicted_reward);
+  if (!decision || !textValue(decision.policy_version) || propensity === null || propensity <= 0 || propensity > 1 ||
+      predictedReward === null && decision.predicted_reward !== null && decision.predicted_reward !== undefined ||
+      !Array.isArray(decision.reason_codes) || typeof decision.fallback !== 'boolean') return null;
+  return {
+    policyVersion: textValue(decision.policy_version),
+    propensity,
+    predictedReward,
+    reasonCodes: decision.reason_codes.filter((item): item is string => typeof item === 'string'),
+    fallback: decision.fallback,
+  };
+};
+
 const parseTrial = (value: unknown): ExperimentTrialView | null => {
   const trial = objectValue(value);
   const number = integerValue(trial?.number);
+  const batch = integerValue(trial?.batch ?? 0);
+  const worker = integerValue(trial?.worker ?? 1);
   const candidate = parseCandidate(trial?.candidate);
   const score = trial?.score === undefined || trial.score === null ? null : numberValue(trial.score);
   const delta = trial?.delta_from_best === undefined || trial.delta_from_best === null ? null : numberValue(trial.delta_from_best);
+  const reward = trial?.reward === undefined || trial.reward === null ? null : numberValue(trial.reward);
+  const policyDecision = parsePolicyDecision(trial?.policy_decision);
   const duration = integerValue(trial?.duration_ms);
   const metrics = parseNumberMap(trial?.metrics ?? {});
-  if (!trial || number === null || !candidate || score === null && trial.score !== null && trial.score !== undefined || delta === null && trial.delta_from_best !== null && trial.delta_from_best !== undefined || duration === null || !metrics) return null;
+  if (!trial || number === null || batch === null || worker === null || !candidate || score === null && trial.score !== null && trial.score !== undefined ||
+      delta === null && trial.delta_from_best !== null && trial.delta_from_best !== undefined ||
+      reward === null && trial.reward !== null && trial.reward !== undefined ||
+      policyDecision === null && trial.policy_decision !== null && trial.policy_decision !== undefined || duration === null || !metrics) return null;
   return {
     number,
+    batch,
+    worker,
     candidate,
     status: textValue(trial.status),
     decision: textValue(trial.decision),
@@ -170,6 +213,8 @@ const parseTrial = (value: unknown): ExperimentTrialView | null => {
     metrics,
     score,
     deltaFromBest: delta,
+    reward,
+    policyDecision,
     durationMs: duration,
     error: textValue(trial.error),
   };
@@ -184,6 +229,8 @@ export function parseExperimentLedger(raw: string | unknown): LedgerParseResult 
     const baseline = numberValue(value.baseline_score);
     const best = numberValue(value.best_score);
     const maxTrials = integerValue(value.max_trials);
+    const maxParallelTrials = integerValue(value.max_parallel_trials ?? 1);
+    const designedBranches = integerValue(value.designed_branches ?? 0);
     const completed = integerValue(value.completed_trials);
     const accepted = integerValue(value.accepted_trials);
     const bestCandidate = parseCandidate(value.best_candidate);
@@ -191,7 +238,8 @@ export function parseExperimentLedger(raw: string | unknown): LedgerParseResult 
     const evaluatorRuns = integerValue(rawUsage?.evaluator_runs);
     const evaluatorTime = integerValue(rawUsage?.evaluator_time_ms);
     const wallDuration = integerValue(rawUsage?.wall_duration_ms);
-    if ((direction !== 'maximize' && direction !== 'minimize') || baseline === null || best === null || maxTrials === null || completed === null || accepted === null || !bestCandidate || !Array.isArray(value.trials) || !rawUsage || evaluatorRuns === null || evaluatorTime === null || wallDuration === null || target === null && value.target_score !== null && value.target_score !== undefined) {
+    const peakParallelism = integerValue(rawUsage?.peak_parallelism ?? 1);
+    if ((direction !== 'maximize' && direction !== 'minimize') || baseline === null || best === null || maxTrials === null || maxParallelTrials === null || maxParallelTrials < 1 || designedBranches === null || completed === null || accepted === null || !bestCandidate || !Array.isArray(value.trials) || !rawUsage || evaluatorRuns === null || evaluatorTime === null || wallDuration === null || peakParallelism === null || peakParallelism < 1 || target === null && value.target_score !== null && value.target_score !== undefined) {
       return { ok: false, error: '实验账本缺少候选、指标或预算字段。' };
     }
     const trials = value.trials.map(parseTrial);
@@ -210,6 +258,7 @@ export function parseExperimentLedger(raw: string | unknown): LedgerParseResult 
       ok: true,
       ledger: {
         version: 'experiment.ledger/v1',
+        campaignId: textValue(value.campaign_id),
         status: textValue(value.status),
         domain: textValue(value.domain),
         adapter: textValue(value.adapter),
@@ -219,13 +268,17 @@ export function parseExperimentLedger(raw: string | unknown): LedgerParseResult 
         baselineScore: baseline,
         bestScore: best,
         maxTrials,
+        maxParallelTrials,
+        evaluationIsolation: textValue(value.evaluation_isolation) || 'serial/v1',
+        ablationPlanSha256: textValue(value.ablation_plan_sha256),
+        designedBranches,
         completedTrials: completed,
         acceptedTrials: accepted,
         stopReason: textValue(value.stop_reason),
         bestCandidate,
         strategySpace: strategySpace as ExperimentStrategyView[],
         trials: normalizedTrials,
-        resourceUsage: { evaluatorRuns, evaluatorTimeMs: evaluatorTime, wallDurationMs: wallDuration },
+        resourceUsage: { evaluatorRuns, evaluatorTimeMs: evaluatorTime, wallDurationMs: wallDuration, peakParallelism },
       },
     };
   } catch {

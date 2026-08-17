@@ -58,6 +58,9 @@ func (a *ResearchCodingAgent) executeAdapterGeneration(ctx context.Context, task
 	if manifest.RequiresConfirmation {
 		return failResearchCodingTask(task, fmt.Errorf("dataset column mapping is ambiguous; provide input and label columns explicitly"))
 	}
+	if contract := strings.TrimSpace(extractTaskInputLike(task, "benchmark_contract")); contract != "" {
+		manifestJSON += "\n\nFrozen benchmark contract:\n" + contract
+	}
 	repositoryContext, err := collectBenchmarkRepositoryContext(workspacePath, benchmarkTaskString(task, "repo_manifest"))
 	if err != nil {
 		return failResearchCodingTask(task, err)
@@ -111,6 +114,16 @@ func (a *ResearchCodingAgent) executeAdapterGeneration(ctx context.Context, task
 		Dependencies:      cleanBenchmarkStrings(generation.Dependencies, 24),
 		AdapterCodeSHA256: hex.EncodeToString(codeHash[:]),
 		Reason:            strings.TrimSpace(generation.Reason),
+	}
+	if rawContract := strings.TrimSpace(extractTaskInputLike(task, "benchmark_contract")); rawContract != "" {
+		var contract models.BenchmarkContract
+		if err := json.Unmarshal([]byte(rawContract), &contract); err != nil || contract.Version != models.BenchmarkContractVersion {
+			return failResearchCodingTask(task, fmt.Errorf("benchmark contract is invalid"))
+		}
+		spec.Metrics = make([]string, 0, len(contract.Metric.Metrics))
+		for _, metric := range contract.Metric.Metrics {
+			spec.Metrics = append(spec.Metrics, metric.Name)
+		}
 	}
 	if spec.Strategy == "" {
 		spec.Strategy = plan.Candidates[plan.SelectedIndex].Kind
@@ -399,7 +412,10 @@ func benchmarkPathInWorkspace(workspacePath, relative string) (string, error) {
 }
 
 func benchmarkDatasetManifestFromTask(task *models.Task) (models.DatasetManifest, string, error) {
-	raw := strings.TrimSpace(extractTaskInputLike(task, "dataset_manifest"))
+	raw := strings.TrimSpace(extractTaskInputLike(task, "benchmark_validation_dataset_manifest"))
+	if raw == "" {
+		raw = strings.TrimSpace(extractTaskInputLike(task, "dataset_manifest"))
+	}
 	if raw == "" {
 		return models.DatasetManifest{}, "", fmt.Errorf("dataset_manifest input is required")
 	}

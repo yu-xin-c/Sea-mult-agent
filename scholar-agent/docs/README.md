@@ -9,6 +9,7 @@
 - [agent_runtime_p0_p1.md](agent_runtime_p0_p1.md)：P0/P1 可靠性、安全、治理与运维说明
 - [tot_ablation_and_uploads.md](tot_ablation_and_uploads.md)：受限 ToT 消融设计、预算选择和文件上传
 - [research_coding_agent.md](research_coding_agent.md)：科研 Coding 智能体组件架构、任务路由、论文调试状态机与自有数据 Benchmark 契约
+- [benchmark_agent.md](benchmark_agent.md)：独立评测智能体、train/validation/test 划分、泄漏检查、Metric/Reward 契约和隐藏指标重算
 - [autoresearch/00_project_introduction.md](autoresearch/00_project_introduction.md)：AutoResearch 项目定位、架构、核心能力，以及与相关项目和论文的借鉴关系
 - [autoresearch/](autoresearch/)：AutoResearch Planner/ResearchSpec、Keep/Reject harness、冻结评测器、证据边界、真实示例与研究路线图
 - [claim_evidence_graph.md](claim_evidence_graph.md)：分层论文主张、冻结 Rubric、运行证据绑定、判定边界与前端可视化

@@ -1,5 +1,6 @@
 {
   "version": "experiment.ledger/v1",
+  "campaign_id": "campaign-2223e8231acac90bb822",
   "status": "completed",
   "domain": "retrieval",
   "adapter": "retrieval.v1",
@@ -9,6 +10,10 @@
   "baseline_score": 0.4,
   "best_score": 0.6,
   "max_trials": 6,
+  "max_parallel_trials": 3,
+  "evaluation_isolation": "shared-readonly/v1",
+  "ablation_plan_sha256": "54f380a788945133b382b3145c5b67566c38f87e60fd3d431262f8b247db3e42",
+  "designed_branches": 6,
   "completed_trials": 3,
   "accepted_trials": 1,
   "stop_reason": "target_score_reached",
@@ -77,6 +82,8 @@
   "trials": [
     {
       "number": 0,
+      "batch": 0,
+      "worker": 1,
       "candidate": {
         "id": "candidate-0512f026791f",
         "parent_id": "",
@@ -92,11 +99,13 @@
       "metrics": { "ndcg_at_k": 0.4, "mrr": 0.4, "recall_at_k": 0.4 },
       "score": 0.4,
       "delta_from_best": null,
-      "duration_ms": 1680,
+      "duration_ms": 546,
       "error": ""
     },
     {
       "number": 1,
+      "batch": 1,
+      "worker": 1,
       "candidate": {
         "id": "candidate-57e9b628a810",
         "parent_id": "",
@@ -108,15 +117,31 @@
       },
       "status": "rejected",
       "decision": "reject",
-      "reason": "improvement 0.0000 is below min_delta",
+      "reason": "ndcg_at_k delta 0.000000 did not meet 0.000100",
       "metrics": { "ndcg_at_k": 0.4, "mrr": 0.4, "recall_at_k": 0.4 },
       "score": 0.4,
-      "delta_from_best": 0,
-      "duration_ms": 1790,
+      "delta_from_best": 0.0,
+      "reward": -0.00005,
+      "policy_decision": {
+        "version": "experiment.policy-decision/v1",
+        "campaign_id": "campaign-2223e8231acac90bb822",
+        "trial_number": 1,
+        "policy_version": "contextual-ucb/v1",
+        "candidate_id": "candidate-57e9b628a810",
+        "available_candidate_ids": ["candidate-57e9b628a810", "candidate-2e10dbe67b0c", "candidate-11eb14ea18e6"],
+        "propensity": 0.45,
+        "predicted_reward": 0.02,
+        "reason_codes": ["parallel_frontier", "contextual_ucb_exploration"],
+        "fallback": false,
+        "selected_at": "2026-08-18T02:40:09.010Z"
+      },
+      "duration_ms": 505,
       "error": ""
     },
     {
       "number": 2,
+      "batch": 1,
+      "worker": 2,
       "candidate": {
         "id": "candidate-2e10dbe67b0c",
         "parent_id": "",
@@ -128,15 +153,31 @@
       },
       "status": "rejected",
       "decision": "reject",
-      "reason": "improvement 0.0000 is below min_delta",
+      "reason": "ndcg_at_k delta 0.000000 did not meet 0.000100",
       "metrics": { "ndcg_at_k": 0.4, "mrr": 0.4, "recall_at_k": 0.4 },
       "score": 0.4,
-      "delta_from_best": 0,
-      "duration_ms": 1840,
+      "delta_from_best": 0.0,
+      "reward": -0.00005,
+      "policy_decision": {
+        "version": "experiment.policy-decision/v1",
+        "campaign_id": "campaign-2223e8231acac90bb822",
+        "trial_number": 2,
+        "policy_version": "contextual-ucb/v1",
+        "candidate_id": "candidate-2e10dbe67b0c",
+        "available_candidate_ids": ["candidate-2e10dbe67b0c", "candidate-11eb14ea18e6"],
+        "propensity": 0.72,
+        "predicted_reward": 0.12,
+        "reason_codes": ["parallel_frontier", "validated_history_available"],
+        "fallback": false,
+        "selected_at": "2026-08-18T02:40:09.011Z"
+      },
+      "duration_ms": 498,
       "error": ""
     },
     {
       "number": 3,
+      "batch": 1,
+      "worker": 3,
       "candidate": {
         "id": "candidate-11eb14ea18e6",
         "parent_id": "",
@@ -152,13 +193,28 @@
       "metrics": { "ndcg_at_k": 0.6, "mrr": 0.6, "recall_at_k": 0.6 },
       "score": 0.6,
       "delta_from_best": 0.2,
-      "duration_ms": 1810,
+      "reward": 0.19995,
+      "policy_decision": {
+        "version": "experiment.policy-decision/v1",
+        "campaign_id": "campaign-2223e8231acac90bb822",
+        "trial_number": 3,
+        "policy_version": "contextual-ucb/v1",
+        "candidate_id": "candidate-11eb14ea18e6",
+        "available_candidate_ids": ["candidate-11eb14ea18e6"],
+        "propensity": 0.9333333333333333,
+        "predicted_reward": 0.1999494,
+        "reason_codes": ["parallel_frontier", "contextual_ucb_exploitation", "validated_history_available"],
+        "fallback": false,
+        "selected_at": "2026-08-13T09:42:09.012Z"
+      },
+      "duration_ms": 500,
       "error": ""
     }
   ],
   "resource_usage": {
     "evaluator_runs": 4,
-    "evaluator_time_ms": 7120,
-    "wall_duration_ms": 7190
+    "evaluator_time_ms": 2049,
+    "wall_duration_ms": 1082,
+    "peak_parallelism": 3
   }
 }

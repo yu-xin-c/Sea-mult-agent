@@ -13,6 +13,7 @@ type DatasetManifest struct {
 	Version              string                 `json:"version"`
 	Name                 string                 `json:"name"`
 	Format               string                 `json:"format"`
+	RelativePath         string                 `json:"relative_path,omitempty"`
 	SHA256               string                 `json:"sha256"`
 	Size                 int64                  `json:"size"`
 	RowCount             int                    `json:"row_count"`

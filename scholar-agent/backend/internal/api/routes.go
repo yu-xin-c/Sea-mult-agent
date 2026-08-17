@@ -101,6 +101,8 @@ func SetupRoutes(r *gin.Engine) {
 	sb := sandbox.NewSandboxClient(sandboxURL)
 	coderAgent := agent.NewCoderAgent(sb)
 	researchCodingAgent := agent.NewResearchCodingAgent(coderAgent)
+	benchmarkAgent := agent.NewBenchmarkAgent()
+	optimizerURL := strings.TrimSpace(os.Getenv("RESEARCH_OPTIMIZER_URL"))
 	librarianAgent := agent.NewLibrarianAgent()
 	dataAgent := agent.NewDataAgent()
 	chatAgent := agent.NewChatAgent(coderAgent)
@@ -113,7 +115,7 @@ func SetupRoutes(r *gin.Engine) {
 			c.Status(204)
 		})
 
-		RegisterPlanRuntimeRoutes(apiGroup, p, librarianAgent, dataAgent, coderAgent, researchCodingAgent)
+		RegisterPlanRuntimeRoutes(apiGroup, p, librarianAgent, dataAgent, coderAgent, researchCodingAgent, benchmarkAgent)
 		RegisterUploadRoutes(apiGroup)
 
 		apiGroup.GET("/hello", func(c *gin.Context) {
@@ -121,7 +123,7 @@ func SetupRoutes(r *gin.Engine) {
 		})
 
 		apiGroup.GET("/health", func(c *gin.Context) {
-			c.JSON(http.StatusOK, buildServiceHealth(c.Request.Context(), sandboxURL))
+			c.JSON(http.StatusOK, buildServiceHealth(c.Request.Context(), sandboxURL, optimizerURL))
 		})
 
 		apiGroup.POST("/chat", func(c *gin.Context) {
@@ -295,6 +297,8 @@ func SetupRoutes(r *gin.Engine) {
 					err = coderAgent.ExecuteTask(ctx, task, nil)
 				case "research_coding_agent":
 					err = researchCodingAgent.ExecuteTask(ctx, task, nil)
+				case "benchmark_agent":
+					err = benchmarkAgent.ExecuteTask(ctx, task, nil)
 				default:
 					err = coderAgent.ExecuteTask(ctx, task, nil)
 				}
@@ -371,7 +375,7 @@ func shouldAllocateDirectSandbox(task *models.Task) bool {
 	}
 	// Benchmark tasks use the prepared_runtime produced by their DAG. Creating a
 	// second direct-execution sandbox would mount the wrong workspace.
-	return task.AssignedTo != "research_coding_agent"
+	return task.AssignedTo != "research_coding_agent" && task.AssignedTo != "benchmark_agent"
 }
 
 func RegisterPlanRoute(apiGroup *gin.RouterGroup, p *planner.Planner) {
@@ -402,7 +406,11 @@ func RegisterPlanRoute(apiGroup *gin.RouterGroup, p *planner.Planner) {
 	})
 }
 
-func buildServiceHealth(ctx context.Context, sandboxURL string) gin.H {
+func buildServiceHealth(ctx context.Context, sandboxURL string, optimizerURLs ...string) gin.H {
+	optimizerURL := ""
+	if len(optimizerURLs) > 0 {
+		optimizerURL = strings.TrimRight(strings.TrimSpace(optimizerURLs[0]), "/")
+	}
 	gitPath, gitErr := exec.LookPath("git")
 	repositoryHealth := gin.H{"ok": gitErr == nil}
 	if gitErr == nil {
@@ -422,39 +430,67 @@ func buildServiceHealth(ctx context.Context, sandboxURL string) gin.H {
 			"url":     sandboxURL,
 			"message": "sandbox health check was not run",
 		},
-	}
-
-	checkCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(checkCtx, http.MethodGet, strings.TrimRight(sandboxURL, "/")+"/api/v1/health", nil)
-	if err != nil {
-		health["ok"] = false
-		health["sandbox"] = gin.H{"ok": false, "url": sandboxURL, "message": err.Error()}
-		return health
+		"research_optimizer": gin.H{
+			"ok":         optimizerURL == "",
+			"configured": optimizerURL != "",
+			"url":        optimizerURL,
+			"message":    "research optimizer is optional and not configured",
+		},
 	}
 
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		health["ok"] = false
-		health["sandbox"] = gin.H{"ok": false, "url": sandboxURL, "message": err.Error()}
-		return health
-	}
-	defer resp.Body.Close()
-
-	var sandboxHealth map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&sandboxHealth); err != nil {
-		health["ok"] = false
-		health["sandbox"] = gin.H{"ok": false, "url": sandboxURL, "message": err.Error()}
-		return health
-	}
-	sandboxHealth["url"] = sandboxURL
+	sandboxHealth := probeServiceHealth(ctx, client, sandboxURL, "/api/v1/health", true)
 	health["sandbox"] = sandboxHealth
 	if ok, _ := sandboxHealth["ok"].(bool); !ok {
 		health["ok"] = false
 	}
+	if optimizerURL == "" {
+		return health
+	}
+	optimizerHealth := probeServiceHealth(ctx, client, optimizerURL, "/health", true)
+	health["research_optimizer"] = optimizerHealth
+	if ok, _ := optimizerHealth["ok"].(bool); !ok {
+		health["ok"] = false
+	}
 	return health
+}
+
+func probeServiceHealth(ctx context.Context, client *http.Client, baseURL, path string, configured bool) gin.H {
+	result := gin.H{"ok": false, "configured": configured, "url": baseURL}
+	checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(checkCtx, http.MethodGet, strings.TrimRight(baseURL, "/")+path, nil)
+	if err != nil {
+		result["message"] = err.Error()
+		return result
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		result["message"] = err.Error()
+		return result
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		result["message"] = fmt.Sprintf("health check returned HTTP %d", response.StatusCode)
+		return result
+	}
+	var payload map[string]any
+	if err := json.NewDecoder(io.LimitReader(response.Body, 64*1024)).Decode(&payload); err != nil {
+		result["message"] = err.Error()
+		return result
+	}
+	for key, value := range payload {
+		result[key] = value
+	}
+	result["configured"] = configured
+	result["url"] = baseURL
+	if ok, _ := result["ok"].(bool); !ok {
+		result["ok"] = false
+		if _, exists := result["message"]; !exists {
+			result["message"] = "service reported unhealthy"
+		}
+	}
+	return result
 }
 
 // detectIntentType 根据用户意图文本判断任务类型

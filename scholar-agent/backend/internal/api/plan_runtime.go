@@ -54,7 +54,7 @@ func RegisterPlanRuntimeRoutes(
 	librarian scheduler.AgentRunner,
 	data scheduler.AgentRunner,
 	coder scheduler.AgentRunner,
-	researchCoding ...scheduler.AgentRunner,
+	specialized ...scheduler.AgentRunner,
 ) {
 	var planStore store.PlanStore = store.NewMemoryPlanStore()
 	if path := strings.TrimSpace(os.Getenv("PLAN_STORE_PATH")); path != "" {
@@ -69,7 +69,7 @@ func RegisterPlanRuntimeRoutes(
 		}
 	}
 	eventBus := events.NewBus()
-	executor := scheduler.NewRoutedTaskExecutor(librarian, data, coder, researchCoding...)
+	executor := scheduler.NewRoutedTaskExecutor(librarian, data, coder, specialized...)
 	runner := scheduler.NewScheduler(planStore, executor, eventBus, 2)
 	runtime := newPlanRuntime(p, planStore, runner, eventBus)
 	runtime.register(apiGroup)

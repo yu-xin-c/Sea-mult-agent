@@ -166,7 +166,7 @@ func buildPlannerNodeDescription(rawIntent string, bp plannerNodeBlueprint) stri
 
 func normalizeAssignedTo(value string) string {
 	switch strings.TrimSpace(value) {
-	case "librarian_agent", "coder_agent", "sandbox_agent", "data_agent", "research_coding_agent", "general_agent":
+	case "librarian_agent", "coder_agent", "sandbox_agent", "data_agent", "benchmark_agent", "research_coding_agent", "general_agent":
 		return value
 	default:
 		return "general_agent"
@@ -222,6 +222,19 @@ func normalizePlannerTaskType(bp plannerNodeBlueprint) string {
 	}, " ")
 
 	switch bp.AssignedTo {
+	case "benchmark_agent":
+		if containsAny(context, "benchmark_dataset_audit", "audit dataset", "dataset audit") {
+			return "benchmark_dataset_audit"
+		}
+		if containsAny(context, "benchmark_split_materialize", "materialize split", "leakage safe split") {
+			return "benchmark_split_materialize"
+		}
+		if containsAny(context, "benchmark_contract_freeze", "metric contract", "reward contract", "freeze benchmark") {
+			return "benchmark_contract_freeze"
+		}
+		if containsAny(context, "benchmark_validate", "hidden benchmark", "hidden evidence") {
+			return "benchmark_validate"
+		}
 	case "research_coding_agent":
 		if containsAny(context, "autoresearch_spec", "freeze autoresearch", "research spec", "research contract") {
 			return "autoresearch_spec"
@@ -311,7 +324,7 @@ func normalizePlannerTaskType(bp plannerNodeBlueprint) string {
 	}
 
 	switch rawType {
-	case "framework_research", "framework_recommendation", "generate_code", "resolve_dependencies", "prepare_runtime", "install_dependencies", "execute_code", "paper_code_execute", "paper_parse", "claim_rubric_extract", "repo_discovery", "repo_prepare", "ablation_design", "paper_compare", "claim_evidence_build", "result_visualization", "fix_and_rerun", "verify_result", "render_plot", "general_research", "general_synthesis", "general_process", "dataset_profile", "benchmark_adapter_generate", "benchmark_adapter_preflight", "benchmark_execute", "benchmark_validate", "autoresearch_spec", "autoresearch_run", "autoresearch_validate", "experiment_dataset_prepare", "experiment_spec", "experiment_run", "experiment_validate":
+	case "framework_research", "framework_recommendation", "generate_code", "resolve_dependencies", "prepare_runtime", "install_dependencies", "execute_code", "paper_code_execute", "paper_parse", "claim_rubric_extract", "repo_discovery", "repo_prepare", "ablation_design", "paper_compare", "claim_evidence_build", "result_visualization", "fix_and_rerun", "verify_result", "render_plot", "general_research", "general_synthesis", "general_process", "dataset_profile", "benchmark_dataset_audit", "benchmark_split_materialize", "benchmark_contract_freeze", "benchmark_adapter_generate", "benchmark_adapter_preflight", "benchmark_execute", "benchmark_validate", "autoresearch_spec", "autoresearch_run", "autoresearch_validate", "experiment_dataset_prepare", "experiment_spec", "experiment_run", "experiment_validate":
 		return rawType
 	}
 
@@ -326,6 +339,8 @@ func normalizePlannerTaskType(bp plannerNodeBlueprint) string {
 		return "verify_result"
 	case "research_coding_agent":
 		return "benchmark_adapter_generate"
+	case "benchmark_agent":
+		return "benchmark_dataset_audit"
 	default:
 		return "general_process"
 	}
@@ -360,7 +375,9 @@ func containsAny(s string, keywords ...string) bool {
 
 func normalizePlannerAssignedTo(bp plannerNodeBlueprint) string {
 	switch bp.Type {
-	case "dataset_profile", "benchmark_adapter_generate", "benchmark_adapter_preflight", "benchmark_execute", "benchmark_validate", "paper_code_execute", "fix_and_rerun", "autoresearch_spec", "autoresearch_run", "autoresearch_validate", "experiment_dataset_prepare", "experiment_spec", "experiment_run", "experiment_validate":
+	case "benchmark_dataset_audit", "benchmark_split_materialize", "benchmark_contract_freeze", "benchmark_validate":
+		return "benchmark_agent"
+	case "dataset_profile", "benchmark_adapter_generate", "benchmark_adapter_preflight", "benchmark_execute", "paper_code_execute", "fix_and_rerun", "autoresearch_spec", "autoresearch_run", "autoresearch_validate", "experiment_dataset_prepare", "experiment_spec", "experiment_run", "experiment_validate":
 		return "research_coding_agent"
 	case "generate_code", "resolve_dependencies", "repo_discovery", "repo_prepare":
 		return "coder_agent"
@@ -377,6 +394,17 @@ func normalizePlannerAssignedTo(bp plannerNodeBlueprint) string {
 
 func applyPlannerNodeDefaults(bp plannerNodeBlueprint) plannerNodeBlueprint {
 	switch bp.Type {
+	case "benchmark_dataset_audit":
+		bp.OutputArtifacts = ensureArtifacts(bp.OutputArtifacts, "dataset_manifest", "benchmark_dataset_audit")
+	case "benchmark_split_materialize":
+		bp.RequiredArtifacts = ensureArtifacts(bp.RequiredArtifacts, "dataset_manifest", "benchmark_dataset_audit", "workspace_path")
+		bp.OutputArtifacts = ensureArtifacts(bp.OutputArtifacts, "benchmark_split_manifest", "benchmark_leakage_report", "benchmark_validation_dataset_manifest", "benchmark_public_test_manifest", "benchmark_input_only_preflight_manifest")
+	case "benchmark_adapter_preflight":
+		bp.RequiredArtifacts = ensureArtifacts(bp.RequiredArtifacts, "workspace_path", "benchmark_validation_dataset_manifest", "benchmark_input_only_preflight_manifest", "benchmark_contract", "benchmark_adapter_spec", "benchmark_generated_code", "benchmark_code_file_path", "prepared_runtime")
+		bp.OutputArtifacts = ensureArtifacts(bp.OutputArtifacts, "validated_benchmark_adapter_spec", "validated_benchmark_generated_code", "validated_benchmark_code_file_path", "benchmark_preflight_report")
+	case "benchmark_contract_freeze":
+		bp.RequiredArtifacts = ensureArtifacts(bp.RequiredArtifacts, "workspace_path", "benchmark_dataset_audit", "benchmark_split_manifest")
+		bp.OutputArtifacts = ensureArtifacts(bp.OutputArtifacts, "benchmark_contract", "benchmark_metric_contract", "benchmark_reward_contract", "benchmark_evaluator_manifest")
 	case "claim_rubric_extract":
 		bp.RequiredArtifacts = ensureArtifacts(bp.RequiredArtifacts, "parsed_paper")
 		bp.OutputArtifacts = ensureArtifacts(bp.OutputArtifacts, "claim_rubric", "claim_rubric_report")

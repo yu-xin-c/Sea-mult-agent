@@ -330,6 +330,8 @@ func allowedToolsForAgent(agent string) []string {
 		return []string{"artifact.read", "metrics.analyze", "report.write"}
 	case "research_coding_agent":
 		return []string{"repository.read", "repository.patch_scoped", "dataset.profile", "workspace.write_scoped", "sandbox.command", "metrics.validate", "research.trial_ledger"}
+	case "benchmark_agent":
+		return []string{"dataset.audit", "dataset.split_scoped", "dataset.leakage_check", "metrics.contract", "reward.contract", "metrics.recompute_hidden"}
 	default:
 		return []string{"conversation.respond"}
 	}
@@ -363,6 +365,23 @@ func buildDatasetExperimentNodes(intent models.IntentContext) []*models.TaskNode
 	)
 	freeze.Inputs = copyBenchmarkInputs(inputs)
 
+	design := newNode(
+		"Design Bounded ToT Strategy Tree",
+		"ablation_design",
+		"data_agent",
+		[]string{freeze.ID},
+		[]string{"experiment_spec"},
+		[]string{"ablation_plan", "selected_ablation_configs", "ablation_selection_report"},
+		true,
+		context,
+	)
+	design.Description = "基于冻结的方法、参数、数据与预算契约，使用两层受限 ToT 展开、评分并剪枝实验方向；输出只负责候选设计，真实 Keep/Reject 仍由 evaluator 与 Harness 决定。\n用户原始意图: " + context
+	design.Inputs = copyBenchmarkInputs(inputs)
+	design.Inputs["ablation_max_experiments"] = min(maxTrialsFromExperimentInputs(inputs), 6)
+	design.Inputs["ablation_max_wall_minutes"] = max(5, experimentWallMinutes(inputs))
+	design.Inputs["ablation_max_gpu_minutes"] = 0
+	design.Inputs["ablation_estimated_minutes_per_experiment"] = max(1, experimentWallMinutes(inputs)/maxTrialsFromExperimentInputs(inputs))
+
 	prepareRuntime := newNode(
 		"Prepare Experiment Runtime",
 		"prepare_runtime",
@@ -370,7 +389,7 @@ func buildDatasetExperimentNodes(intent models.IntentContext) []*models.TaskNode
 		[]string{freeze.ID},
 		[]string{"workspace_path", "dependency_spec"},
 		[]string{"runtime_session"},
-		false,
+		true,
 		context,
 	)
 	install := newNode(
@@ -387,8 +406,8 @@ func buildDatasetExperimentNodes(intent models.IntentContext) []*models.TaskNode
 		"Run Bounded Experiment Search",
 		"experiment_run",
 		"research_coding_agent",
-		[]string{install.ID},
-		[]string{"workspace_path", "prepared_runtime", "experiment_spec"},
+		[]string{install.ID, design.ID},
+		[]string{"workspace_path", "prepared_runtime", "experiment_spec", "ablation_plan"},
 		[]string{"experiment_trial_ledger", "experiment_best_candidate", "experiment_run_report"},
 		false,
 		context,
@@ -418,7 +437,21 @@ func buildDatasetExperimentNodes(intent models.IntentContext) []*models.TaskNode
 		false,
 		context,
 	)
-	return []*models.TaskNode{prepareData, freeze, prepareRuntime, install, run, validate, report}
+	return []*models.TaskNode{prepareData, freeze, design, prepareRuntime, install, run, validate, report}
+}
+
+func maxTrialsFromExperimentInputs(inputs map[string]any) int {
+	if value, ok := inputs["experiment_max_trials"].(int); ok && value > 0 {
+		return value
+	}
+	return 12
+}
+
+func experimentWallMinutes(inputs map[string]any) int {
+	if value, ok := inputs["experiment_max_wall_seconds"].(int); ok && value > 0 {
+		return (value + 59) / 60
+	}
+	return 15
 }
 
 func isDatasetExperimentIntent(intent models.IntentContext) bool {
@@ -449,10 +482,14 @@ func buildDatasetExperimentInputs(intent models.IntentContext) map[string]any {
 	validationRuns := boundedIntentNumber(intent.RawIntent, []string{
 		`(?i)(?:重复验证|独立复验|重复复验|validation\s+runs?)\s*(?:最多|不超过|[:：=]?)?\s*(\d+)\s*(?:次|轮|runs?)?`,
 	}, 3, 1, 5)
+	parallelTrials := boundedIntentNumber(intent.RawIntent, []string{
+		`(?i)(?:并发|并行|parallel(?:ism)?|workers?)\s*(?:为|是|[:：=])?\s*(\d+)\s*(?:个|路|组|workers?|trials?)?`,
+	}, 1, 1, 4)
 	inputs := map[string]any{
-		"experiment_max_trials":       maxTrials,
-		"experiment_max_wall_seconds": maxWallMinutes * 60,
-		"experiment_validation_runs":  validationRuns,
+		"experiment_max_trials":          maxTrials,
+		"experiment_max_parallel_trials": parallelTrials,
+		"experiment_max_wall_seconds":    maxWallMinutes * 60,
+		"experiment_validation_runs":     validationRuns,
 	}
 	if domain := strings.TrimSpace(stringEntity(intent.Entities, "research_domain", "")); domain != "" {
 		inputs["research_domain"] = domain
@@ -678,18 +715,18 @@ func buildCustomDatasetBenchmarkNodes(intent models.IntentContext) []*models.Tas
 	uploadedFiles := intent.Entities["uploaded_files"]
 	benchmarkInputs := buildCustomBenchmarkInputs(intent)
 
-	profile := newNode(
-		"Profile Uploaded Dataset",
-		"dataset_profile",
-		"research_coding_agent",
+	audit := newNode(
+		"Audit Benchmark Dataset",
+		"benchmark_dataset_audit",
+		"benchmark_agent",
 		nil,
 		nil,
-		[]string{"dataset_manifest"},
+		[]string{"dataset_manifest", "benchmark_dataset_audit"},
 		true,
 		context,
 	)
-	profile.Inputs = copyBenchmarkInputs(benchmarkInputs)
-	profile.Inputs["uploaded_files"] = uploadedFiles
+	audit.Inputs = copyBenchmarkInputs(benchmarkInputs)
+	audit.Inputs["uploaded_files"] = uploadedFiles
 
 	discover := newNode(
 		"Retrieve Benchmark Repository",
@@ -719,13 +756,44 @@ func buildCustomDatasetBenchmarkNodes(intent models.IntentContext) []*models.Tas
 		"full_reproduction_requested": false,
 		"uploaded_files":              workspaceUploadReferences(uploadedFiles),
 	}
+	split := newNode(
+		"Materialize Leakage-Safe Splits",
+		"benchmark_split_materialize",
+		"benchmark_agent",
+		[]string{audit.ID, prepare.ID},
+		[]string{"dataset_manifest", "benchmark_dataset_audit", "workspace_path"},
+		[]string{
+			"benchmark_split_manifest", "benchmark_leakage_report", "benchmark_validation_dataset_manifest",
+			"benchmark_public_test_manifest", "benchmark_input_only_preflight_manifest",
+			"benchmark_train_path", "benchmark_validation_path", "benchmark_test_features_path",
+		},
+		false,
+		context,
+	)
+	split.Inputs = copyBenchmarkInputs(benchmarkInputs)
+	split.Inputs["uploaded_files"] = uploadedFiles
+
+	freeze := newNode(
+		"Freeze Metric And Reward Contract",
+		"benchmark_contract_freeze",
+		"benchmark_agent",
+		[]string{split.ID},
+		[]string{"workspace_path", "benchmark_dataset_audit", "benchmark_split_manifest"},
+		[]string{
+			"benchmark_contract", "benchmark_metric_contract", "benchmark_reward_contract",
+			"benchmark_public_evaluator_path", "benchmark_evaluator_manifest", "benchmark_contract_report",
+		},
+		false,
+		context,
+	)
+	freeze.Inputs = copyBenchmarkInputs(benchmarkInputs)
 
 	generate := newNode(
 		"Generate Repository Benchmark Adapter",
 		"benchmark_adapter_generate",
 		"research_coding_agent",
-		[]string{profile.ID, prepare.ID},
-		[]string{"dataset_manifest", "workspace_path", "repo_manifest"},
+		[]string{freeze.ID},
+		[]string{"benchmark_validation_dataset_manifest", "workspace_path", "repo_manifest", "benchmark_contract"},
 		[]string{"benchmark_adapter_plan", "benchmark_adapter_spec", "benchmark_generated_code", "benchmark_code_file_path", "benchmark_adapter_report"},
 		false,
 		context,
@@ -767,7 +835,7 @@ func buildCustomDatasetBenchmarkNodes(intent models.IntentContext) []*models.Tas
 		"benchmark_adapter_preflight",
 		"research_coding_agent",
 		[]string{install.ID},
-		[]string{"workspace_path", "dataset_manifest", "benchmark_adapter_spec", "benchmark_generated_code", "benchmark_code_file_path", "prepared_runtime"},
+		[]string{"workspace_path", "benchmark_validation_dataset_manifest", "benchmark_input_only_preflight_manifest", "benchmark_contract", "benchmark_adapter_spec", "benchmark_generated_code", "benchmark_code_file_path", "prepared_runtime"},
 		[]string{"validated_benchmark_adapter_spec", "validated_benchmark_generated_code", "validated_benchmark_code_file_path", "benchmark_preflight_report"},
 		false,
 		context,
@@ -778,18 +846,27 @@ func buildCustomDatasetBenchmarkNodes(intent models.IntentContext) []*models.Tas
 		"benchmark_execute",
 		"research_coding_agent",
 		[]string{preflight.ID},
-		[]string{"workspace_path", "dataset_manifest", "validated_benchmark_adapter_spec", "validated_benchmark_generated_code", "validated_benchmark_code_file_path", "prepared_runtime"},
-		[]string{"benchmark_run_metrics", "benchmark_run_manifest", "benchmark_predictions_path", "benchmark_execution_report"},
+		[]string{
+			"workspace_path", "benchmark_validation_dataset_manifest", "benchmark_public_test_manifest", "benchmark_contract",
+			"validated_benchmark_adapter_spec", "validated_benchmark_generated_code", "validated_benchmark_code_file_path", "prepared_runtime",
+		},
+		[]string{
+			"benchmark_run_metrics", "benchmark_run_manifest", "benchmark_predictions_path",
+			"benchmark_hidden_predictions_path", "benchmark_hidden_run_manifest", "benchmark_execution_report",
+		},
 		false,
 		context,
 	)
 	execute.Inputs = copyBenchmarkInputs(benchmarkInputs)
 	validate := newNode(
-		"Validate Benchmark Evidence",
+		"Validate Hidden Benchmark Evidence",
 		"benchmark_validate",
-		"research_coding_agent",
+		"benchmark_agent",
 		[]string{execute.ID},
-		[]string{"dataset_manifest", "benchmark_run_metrics", "benchmark_run_manifest"},
+		[]string{
+			"workspace_path", "benchmark_contract", "benchmark_split_manifest", "benchmark_run_metrics",
+			"benchmark_hidden_predictions_path", "benchmark_hidden_run_manifest",
+		},
 		[]string{"benchmark_metrics", "benchmark_validation_report"},
 		false,
 		context,
@@ -799,12 +876,12 @@ func buildCustomDatasetBenchmarkNodes(intent models.IntentContext) []*models.Tas
 		"framework_report",
 		"data_agent",
 		[]string{validate.ID},
-		[]string{"benchmark_metrics", "benchmark_validation_report", "validated_benchmark_adapter_spec"},
+		[]string{"benchmark_metrics", "benchmark_validation_report", "benchmark_contract", "benchmark_leakage_report", "validated_benchmark_adapter_spec"},
 		[]string{"evaluation_report"},
 		false,
 		context,
 	)
-	return []*models.TaskNode{profile, discover, prepare, generate, resolve, prepareRuntime, install, preflight, execute, validate, report}
+	return []*models.TaskNode{audit, discover, prepare, split, freeze, generate, resolve, prepareRuntime, install, preflight, execute, validate, report}
 }
 
 func isCustomDatasetBenchmarkIntent(intent models.IntentContext) bool {
@@ -832,6 +909,15 @@ func buildCustomBenchmarkInputs(intent models.IntentContext) map[string]any {
 		"benchmark_target_column": {
 			`(?i)(?:标签列|目标列|label(?:\s+column)?|target(?:\s+column)?)\s*(?:是|为|[:：=])?\s*["']?([A-Za-z_][A-Za-z0-9_.-]*)`,
 		},
+		"benchmark_group_column": {
+			`(?i)(?:分组列|group(?:\s+column)?)\s*(?:是|为|[:：=])?\s*["']?([A-Za-z_][A-Za-z0-9_.-]*)`,
+		},
+		"benchmark_time_column": {
+			`(?i)(?:时间列|time(?:\s+column)?|timestamp(?:\s+column)?)\s*(?:是|为|[:：=])?\s*["']?([A-Za-z_][A-Za-z0-9_.-]*)`,
+		},
+		"benchmark_primary_metric": {
+			`(?i)(?:主指标|primary\s+metric|指标)\s*(?:是|为|[:：=])?\s*["']?([A-Za-z_][A-Za-z0-9_@.-]*)`,
+		},
 	} {
 		for _, pattern := range patterns {
 			matches := regexp.MustCompile(pattern).FindStringSubmatch(intent.RawIntent)
@@ -841,8 +927,26 @@ func buildCustomBenchmarkInputs(intent models.IntentContext) map[string]any {
 			}
 		}
 	}
+	normalized := strings.ToLower(intent.RawIntent)
+	for taskType, keywords := range map[string][]string{
+		"classification": {"classification", "分类任务", "文本分类"},
+		"regression":     {"regression", "回归任务"},
+		"generation":     {"generation", "生成任务", "文本生成"},
+		"retrieval":      {"retrieval", "检索任务", "rag评测", "rag 评测"},
+	} {
+		if hasAny(normalized, keywords...) {
+			inputs["benchmark_task_type"] = taskType
+			break
+		}
+	}
+	if target, ok := optionalIntentFloat(intent.RawIntent, []string{
+		`(?i)(?:目标分数|target(?:\s+score)?)\s*(?:达到|不低于|不高于|[:：=])?\s*(-?\d+(?:\.\d+)?)`,
+	}); ok && target >= -1e12 && target <= 1e12 {
+		inputs["benchmark_target_score"] = target
+	}
 	if hasAny(strings.ToLower(intent.RawIntent), "latency", "throughput", "推理", "延迟", "吞吐") {
 		inputs["benchmark_mode"] = "inference_performance"
+		inputs["benchmark_task_type"] = "inference"
 	}
 	return inputs
 }
@@ -1736,7 +1840,7 @@ func validateAgentPlannedNodes(intent models.IntentContext, nodes []*models.Task
 }
 
 func validateCriticalNodeContracts(intent models.IntentContext, nodes []*models.TaskNode) error {
-	if intent.IntentType != "Code_Execution" && intent.IntentType != "Framework_Evaluation" && intent.IntentType != "Paper_Reproduction" && intent.IntentType != "AutoResearch" {
+	if intent.IntentType != "Code_Execution" && intent.IntentType != "Framework_Evaluation" && intent.IntentType != "Paper_Reproduction" && intent.IntentType != "AutoResearch" && intent.IntentType != "Custom_Benchmark" {
 		return nil
 	}
 
@@ -1757,6 +1861,11 @@ func validateCriticalNodeContracts(intent models.IntentContext, nodes []*models.
 	hasExperimentSpec := false
 	hasExperimentRun := false
 	hasExperimentValidation := false
+	hasBenchmarkAudit := false
+	hasBenchmarkSplit := false
+	hasBenchmarkContract := false
+	hasBenchmarkExecute := false
+	hasBenchmarkValidation := false
 
 	for _, node := range nodes {
 		if node == nil {
@@ -1764,6 +1873,31 @@ func validateCriticalNodeContracts(intent models.IntentContext, nodes []*models.
 		}
 
 		switch node.Type {
+		case "benchmark_dataset_audit":
+			hasBenchmarkAudit = true
+			if node.AssignedTo != "benchmark_agent" || !containsArtifact(node.OutputArtifacts, "dataset_manifest") || !containsArtifact(node.OutputArtifacts, "benchmark_dataset_audit") {
+				return fmt.Errorf("benchmark_dataset_audit node %q has an incomplete audit contract", node.Name)
+			}
+		case "benchmark_split_materialize":
+			hasBenchmarkSplit = true
+			if node.AssignedTo != "benchmark_agent" || !containsArtifact(node.RequiredArtifacts, "benchmark_dataset_audit") || !containsArtifact(node.OutputArtifacts, "benchmark_split_manifest") || !containsArtifact(node.OutputArtifacts, "benchmark_public_test_manifest") || !containsArtifact(node.OutputArtifacts, "benchmark_input_only_preflight_manifest") {
+				return fmt.Errorf("benchmark_split_materialize node %q has an incomplete split contract", node.Name)
+			}
+		case "benchmark_contract_freeze":
+			hasBenchmarkContract = true
+			if node.AssignedTo != "benchmark_agent" || !containsArtifact(node.RequiredArtifacts, "benchmark_split_manifest") || !containsArtifact(node.OutputArtifacts, "benchmark_metric_contract") || !containsArtifact(node.OutputArtifacts, "benchmark_reward_contract") {
+				return fmt.Errorf("benchmark_contract_freeze node %q has an incomplete metric/reward contract", node.Name)
+			}
+		case "benchmark_execute":
+			hasBenchmarkExecute = true
+			if node.AssignedTo != "research_coding_agent" || !containsArtifact(node.RequiredArtifacts, "benchmark_contract") || !containsArtifact(node.OutputArtifacts, "benchmark_hidden_predictions_path") {
+				return fmt.Errorf("benchmark_execute node %q has an incomplete hidden execution contract", node.Name)
+			}
+		case "benchmark_validate":
+			hasBenchmarkValidation = true
+			if intent.IntentType == "Custom_Benchmark" && (node.AssignedTo != "benchmark_agent" || !containsArtifact(node.RequiredArtifacts, "benchmark_hidden_predictions_path") || !containsArtifact(node.OutputArtifacts, "benchmark_validation_report")) {
+				return fmt.Errorf("benchmark_validate node %q has an incomplete hidden validation contract", node.Name)
+			}
 		case "experiment_dataset_prepare":
 			hasExperimentDataset = true
 			if node.AssignedTo != "research_coding_agent" || !containsArtifact(node.OutputArtifacts, "workspace_path") || !containsArtifact(node.OutputArtifacts, "experiment_dataset_manifest") {
@@ -1776,7 +1910,7 @@ func validateCriticalNodeContracts(intent models.IntentContext, nodes []*models.
 			}
 		case "experiment_run":
 			hasExperimentRun = true
-			if node.AssignedTo != "research_coding_agent" || !containsArtifact(node.RequiredArtifacts, "prepared_runtime") || !containsArtifact(node.RequiredArtifacts, "experiment_spec") || !containsArtifact(node.OutputArtifacts, "experiment_trial_ledger") {
+			if node.AssignedTo != "research_coding_agent" || !containsArtifact(node.RequiredArtifacts, "prepared_runtime") || !containsArtifact(node.RequiredArtifacts, "experiment_spec") || !containsArtifact(node.RequiredArtifacts, "ablation_plan") || !containsArtifact(node.OutputArtifacts, "experiment_trial_ledger") {
 				return fmt.Errorf("experiment_run node %q has an incomplete execution contract", node.Name)
 			}
 		case "experiment_validate":
@@ -1820,15 +1954,15 @@ func validateCriticalNodeContracts(intent models.IntentContext, nodes []*models.
 			if node.AssignedTo != "data_agent" {
 				return fmt.Errorf("ablation_design node %q must be assigned to data_agent", node.Name)
 			}
-			if !containsArtifact(node.RequiredArtifacts, "parsed_paper") || !containsArtifact(node.OutputArtifacts, "ablation_plan") {
-				return fmt.Errorf("ablation_design node %q must consume parsed_paper and output ablation_plan", node.Name)
+			if (!containsArtifact(node.RequiredArtifacts, "parsed_paper") && !containsArtifact(node.RequiredArtifacts, "experiment_spec")) || !containsArtifact(node.OutputArtifacts, "ablation_plan") {
+				return fmt.Errorf("ablation_design node %q must consume parsed_paper or experiment_spec and output ablation_plan", node.Name)
 			}
 		case "repo_discovery":
 			hasRepoDiscovery = true
 			if node.AssignedTo != "coder_agent" {
 				return fmt.Errorf("repo_discovery node %q must be assigned to coder_agent", node.Name)
 			}
-			if intent.IntentType != "AutoResearch" && !containsArtifact(node.RequiredArtifacts, "parsed_paper") {
+			if intent.IntentType != "AutoResearch" && intent.IntentType != "Custom_Benchmark" && !containsArtifact(node.RequiredArtifacts, "parsed_paper") {
 				return fmt.Errorf("repo_discovery node %q must require parsed_paper", node.Name)
 			}
 			if !containsArtifact(node.OutputArtifacts, "candidate_repositories") {
@@ -1944,6 +2078,11 @@ func validateCriticalNodeContracts(intent models.IntentContext, nodes []*models.
 			}
 		} else if !hasRepoDiscovery || !hasRepoPrepare || !hasAutoResearchSpec || !hasPrepareRuntime || !hasInstallDependencies || !hasAutoResearchRun || !hasAutoResearchValidation {
 			return fmt.Errorf("repository AutoResearch plan is missing one or more required canonical nodes")
+		}
+	}
+	if intent.IntentType == "Custom_Benchmark" {
+		if !hasBenchmarkAudit || !hasBenchmarkSplit || !hasBenchmarkContract || !hasRepoDiscovery || !hasRepoPrepare || !hasPrepareRuntime || !hasInstallDependencies || !hasBenchmarkExecute || !hasBenchmarkValidation {
+			return fmt.Errorf("custom benchmark plan is missing one or more trusted benchmark nodes")
 		}
 	}
 

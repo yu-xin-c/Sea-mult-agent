@@ -323,10 +323,10 @@ func TestPlanRuntimeRoutesUploadedDatasetToCustomBenchmarkHarness(t *testing.T) 
 	if err := json.Unmarshal(response.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
-	if created.IntentContext.IntentType != "Custom_Benchmark" || len(created.PlanGraph.Nodes) != 11 {
+	if created.IntentContext.IntentType != "Custom_Benchmark" || len(created.PlanGraph.Nodes) != 13 {
 		t.Fatalf("request did not enter custom benchmark harness: intent=%s nodes=%d", created.IntentContext.IntentType, len(created.PlanGraph.Nodes))
 	}
-	if created.PlanGraph.Nodes[0].AssignedTo != "research_coding_agent" {
+	if created.PlanGraph.Nodes[0].AssignedTo != "benchmark_agent" {
 		t.Fatalf("dataset profile routed to %s", created.PlanGraph.Nodes[0].AssignedTo)
 	}
 	uploadedFiles, ok := created.IntentContext.Entities["uploaded_files"].([]any)

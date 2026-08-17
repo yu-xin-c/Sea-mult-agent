@@ -49,9 +49,23 @@ func (a *ResearchCodingAgent) executeAdapterPreflight(ctx context.Context, task 
 	if err != nil {
 		return failResearchCodingTask(task, err)
 	}
-	datasetRelative, err := locateMaterializedBenchmarkDataset(workspacePath, manifest.Name)
+	datasetRelative, err := locateMaterializedBenchmarkDataset(workspacePath, chooseNonEmpty(manifest.RelativePath, manifest.Name))
 	if err != nil {
 		return failResearchCodingTask(task, err)
+	}
+	inputOnlyManifest, hasInputOnlyPreflight, err := benchmarkUnlabeledManifestFromTask(task, "benchmark_input_only_preflight_manifest", false)
+	if err != nil {
+		return failResearchCodingTask(task, err)
+	}
+	inputOnlyRelative := ""
+	if hasInputOnlyPreflight {
+		inputOnlyRelative, err = locateMaterializedBenchmarkDataset(
+			workspacePath,
+			chooseNonEmpty(inputOnlyManifest.RelativePath, inputOnlyManifest.Name),
+		)
+		if err != nil {
+			return failResearchCodingTask(task, err)
+		}
 	}
 	maxAttempts := boundedTaskInt(task, "benchmark_max_preflight_attempts", 3, 1, 3)
 	attempts := make([]models.BenchmarkAttempt, 0, maxAttempts)
@@ -66,6 +80,22 @@ func (a *ResearchCodingAgent) executeAdapterPreflight(ctx context.Context, task 
 		}
 
 		report, runErr := a.runBenchmarkHarness(ctx, runtimeSession, workspacePath, datasetRelative, manifest, "preflight", 8)
+		if runErr == nil && hasInputOnlyPreflight {
+			_, runErr = a.runBenchmarkPredictionHarness(
+				ctx,
+				runtimeSession,
+				workspacePath,
+				inputOnlyRelative,
+				inputOnlyManifest,
+				"preflight_input_only",
+				inputOnlyManifest.RowCount,
+			)
+			if runErr != nil {
+				runErr = fmt.Errorf("adapter failed unlabeled preflight: %w", runErr)
+			} else {
+				report.Reason = "labeled metric preflight and unlabeled inference preflight passed"
+			}
+		}
 		entry := models.BenchmarkAttempt{Attempt: attempt, ExitCode: 0}
 		if runErr == nil {
 			entry.Repaired = attempt > 1
@@ -153,7 +183,7 @@ func (a *ResearchCodingAgent) executeBenchmark(ctx context.Context, task *models
 	if err != nil {
 		return failResearchCodingTask(task, err)
 	}
-	datasetRelative, err := locateMaterializedBenchmarkDataset(workspacePath, manifest.Name)
+	datasetRelative, err := locateMaterializedBenchmarkDataset(workspacePath, chooseNonEmpty(manifest.RelativePath, manifest.Name))
 	if err != nil {
 		return failResearchCodingTask(task, err)
 	}
@@ -172,16 +202,63 @@ func (a *ResearchCodingAgent) executeBenchmark(ctx context.Context, task *models
 	if err != nil {
 		return failResearchCodingTask(task, err)
 	}
+	hiddenPredictionsPath := ""
+	hiddenRunManifest := ""
+	if strings.TrimSpace(extractTaskInputLike(task, "benchmark_contract")) != "" {
+		testManifest, testErr := benchmarkPublicTestManifestFromTask(task)
+		if testErr != nil {
+			return failResearchCodingTask(task, testErr)
+		}
+		hiddenRelative := chooseNonEmpty(testManifest.RelativePath, testManifest.Name)
+		hiddenReport, hiddenErr := a.runBenchmarkPredictionHarness(
+			ctx, runtimeSession, workspacePath, hiddenRelative, testManifest, "hidden", testManifest.RowCount,
+		)
+		if hiddenErr != nil {
+			return failResearchCodingTask(task, fmt.Errorf("hidden benchmark inference failed: %w", hiddenErr))
+		}
+		hiddenPredictionsPath = hiddenReport.PredictionsPath
+		hiddenManifestPath, _ := benchmarkPathInWorkspace(workspacePath, benchmarkAdapterDirectory+"/hidden/run_manifest.json")
+		hiddenManifestRaw, readErr := readRegularBenchmarkFile(hiddenManifestPath, "hidden run_manifest.json", 1024*1024)
+		if readErr != nil {
+			return failResearchCodingTask(task, readErr)
+		}
+		hiddenRunManifest = string(hiddenManifestRaw)
+	}
 
 	task.Result = string(payload)
 	task.Status = models.StatusCompleted
 	setResearchCodingArtifacts(task, map[string]string{
-		"benchmark_run_metrics":      string(metricsPayload),
-		"benchmark_run_manifest":     string(runManifest),
-		"benchmark_predictions_path": report.PredictionsPath,
-		"benchmark_execution_report": string(payload),
+		"benchmark_run_metrics":             string(metricsPayload),
+		"benchmark_run_manifest":            string(runManifest),
+		"benchmark_predictions_path":        report.PredictionsPath,
+		"benchmark_hidden_predictions_path": hiddenPredictionsPath,
+		"benchmark_hidden_run_manifest":     hiddenRunManifest,
+		"benchmark_execution_report":        string(payload),
 	})
 	return nil
+}
+
+func benchmarkPublicTestManifestFromTask(task *models.Task) (models.DatasetManifest, error) {
+	manifest, _, err := benchmarkUnlabeledManifestFromTask(task, "benchmark_public_test_manifest", true)
+	return manifest, err
+}
+
+func benchmarkUnlabeledManifestFromTask(task *models.Task, artifactName string, required bool) (models.DatasetManifest, bool, error) {
+	raw := strings.TrimSpace(extractTaskInputLike(task, artifactName))
+	if raw == "" && !required {
+		return models.DatasetManifest{}, false, nil
+	}
+	if raw == "" {
+		return models.DatasetManifest{}, false, fmt.Errorf("%s input is required", artifactName)
+	}
+	var manifest models.DatasetManifest
+	if err := json.Unmarshal([]byte(raw), &manifest); err != nil {
+		return manifest, false, fmt.Errorf("decode %s: %w", artifactName, err)
+	}
+	if manifest.SHA256 == "" || manifest.RowCount <= 0 || manifest.RelativePath == "" || manifest.TargetColumn != "" {
+		return manifest, false, fmt.Errorf("%s is incomplete or exposes a target", artifactName)
+	}
+	return manifest, true, nil
 }
 
 func (a *ResearchCodingAgent) executeBenchmarkValidation(ctx context.Context, task *models.Task) error {
@@ -305,6 +382,156 @@ func (a *ResearchCodingAgent) runBenchmarkHarness(ctx context.Context, sandboxID
 		return models.BenchmarkHarnessReport{}, fmt.Errorf("adapter exited with code %d: %s", result.ExitCode, truncateBenchmarkText(failure, 12000))
 	}
 	return validateBenchmarkOutputDirectory(workspacePath, outputRelative, manifest, limit, mode)
+}
+
+func (a *ResearchCodingAgent) runBenchmarkPredictionHarness(ctx context.Context, sandboxID, workspacePath, datasetRelative string, manifest models.DatasetManifest, mode string, limit int) (models.BenchmarkHarnessReport, error) {
+	outputRelative := benchmarkAdapterDirectory + "/" + mode
+	outputPath, err := benchmarkPathInWorkspace(workspacePath, outputRelative)
+	if err != nil {
+		return models.BenchmarkHarnessReport{}, err
+	}
+	if err := os.RemoveAll(outputPath); err != nil {
+		return models.BenchmarkHarnessReport{}, err
+	}
+	if err := os.MkdirAll(outputPath, 0o700); err != nil {
+		return models.BenchmarkHarnessReport{}, err
+	}
+	datasetPath, err := benchmarkPathInWorkspace(workspacePath, datasetRelative)
+	if err != nil {
+		return models.BenchmarkHarnessReport{}, err
+	}
+	datasetHashBefore, err := benchmarkRegularFileSHA(datasetPath, "hidden benchmark features")
+	if err != nil || datasetHashBefore != manifest.SHA256 {
+		return models.BenchmarkHarnessReport{}, fmt.Errorf("hidden benchmark feature hash changed before execution")
+	}
+	adapterPath, err := benchmarkPathInWorkspace(workspacePath, benchmarkAdapterFile)
+	if err != nil {
+		return models.BenchmarkHarnessReport{}, err
+	}
+	adapterHashBefore, err := benchmarkRegularFileSHA(adapterPath, "benchmark adapter")
+	if err != nil {
+		return models.BenchmarkHarnessReport{}, err
+	}
+	repositoryBefore, err := benchmarkRepositoryFingerprint(workspacePath)
+	if err != nil {
+		return models.BenchmarkHarnessReport{}, err
+	}
+	command := []string{
+		"bash", "-lc", fmt.Sprintf(
+			"cd /workspace && PYTHONPATH=/workspace:${PYTHONPATH:-} python3 %s --dataset %s --output-dir %s --limit %d --repo-root /workspace --seed 17",
+			shellEscape(benchmarkAdapterFile), shellEscape("/workspace/"+filepath.ToSlash(datasetRelative)),
+			shellEscape("/workspace/"+filepath.ToSlash(outputRelative)), limit,
+		),
+	}
+	result, execErr := a.Sandbox.ExecCommandStream(ctx, sandboxID, command, func(stream, line string) {
+		logToContext(ctx, "[%s] benchmark %s: %s", a.Name, stream, line)
+	})
+	repositoryAfter, fingerprintErr := benchmarkRepositoryFingerprint(workspacePath)
+	if fingerprintErr != nil {
+		return models.BenchmarkHarnessReport{}, fingerprintErr
+	}
+	if repositoryBefore != repositoryAfter {
+		return models.BenchmarkHarnessReport{}, fmt.Errorf("repository files changed outside .scholar during hidden benchmark execution")
+	}
+	if actual, hashErr := benchmarkRegularFileSHA(datasetPath, "hidden benchmark features"); hashErr != nil || actual != datasetHashBefore {
+		return models.BenchmarkHarnessReport{}, fmt.Errorf("hidden benchmark features changed during execution")
+	}
+	if actual, hashErr := benchmarkRegularFileSHA(adapterPath, "benchmark adapter"); hashErr != nil || actual != adapterHashBefore {
+		return models.BenchmarkHarnessReport{}, fmt.Errorf("benchmark adapter changed itself during hidden execution")
+	}
+	if execErr != nil {
+		return models.BenchmarkHarnessReport{}, execErr
+	}
+	if result == nil || result.ExitCode != 0 {
+		failure := "sandbox returned no hidden benchmark result"
+		if result != nil {
+			failure = chooseNonEmpty(strings.TrimSpace(result.Stderr), strings.TrimSpace(result.Stdout), failure)
+		}
+		return models.BenchmarkHarnessReport{}, fmt.Errorf("hidden adapter execution failed: %s", truncateBenchmarkText(failure, 12000))
+	}
+	return validateBenchmarkPredictionOutputDirectory(workspacePath, outputRelative, manifest, limit, mode)
+}
+
+func validateBenchmarkPredictionOutputDirectory(workspacePath, outputRelative string, manifest models.DatasetManifest, limit int, mode string) (models.BenchmarkHarnessReport, error) {
+	outputPath, err := benchmarkPathInWorkspace(workspacePath, outputRelative)
+	if err != nil {
+		return models.BenchmarkHarnessReport{}, err
+	}
+	manifestRaw, err := readRegularBenchmarkFile(filepath.Join(outputPath, "run_manifest.json"), "run_manifest.json", 1024*1024)
+	if err != nil {
+		return models.BenchmarkHarnessReport{}, err
+	}
+	var runManifest models.BenchmarkRunManifest
+	if err := json.Unmarshal(manifestRaw, &runManifest); err != nil {
+		return models.BenchmarkHarnessReport{}, err
+	}
+	if runManifest.Status != "ok" || runManifest.DatasetSHA256 != manifest.SHA256 || runManifest.SampleCount <= 0 || runManifest.SampleCount > limit || runManifest.SampleCount != manifest.RowCount {
+		return models.BenchmarkHarnessReport{}, fmt.Errorf("hidden run manifest violates the frozen test contract")
+	}
+	predictionsPath := filepath.Join(outputPath, "predictions.jsonl")
+	predictions, err := readBenchmarkHiddenPredictions(predictionsPath)
+	if err != nil {
+		return models.BenchmarkHarnessReport{}, err
+	}
+	if len(predictions) != runManifest.SampleCount {
+		return models.BenchmarkHarnessReport{}, fmt.Errorf("hidden prediction count does not match run manifest")
+	}
+	datasetPath, err := benchmarkPathInWorkspace(workspacePath, manifest.RelativePath)
+	if err != nil {
+		return models.BenchmarkHarnessReport{}, err
+	}
+	expectedIDs, err := readBenchmarkFeatureIDs(datasetPath)
+	if err != nil {
+		return models.BenchmarkHarnessReport{}, err
+	}
+	if len(expectedIDs) != manifest.RowCount {
+		return models.BenchmarkHarnessReport{}, fmt.Errorf("unlabeled feature IDs do not match the frozen manifest")
+	}
+	for _, prediction := range predictions {
+		if _, ok := expectedIDs[prediction.ID]; !ok {
+			return models.BenchmarkHarnessReport{}, fmt.Errorf("prediction id %q is not present in the frozen feature split", prediction.ID)
+		}
+		delete(expectedIDs, prediction.ID)
+	}
+	if len(expectedIDs) != 0 {
+		return models.BenchmarkHarnessReport{}, fmt.Errorf("predictions do not cover every frozen feature id")
+	}
+	relative, _ := filepath.Rel(workspacePath, predictionsPath)
+	return models.BenchmarkHarnessReport{
+		Status: "passed", Mode: mode, SampleCount: len(predictions), PredictionsPath: filepath.ToSlash(relative),
+	}, nil
+}
+
+func readBenchmarkFeatureIDs(path string) (map[string]struct{}, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open unlabeled benchmark features: %w", err)
+	}
+	defer file.Close()
+	ids := map[string]struct{}{}
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64*1024), 2*1024*1024)
+	for scanner.Scan() {
+		if strings.TrimSpace(scanner.Text()) == "" {
+			continue
+		}
+		var row map[string]any
+		if err := json.Unmarshal(scanner.Bytes(), &row); err != nil {
+			return nil, fmt.Errorf("decode unlabeled benchmark feature %d: %w", len(ids)+1, err)
+		}
+		id := strings.TrimSpace(fmt.Sprint(row["__benchmark_id"]))
+		if id == "" || id == "<nil>" {
+			return nil, fmt.Errorf("unlabeled benchmark feature %d has no __benchmark_id", len(ids)+1)
+		}
+		if _, exists := ids[id]; exists {
+			return nil, fmt.Errorf("unlabeled benchmark feature id %q is duplicated", id)
+		}
+		ids[id] = struct{}{}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 func (a *ResearchCodingAgent) repairBenchmarkAdapter(ctx context.Context, manifestJSON, specJSON, code, failure string) (string, string, error) {
@@ -606,6 +833,14 @@ func benchmarkRuntimeSession(task *models.Task) (string, error) {
 }
 
 func locateMaterializedBenchmarkDataset(workspacePath, originalName string) (string, error) {
+	if strings.Contains(originalName, "/") {
+		path, err := benchmarkPathInWorkspace(workspacePath, originalName)
+		if err == nil {
+			if info, statErr := os.Lstat(path); statErr == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+				return filepath.ToSlash(originalName), nil
+			}
+		}
+	}
 	directory, err := benchmarkPathInWorkspace(workspacePath, ".scholar/uploads")
 	if err != nil {
 		return "", err

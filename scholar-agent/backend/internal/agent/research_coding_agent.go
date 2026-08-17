@@ -21,10 +21,11 @@ type ResearchCodingAgent struct {
 	Name      string
 	ChatModel *openaiModel.ChatModel
 	Sandbox   researchCodingSandbox
+	Optimizer researchOptimizer
 }
 
 func NewResearchCodingAgent(coder *CoderAgent) *ResearchCodingAgent {
-	agent := &ResearchCodingAgent{Name: "research_coding_agent"}
+	agent := &ResearchCodingAgent{Name: "research_coding_agent", Optimizer: newHTTPResearchOptimizerFromEnv()}
 	if coder != nil {
 		agent.ChatModel = coder.ChatModel
 		agent.Sandbox = coder.Sandbox

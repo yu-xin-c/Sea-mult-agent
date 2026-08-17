@@ -46,7 +46,7 @@ Scheduler 只把同时满足以下条件的节点设为 `ready`：
 
 `BuildPlan` 的顺序是：
 
-1. `Custom_Benchmark` 或携带数据集的明确 Benchmark：固定 11 节点流程。
+1. `Custom_Benchmark` 或携带数据集的明确 Benchmark：固定 13 节点流程，包含独立 Benchmark Agent 的审计、切分、Metric/Reward 契约和隐藏验收。
 2. `AutoResearch`：固定 8 节点流程。
 3. 其他意图在模型可用时调用 Planner Agent。
 4. 模型拓扑经过 task type、Agent、Artifact 和关键节点校验。
@@ -61,7 +61,7 @@ Scheduler 只把同时满足以下条件的节点设为 `ready`：
 | `Paper_Reproduction` | 模板或校验后的 Planner Agent | 论文解析、Claim Rubric、仓库、环境、调试 baseline、对比、证据图 |
 | `Framework_Evaluation` | 模板或校验后的 Planner Agent | 框架研究、隔离分支、各自运行时、统一报告 |
 | `Code_Execution` | 模板或校验后的 Planner Agent | 生成代码、依赖、运行时、执行、验证 |
-| `Custom_Benchmark` | 固定模板 | 数据画像、仓库适配、预检、正式评测、指标重算 |
+| `Custom_Benchmark` | 固定模板 | 数据审计、安全切分、Metric/Reward 冻结、仓库适配、公开预检、无标签 test 推理、隐藏指标重算 |
 | `AutoResearch` | 固定模板 | 仓库、ResearchSpec、运行时、Keep/Reject、重复复验、资源证据、报告 |
 | `General` | 模板或 Planner Agent | 通用研究、综合或回答 |
 

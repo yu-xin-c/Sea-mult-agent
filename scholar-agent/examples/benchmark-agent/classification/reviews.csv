@@ -1,0 +1,25 @@
+review,label
+clear explanation sample a,positive
+missing evidence sample b,negative
+useful comparison sample c,positive
+incorrect conclusion sample d,negative
+reproducible result sample e,positive
+unclear method sample f,negative
+strong baseline sample g,positive
+broken evaluation sample h,negative
+helpful ablation sample i,positive
+unsupported claim sample j,negative
+complete artifact sample k,positive
+missing dependency sample l,negative
+stable rerun sample m,positive
+data leakage sample n,negative
+auditable metric sample o,positive
+fabricated score sample p,negative
+valid holdout sample q,positive
+mutated evaluator sample r,negative
+bounded search sample s,positive
+untracked patch sample t,negative
+trusted evidence sample u,positive
+ambiguous mapping sample v,negative
+deterministic split sample w,positive
+hidden label leak sample x,negative

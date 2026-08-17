@@ -41,13 +41,13 @@ type ExecutionAction =
   | { type: 'reset' };
 
 const initialNodeExecutionState: NodeExecutionState = { logs: '', result: '', code: '', structuredData: '', imageBase64: '' };
-const reportAgents = new Set(['librarian_agent', 'data_agent', 'research_coding_agent']);
+const reportAgents = new Set(['librarian_agent', 'data_agent', 'benchmark_agent', 'research_coding_agent']);
 const isReportAgent = (assignedTo: string) => reportAgents.has(assignedTo);
 
-const updateNodeStatus = (node: Node, status: string): Node => {
+const updateNodeStatus = (node: Node, status: string, taskPatch: Partial<Task> = {}): Node => {
 	const task = node.data.task as Task;
 	if (!task) return node;
-	const updatedTask = { ...task, Status: status };
+	const updatedTask = { ...task, ...taskPatch, Status: status };
 	return {
 		...node,
 		data: {
@@ -59,6 +59,7 @@ const updateNodeStatus = (node: Node, status: string): Node => {
 				taskName: updatedTask.Name,
 				status,
 				step: typeof node.data.step === 'number' ? node.data.step : undefined,
+				task: updatedTask,
 			}),
 		},
 		style: {
@@ -288,14 +289,24 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
             appendNodeLog(event.task_id, `[Plan] blocked${upstream ? ` by ${upstream}` : ''}`);
           }
           if (event.event_type === PLAN_EVENTS.TASK_COMPLETED && event.task_id) {
+            const result = String(event.payload?.result || event.payload?.result_summary || '');
+            const code = String(event.payload?.code || '');
+            const structuredData = String(event.payload?.structured_data || '');
             patchNodeState(event.task_id, (prev) => ({
               ...prev,
               logs: prev.logs ? `${prev.logs}\n[Plan] task_completed` : '[Plan] task_completed',
-              result: String(event.payload?.result || event.payload?.result_summary || prev.result || ''),
-              code: String(event.payload?.code || prev.code || ''),
-              structuredData: String(event.payload?.structured_data || prev.structuredData || ''),
+              result: result || prev.result || '',
+              code: code || prev.code || '',
+              structuredData: structuredData || prev.structuredData || '',
               imageBase64: pickImageBase64(event.payload) || prev.imageBase64 || '',
             }));
+            setNodes((current) => current.map((node) => node.id === event.task_id
+              ? updateNodeStatus(node, 'completed', {
+                  Result: result || (node.data.task as Task | undefined)?.Result,
+                  Code: code || (node.data.task as Task | undefined)?.Code,
+                  StructuredData: structuredData || (node.data.task as Task | undefined)?.StructuredData,
+                })
+              : node));
           }
           if (event.event_type === PLAN_EVENTS.TASK_FAILED && event.task_id) {
             const errorText = String(event.payload?.error || 'Task failed');
@@ -396,6 +407,14 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
                 structuredData,
                 imageBase64,
               }));
+              setNodes((current) => current.map((node) => node.id === task.ID
+                ? updateNodeStatus(node, 'completed', {
+                    Result: finalResult,
+                    Code: generatedCode,
+                    StructuredData: structuredData,
+                    ImageBase64: imageBase64,
+                  })
+                : node));
 
               const taskActions: ('view_plot' | 'view_report')[] = [];
               if (imageBase64) taskActions.push('view_plot');
@@ -454,7 +473,7 @@ export function useScholarRuntime(options: UseScholarRuntimeOptions) {
         dispatchExecution({ type: 'set-executing', value: false });
       }
     },
-    [appendChatMessage, buildDirectExecutionInputs, executionState.nodeStates, patchNodeState, updateNodeVisualState],
+    [appendChatMessage, buildDirectExecutionInputs, executionState.nodeStates, patchNodeState, setNodes, updateNodeVisualState],
   );
 
   const handleRunAllTasks = useCallback(

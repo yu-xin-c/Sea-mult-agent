@@ -5,6 +5,7 @@
 **ScholarAgent: 面向论文复现与预算受限自动研究的多智能体科研执行系统**
 
 [![Go](https://img.shields.io/badge/Go-1.26.1-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=111827)](https://react.dev/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -18,7 +19,7 @@
 
 Sea-Mult-Agent 面向论文复现、自有数据评测和预算受限的 Scientific AutoResearch。用户可以给出论文仓库，也可以上传自己的研究数据、评测目标和候选方法空间；系统在固定指标与预算下自动尝试代码补丁或方法/超参数配置，真实执行后 Keep/Reject，达到目标即停止，并在 Holdout 上复验最佳候选。RAG 只是首个内置领域 Adapter，不是项目边界。
 
-Intent Router 与 Planner 把目标转换为经过校验的 DAG，Scheduler 通过类型化 Artifact 路由给 Librarian、Coder、Research Coding 和 Data 等专业 Agent。模型负责论文理解、仓库适配和提出可证伪候选；确定性 Go Harness 掌握数据/evaluator 哈希、文件写入、真实执行、指标判定、回滚、预算和最终验收。日志、状态和结构化证据通过 SSE 返回工作台。
+Intent Router 与 Planner 把目标转换为经过校验的 DAG，Scheduler 通过类型化 Artifact 路由给 Librarian、Benchmark、Coder、Research Coding 和 Data 等专业 Agent。Benchmark Agent 先冻结数据划分、主指标、Reward 和隐藏验收；模型负责论文理解、仓库适配和提出可证伪候选；Python Research Optimizer 利用已验证经验决定优先尝试哪个候选；确定性 Go Harness 掌握候选合法性、真实执行、指标判定、回滚、预算和最终验收。日志、状态和结构化证据通过 SSE 返回工作台。
 
 总图用五个步骤说明系统如何完成一次复现或预算受限自动研究，可编辑源文件见 [ArchitectureDiagram.drawio](ArchitectureDiagram.drawio)，完整组件边界见[项目架构文档](scholar-agent/docs/project_architecture.md)。其中 Native Docker 是当前默认执行引擎；OpenSandbox 仅为可选 fallback，BERT/Qwen 意图模型也未接入默认生产请求链。
 
@@ -27,22 +28,24 @@ Intent Router 与 Planner 把目标转换为经过校验的 DAG，Scheduler 通�
 
 ![ScholarAgent dashboard](scholar-agent/docs/assets/scholar-agent-dashboard.png)
 
-界面截图由当前 React 组件回放 [LightRAG 真实远端实验记录](scholar-agent/examples/autoresearch/real_repositories/results/2026-08-10_lightrag_target_stop_e2e.json)生成，展示完整 `8/8` 执行计划，不是手工拼接的静态原型。
+界面截图由当前 React 组件回放 [`experiment.ledger/v1` 并发候选记录](scholar-agent/frontend/test/fixtures/scientific-autoresearch-ledger.json)生成，不是手工绘制的流程图。外层 DAG 展示数据适配、契约冻结、ToT 设计与环境准备的异步分支、Holdout 和报告；搜索复合节点展开 4 个策略、3 路 evaluator、真实分数以及 `batch / worker / Keep / Reject`。同层并发行为由 Go 集成测试实际执行验证，截图 fixture 用于稳定复现界面。
 
 ## Why Sea-Mult-Agent
 
 | 能力 | 当前实现 |
 |---|---|
 | **面向科研的任务规划** | 将论文复现、代码执行、框架对比等目标拆解为可执行 DAG |
-| **专业 Agent 路由** | 根据任务类型路由到 Chat、Librarian、Coder、Research Coding 或 Data；沙箱作为确定性执行服务独立运行 |
+| **专业 Agent 路由** | 根据任务类型路由到 Chat、Librarian、Benchmark、Coder、Research Coding 或 Data；沙箱作为确定性执行服务独立运行 |
 | **真实隔离执行** | 通过独立 Go 沙箱服务调用原生 Docker，支持持久工作区与产物回传 |
 | **仓库优先的论文复现** | 发现或使用指定 GitHub 仓库，准备依赖并运行受控 smoke 实验 |
-| **预算受限的消融设计** | 两层 ToT 先比较参数、模块、数据、种子和成本方向，再细化高价值父分支；Go 校验谱系并只选择预算内组合 |
+| **预算受限的消融设计** | 两层 ToT 先比较参数、模块、数据、种子和成本方向，再细化高价值父分支；Scientific AutoResearch 中该节点与沙箱环境准备异步执行，Go 校验谱系并只选择预算内组合 |
 | **研究材料上传** | 在工作台附加论文、配置、笔记和小型数据文件，按用户隔离并传入复现流程 |
 | **科研仓库 Coding Agent** | 对论文代码做受限调试、补丁回滚和重跑，也能为自有数据生成仓库 Benchmark 适配器 |
-| **自有数据仓库评测** | Research Coding Agent 生成受限适配器，经 8 条预检、ReAct 修复和指标重算后运行用户数据 |
+| **可信 Benchmark Agent** | 自动审计任务与列映射，生成 train/validation/test，执行分层/group/time 划分和泄漏检查，冻结 Metric/Reward 契约，并在仓库不可见的标签上重算最终指标 |
+| **自有数据仓库评测** | Research Coding Agent 生成受限适配器，经有标签指标预检、无标签推理预检和有限 ReAct 修复后运行 validation；test 仅提供特征与 ID，最终指标由 Benchmark Agent 对隐藏标签重算 |
 | **受限 AutoResearch 循环** | 冻结仓库提交、评测器与数据，只允许修改白名单文件；重复测量后 Keep/Reject、退化回滚、目标分数停止，并隐藏复验最佳候选 |
-| **通用实验配置搜索** | 通过 `experiment.spec/v1` 描述方法分支与参数有限域，按真实指标生成结果驱动候选树；支持内置领域 Adapter 或任意论文的 Portable Adapter |
+| **通用实验配置搜索** | 通过 `experiment.spec/v1` 描述方法分支与参数有限域，按真实指标生成结果驱动候选树；只读 evaluator 可冻结 1-4 路同层并发，账本记录 batch、worker 与峰值并发；Portable Adapter 默认串行 |
+| **跨任务策略经验** | Python Optimizer 将数据特征、候选选择概率、实际 Reward 和 Holdout 状态写入 SQLite；仅使用已验证 campaign 的历史做 Contextual-UCB 排序，冷启动和服务异常均有可审计回退 |
 | **检索/RAG 示例 Adapter** | 上传语料、查询与相关文档标注后，自动比较 BM25、TF-IDF、RRF 和显式关系边图增强检索；它是通用协议示例，不是产品边界 |
 | **逐主张复现验收** | 实验前冻结分层 Rubric，实验后把论文主张、判定准则与真实 Artifact 绑定成可视化证据图 |
 | **实时可观测执行** | SSE 推送计划、节点、日志和 Artifact 事件，前端同步展示执行状态 |
@@ -85,7 +88,7 @@ docker compose up --build -d
 curl -s http://localhost:8080/api/health
 ```
 
-期望响应中同时出现 `backend.ok=true`、`repository.ok=true` 与 `sandbox.ok=true`。`repository.ok` 会在运行镜像缺少 Git 时明确失败，避免服务表面健康但外部仓库任务不可用。查看日志或停止服务：
+期望响应中同时出现 `backend.ok=true`、`repository.ok=true`、`sandbox.ok=true` 与 `research_optimizer.ok=true`。`repository.ok` 会在运行镜像缺少 Git 时明确失败，避免服务表面健康但外部仓库任务不可用。查看日志或停止服务：
 
 ```bash
 docker compose logs -f
@@ -120,7 +123,7 @@ Attention Is All You Need，使用 smoke 模式运行轻量注意力消融，
 输入列是 review，标签列是 label，最多运行 500 条样本。
 ```
 
-系统会分析数据契约、克隆仓库、生成独立适配器，并在正式运行前用最多 8 条样本预检。分类和回归指标会根据逐样本预测由 Go harness 重算。论文代码运行失败时，同一 Agent 还能在有限源码上下文中生成最小补丁并重跑。组件架构、状态机、Artifact 契约和限制见 [Research Coding Agent](scholar-agent/docs/research_coding_agent.md)。
+系统会先由独立 Benchmark Agent 审计任务和列映射，再按任务选择分层哈希、回归分位数、group 或 time 划分，物理生成 `train / validation / preflight_features / test_features`。后两份数据都不含标签：`preflight_features` 用于在最多 3 次有限修复中确认 Adapter 能纯推理，正式 `test_features` 只用于最终验收。主指标、方向、目标阈值和仅用于候选排序的 Reward 会写入冻结契约；最终 Adapter 只提交 `id + prediction`，隐藏指标由 Backend 重算。完整协议见 [Benchmark Agent](scholar-agent/docs/benchmark_agent.md)，可运行小样本见 [classification example](scholar-agent/examples/benchmark-agent/classification/)。
 
 ### Run Bounded AutoResearch
 
@@ -132,16 +135,16 @@ AutoResearch 有两个入口：论文仓库的代码候选模式，以及自有�
 
 ```text
 请在这批工业数据上做自动研究，比较 RAG 检索策略和超参数。
-固定 NDCG@1，最多 6 次实验，总时长 3 分钟，目标分数 0.60，独立复验 2 次。
+固定 NDCG@1，最多 6 次实验，并发 3 路，总时长 3 分钟，目标分数 0.60，独立复验 2 次。
 ```
 
-系统会执行 `数据适配 -> 冻结方法与参数空间 -> 沙箱 -> 候选搜索 -> Holdout -> 报告`。一级候选比较方法，子候选一次只改变一个参数；每轮都保存父节点、完整配置、真实指标和 Keep/Reject 原因。非检索论文可以上传 `experiment.json`、领域 evaluator 和数据，通过 Portable Adapter 复用同一 Harness。
+系统会执行 `数据适配 -> 冻结方法与参数空间 -> (ToT 设计 || 沙箱准备) -> 多策略搜索 -> Holdout -> 报告`。一级候选比较方法，子候选一次只改变一个参数；同一深度的候选可在只读 evaluator 契约下并发运行，但按固定选择顺序提交判定，避免完成时序改变最佳结果。每轮保存父节点、完整配置、真实指标、Reward 和 Keep/Reject 原因。非检索论文可以上传 `experiment.json`、领域 evaluator 和数据，通过 Portable Adapter 复用同一 Harness；未显式声明只读隔离时保持串行。
 
-真实轻量示例中，固定 `NDCG@1` 后，BM25 baseline 为 `0.4000`，图增强分支在第 3 个候选达到 `0.6000` 并停止；未参与搜索的 Holdout 从 `0.3333` 提升到 `0.6667`，两个新进程通过 `2/2`。详见[检索 Adapter 示例](scholar-agent/examples/scientific-autoresearch/retrieval/)和[通用 Scientific AutoResearch 协议](scholar-agent/docs/autoresearch/09_general_scientific_autoresearch.md)。这表示“给定候选空间与预算内观察到的最佳结果”，不表示全局最优。
+真实轻量示例中，固定 `NDCG@1` 后，BM25 baseline 为 `0.4000`，图增强分支达到 `0.6000`；未参与搜索的 Holdout 从 `0.3333` 提升到 `0.6667`，两个新进程通过 `2/2`。随后连续运行两个真实 HTTP campaign：第一轮冷启动用了 2 个候选，第二轮读取已验证经验后直接优先 `graph_hybrid`，只用 1 个候选达到同一结果。详见[检索 Adapter 示例](scholar-agent/examples/scientific-autoresearch/retrieval/)和[通用 Scientific AutoResearch 协议](scholar-agent/docs/autoresearch/09_general_scientific_autoresearch.md)。这表示“给定候选空间与预算内观察到的最佳结果”，不表示全局最优或已经具备跨数据集泛化。
 
 ![Scientific AutoResearch candidate search](scholar-agent/docs/assets/scientific-autoresearch-search.png)
 
-这不是单独绘制的示意图，而是产品中的交互式候选搜索视图。后端把冻结的方法/参数空间和真实 Trial 谱系写入 `experiment.ledger/v1`；前端按“冻结空间、建立基线、展开方法、细化参数、Holdout 验收”展示进度。用户可以点击任一分支查看完整配置、指标、耗时和 Keep/Reject 原因，也可以切换到时间线核对真实执行顺序。上图中 BM25 是基线，TF-IDF 与普通 RRF 被 Reject，`graph_hybrid` 提升后 Keep；达到目标后尚未执行的参数候选会明确标记为已剪枝。对应的搜索/隐藏集分离与 `2/2` 复验界面见[完整协议文档](scholar-agent/docs/autoresearch/09_general_scientific_autoresearch.md)。
+这不是单独绘制的示意图，而是产品中的交互式候选搜索视图。后端把冻结的方法/参数空间和 Trial 谱系写入 `experiment.ledger/v1`；前端按“冻结空间、建立基线、展开方法、细化参数、Holdout 验收”展示进度，并显示 ToT 分支数、并发上限、峰值并发和每个候选的 batch/worker。用户可以点击分支查看完整配置、指标、耗时、Policy、Reward 和 Keep/Reject 原因，也可以切换时间线核对确定性入账顺序。上图中 BM25 是基线，TF-IDF 与普通 RRF 被 Reject，`graph_hybrid` 提升后 Keep；达到目标后尚未执行的参数候选明确标记为已剪枝。对应的搜索/隐藏集分离与 `2/2` 复验界面见[完整协议文档](scholar-agent/docs/autoresearch/09_general_scientific_autoresearch.md)。
 
 #### Optimize A Paper Repository
 
@@ -162,7 +165,7 @@ AutoResearch 有两个入口：论文仓库的代码候选模式，以及自有�
 |---|---|---|
 | [karpathy/autoresearch](https://github.com/karpathy/autoresearch) | 小改动、固定预算、真实指标以及 Keep/Reject 循环 | 核心循环已实现，并扩展为跨仓库 ResearchSpec、多文件白名单、回滚和 TrialLedger |
 | [ReAct](https://arxiv.org/abs/2210.03629) | 错误观察、结构化修复动作和重跑 | 已用于依赖安装与 Benchmark 预检；不负责科研指标判定 |
-| [Tree of Thoughts](https://arxiv.org/abs/2305.10601) | 展开、评估和剪枝多个候选路径 | 论文理解阶段使用两层 ToT 选择高价值消融；配置搜索阶段另有基于真实指标的候选父子树，不把模型私有思维当证据 |
+| [Tree of Thoughts](https://arxiv.org/abs/2305.10601) | 展开、评估和剪枝多个候选路径 | 两层 ToT 选择高信息增益消融；在 Scientific AutoResearch 中与环境准备异步执行并冻结计划哈希。运行期仍由真实指标候选树裁决，不把模型私有思维当证据 |
 | [The AI Scientist](https://arxiv.org/abs/2408.06292) | 将想法、代码、实验、可视化和报告连接为长科研链 | 属于端到端方向启发，不宣称全自动科学发现或自动科学真值 |
 | [Agent Laboratory](https://arxiv.org/abs/2501.04227) | 文献、实验和写作阶段的专业 Agent 分工与用户介入 | 专业角色已实现；完整人工审批检查点仍在路线图 |
 | [PaperBench](https://arxiv.org/abs/2504.01848) | 用分层 Rubric 拆解论文复现，并逐项绑定证据 | 已实现 Claim Rubric 与 Claim-to-Evidence Graph；它属于上层复现验收，不替代主指标 |
@@ -172,7 +175,7 @@ AutoResearch 有两个入口：论文仓库的代码候选模式，以及自有�
 | [MLE-bench](https://arxiv.org/abs/2410.07095) | 同时观察任务效果和计算资源投入 | 已记录命令次数与耗时，尚不包含 GPU、token 和费用账本 |
 | [Microsoft R&D-Agent](https://github.com/microsoft/RD-Agent) | Research/Development 分工，以及多次实验的统计报告方式 | 已输出重复验证的均值、标准差和失败率；当前不会自动注入不同 seed |
 | [Auto-Research-Recipes](https://github.com/cxcscmu/Auto-Research-Recipes) | 任务无关核心、Task Adapter、外部 evaluator 和可发布 Artifact | 已实现通用 `experiment.* /v1`、内置/Portable Adapter 与配置候选 lineage；代码补丁模式仍使用线性 TrialLedger |
-| [Arbor](https://github.com/RUC-NLPIR/Arbor) | Coordinator/Executor、想法树、隔离 worktree 和开发/heldout 分离 | 已有隔离工作区和搜索/隐藏验收边界；并行树搜索与 checkpoint 未实现 |
+| [Arbor](https://github.com/RUC-NLPIR/Arbor) | Coordinator/Executor、想法树、隔离 worktree 和开发/heldout 分离 | 已有隔离工作区、搜索/隐藏验收边界与受限同层并发；尚未实现 MCTS 式异步树搜索和 checkpoint 恢复 |
 | [AI Scientist v2](https://github.com/SakanaAI/AI-Scientist-v2) | 渐进式 Agent tree search 与实验管理 | 消融设计已有两层方案树，但 AutoResearch 代码搜索仍是线性 TrialLedger，不宣称已实现结果驱动树搜索 |
 | [Deep Research Agent Stochasticity](https://arxiv.org/abs/2602.23271) | 独立运行存在方差，需要重复测量和聚合 | baseline 与每个候选已支持重复 evaluator、标准差和方向相关 worst |
 
@@ -188,7 +191,7 @@ AutoResearch 有两个入口：论文仓库的代码候选模式，以及自有�
 
 ## Interface
 
-执行图仅突出主控制链和必要的数据依赖，重复连线会自动合并。节点编号、Agent 类型和状态共同建立阅读顺序；长链使用紧凑蛇形布局，移动端可在“对话 / 流程”视图间切换。
+执行图突出主控制链和必要的数据依赖，重复连线会自动合并。普通任务使用紧凑 DAG；Scientific AutoResearch 会把搜索节点展开为“候选生成、策略前沿、并发评测、确定性裁决”复合节点，并从账本显示实际策略、batch/worker、Keep/Reject 和分数。移动端可在“对话 / 流程”视图间切换。
 
 点击节点后可以查看任务描述、实时日志、生成代码、报告、指标和图表。论文复现末端还会提供三泳道 Claim-to-Evidence Graph，可缩放查看每条主张、独立准则、证据状态和 Artifact 哈希。
 
@@ -212,15 +215,19 @@ Researcher / Paper / Repository / Dataset
           Scheduler (lease / retry / cancel / budget)
                                |
                     Routed Task Executor
-          +--------+----------+-------+-----------------+------+
-          |        |          |       |                 |      |
-         Chat  Librarian    Coder  Research Coding     Data
-                    |          |     /       |       \     |
-             Claim Rubric   Runtime  Paper  Benchmark  AutoResearch
-                                    Debug    Adapter      |
+          +--------+----------+----------+-----------------+------+
+          |        |          |          |                 |      |
+         Chat  Librarian  Benchmark   Coder       Research Coding  Data
+                    |       /    \       |          /          \     |
+             Claim Rubric Split Metric Runtime  Paper Debug  AutoResearch
+                              \ Contract         /       \       |
+                               Hidden Eval   Repository Adapter  |
                                       \        |     +----+----------------+
                                        Go Policy Gate  Code Patch   Config Search
                                                                Domain Adapter
+                                                                    |
+                                                  Python Research Optimizer
+                                           Features / Contextual-UCB / Experience
                                    |
               Sandbox Client -> docker-sandbox -> Native Docker
                                    |
@@ -236,6 +243,7 @@ Researcher / Paper / Repository / Dataset
 | Frontend | `scholar-agent/frontend` | React 工作台、DAG 可视化、PDF 与执行结果展示 |
 | Backend | `scholar-agent/backend` | Gin API、意图识别、Planner、Scheduler、Agent 与 SSE |
 | Docker Sandbox | `scholar-agent/docker-sandbox` | 容器创建、命令执行、文件与运行时生命周期管理 |
+| Research Optimizer | `scholar-agent/research-optimizer` | Python 数据特征、候选优先级与 SQLite 跨任务经验；不掌握执行和验收 |
 | Python AI Service | `scholar-agent/ai-services` | 可选的 Python 意图识别服务，不在默认 Compose 中启动 |
 | Documentation | `scholar-agent/docs` | 启动、架构、规划、实验和用户文档 |
 
@@ -248,6 +256,7 @@ Researcher / Paper / Repository / Dataset
 | **Sandbox** | 运行时准备、依赖安装与隔离实验执行 |
 | **Data** | 指标汇总、论文声明对比、证据图判定、报告与图表生成 |
 | **Research Coding** | 论文仓库调试、自有数据 Benchmark 适配、代码补丁 AutoResearch，以及由 Domain Adapter 驱动的方法/超参数候选搜索 |
+| **Benchmark Agent** | 数据审计、可复现 split、泄漏检查、Metric/Reward 契约、公开/隐藏 evaluator 和最终指标重算 |
 | **Chat** | 通用问答与轻量任务入口 |
 
 ## API
@@ -284,6 +293,8 @@ Researcher / Paper / Repository / Dataset
 | `REDIS_ADDR` | No | 启用会话记忆；未设置时使用 No-op memory store |
 | `REDIS_USERNAME` / `REDIS_PASSWORD` / `REDIS_DB` | No | 可选 Redis 认证与数据库配置 |
 | `PLAN_STORE_PATH` | No | 单机计划和事件 JSON 存储；Compose 默认启用持久卷 |
+| `RESEARCH_OPTIMIZER_URL` | No | Python Research Optimizer 地址；不配置时使用确定性 FIFO |
+| `RESEARCH_OPTIMIZER_API_TOKEN` | No | Backend 与内部 Optimizer 之间的 Bearer Token |
 | `PLAN_MAX_TASK_ATTEMPTS` / `PLAN_MAX_DURATION_SECONDS` | No | 计划尝试次数与时长预算 |
 | `REQUIRE_PLAN_APPROVAL` | No | 强制计划在执行前人工审批 |
 | `API_AUTH_TOKEN` / `SANDBOX_API_TOKEN` | No | 部署 API 与内部沙箱的静态 Bearer 保护 |
@@ -355,8 +366,9 @@ Sea-mult-agent/
 └── scholar-agent/
     ├── backend/                 # Go API 与多 Agent 编排核心
     ├── frontend/                # React + TypeScript 工作台
-    ├── docker-sandbox/          # 独立 Go Docker 沙箱服务
-    ├── ai-services/             # 可选 Python 服务
+	├── docker-sandbox/          # 独立 Go Docker 沙箱服务
+	├── research-optimizer/      # Python 特征、候选策略与 Experience Store
+	├── ai-services/             # 可选 Python 服务
     ├── examples/                # 可运行示例与验收脚本
     ├── test/                    # 功能 golden test 数据、运行器与截图
     ├── docs/                    # 文档与实验记录
@@ -379,6 +391,7 @@ Sea-mult-agent/
 - [Research Coding Agent](scholar-agent/docs/research_coding_agent.md)
 - [AutoResearch 项目介绍](scholar-agent/docs/autoresearch/00_project_introduction.md)
 - [AutoResearch 模块文档](scholar-agent/docs/autoresearch/)
+- [Python Research Optimizer](scholar-agent/docs/autoresearch/10_python_research_optimizer.md)
 - [Claim-to-Evidence Graph](scholar-agent/docs/claim_evidence_graph.md)
 - [Claim-to-Evidence 可运行验收](scholar-agent/test/claim-evidence/)
 - [论文仓库发现](scholar-agent/docs/papers_with_code/)
@@ -394,6 +407,7 @@ Sea-mult-agent/
 - **Sandbox privilege**：已有 CPU、内存、PID、capability、镜像与挂载限制，Compose 仅本机暴露沙箱端口；但 Docker socket 仍等同于较高宿主机权限。
 - **GPU runtime**：GPU 透传已在 V100 主机验证，但默认运行时镜像为 CPU/通用 Python 镜像。
 - **Full reproduction**：当前重点是轻量 smoke 与结构消融，不包含大规模数据集训练。
+- **Learning policy**：当前实现是基于已验证历史的 Contextual-UCB 第一版，不是 Q-learning 或已经充分训练的通用 RL Policy；经验少时会进行可复现冷启动探索。
 
 ## Contributing
 

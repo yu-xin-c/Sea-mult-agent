@@ -20,7 +20,25 @@ services:
     networks:
       - scholar-network
 
-  # 2. Go 后端调度引擎
+  # 2. Python 科研优化服务：数据特征、候选选择和跨任务经验
+  research-optimizer:
+    build: ./research-optimizer
+    ports:
+      - "127.0.0.1:8090:8090"
+    volumes:
+      - scholar-experience-data:/data
+    environment:
+      - RESEARCH_OPTIMIZER_API_TOKEN=${RESEARCH_OPTIMIZER_API_TOKEN:-local-optimizer-token}
+      - RESEARCH_OPTIMIZER_DB_PATH=/data/experiences.sqlite3
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - scholar-network
+
+  # 3. Go 后端调度引擎
   backend:
     build:
       context: ./backend
@@ -34,6 +52,7 @@ services:
       - ../docker-core/config:/app/config:ro
       - scholar-plan-data:/app/data
       - scholar-upload-data:/app/uploads
+      - scholar-benchmark-private-data:/app/private-benchmarks
     env_file:
       - ./backend.env
     environment:
@@ -42,12 +61,18 @@ services:
       - PLAN_STORE_PATH=/app/data/plans.json
       - UPLOAD_ROOT=/app/uploads
       - UPLOAD_MAX_MB=${UPLOAD_MAX_MB:-32}
+      - BENCHMARK_PRIVATE_ROOT=/app/private-benchmarks
+      - RESEARCH_OPTIMIZER_URL=http://research-optimizer:8090
+      - RESEARCH_OPTIMIZER_API_TOKEN=${RESEARCH_OPTIMIZER_API_TOKEN:-local-optimizer-token}
     depends_on:
-      - docker-sandbox
+      docker-sandbox:
+        condition: service_started
+      research-optimizer:
+        condition: service_healthy
     networks:
       - scholar-network
 
-  # 3. React 前端界面
+  # 4. React 前端界面
   frontend:
     build: ./frontend
     ports:
@@ -64,3 +89,5 @@ networks:
 volumes:
   scholar-plan-data:
   scholar-upload-data:
+  scholar-experience-data:
+  scholar-benchmark-private-data:

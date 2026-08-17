@@ -1,0 +1,9 @@
+{
+  "task_type": "classification",
+  "split_method": "stratified_hash",
+  "primary_metric": "macro_f1",
+  "direction": "maximize",
+  "reward_usage": "candidate_priority_only",
+  "public_test_contains_target": false,
+  "hidden_metric_source": "backend_recompute"
+}

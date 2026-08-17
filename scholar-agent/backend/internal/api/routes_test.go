@@ -108,6 +108,28 @@ func TestSafeRemoteTransportRechecksAddressAtDialTime(t *testing.T) {
 	}
 }
 
+func TestServiceHealthChecksOptimizerWhenSandboxIsDown(t *testing.T) {
+	optimizer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/health" {
+			http.NotFound(response, request)
+			return
+		}
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"ok":true,"service":"research-optimizer"}`))
+	}))
+	defer optimizer.Close()
+
+	health := buildServiceHealth(t.Context(), "http://127.0.0.1:1", optimizer.URL)
+	optimizerHealth, ok := health["research_optimizer"].(gin.H)
+	if !ok || optimizerHealth["ok"] != true {
+		t.Fatalf("optimizer should be checked independently: %#v", health)
+	}
+	sandboxHealth, ok := health["sandbox"].(gin.H)
+	if !ok || sandboxHealth["ok"] != false || health["ok"] != false {
+		t.Fatalf("sandbox failure should remain visible: %#v", health)
+	}
+}
+
 func TestCollectPaperSearchFields_PrefersStructuredFields(t *testing.T) {
 	intentCtx := models.IntentContext{
 		Entities: map[string]any{

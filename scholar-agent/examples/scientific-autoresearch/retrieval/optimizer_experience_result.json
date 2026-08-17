@@ -1,0 +1,81 @@
+{
+  "version": "experiment.optimizer-evidence/v1",
+  "executed_at": "2026-08-13T17:42:11+08:00",
+  "mode": "real_local_cpu_http",
+  "optimizer": {
+    "runtime": "Python 3.9.6",
+    "policy_version": "contextual-ucb/v1",
+    "store": "SQLite",
+    "feature_extractor": "python-dataset-profiler/v1",
+    "context_id": "context-ed53de6b64da68c4",
+    "dataset_fingerprint": "486201dfe4e28788f6355cb79e058784e5c56afbc55e71dd3b9f7c1fef853aae"
+  },
+  "evaluator": {
+    "runtime": "Python 3.12.13",
+    "metric": "ndcg_at_k",
+    "target_score": 0.6,
+    "validation_runs": 2
+  },
+  "campaigns": [
+    {
+      "campaign_id": "campaign-6eb23699905922715339",
+      "history_before_run": "empty",
+      "trials": [
+        {
+          "number": 1,
+          "strategy": "hybrid_rrf",
+          "propensity": 0.3333333333333333,
+          "predicted_reward": 0.0,
+          "actual_reward": -0.0000503,
+          "status": "rejected",
+          "reason_codes": ["cold_start_uniform_exploration"]
+        },
+        {
+          "number": 2,
+          "strategy": "graph_hybrid",
+          "propensity": 0.5,
+          "predicted_reward": 0.0,
+          "actual_reward": 0.1999494,
+          "status": "kept",
+          "reason_codes": ["cold_start_uniform_exploration"]
+        }
+      ],
+      "completed_trials": 2,
+      "search_baseline": 0.4,
+      "search_best": 0.6,
+      "holdout_baseline": 0.3333333333333333,
+      "holdout_best": 0.6666666666666666,
+      "holdout_status": "validated",
+      "holdout_passed_runs": 2
+    },
+    {
+      "campaign_id": "campaign-2223e8231acac90bb822",
+      "history_before_run": "one validated same-dataset campaign",
+      "trials": [
+        {
+          "number": 1,
+          "strategy": "graph_hybrid",
+          "propensity": 0.9333333333333333,
+          "predicted_reward": 0.1999494,
+          "actual_reward": 0.19995,
+          "status": "kept",
+          "reason_codes": ["contextual_ucb_exploitation", "validated_history_available"]
+        }
+      ],
+      "completed_trials": 1,
+      "search_baseline": 0.4,
+      "search_best": 0.6,
+      "holdout_baseline": 0.3333333333333333,
+      "holdout_best": 0.6666666666666666,
+      "holdout_status": "validated",
+      "holdout_passed_runs": 2
+    }
+  ],
+  "store_counts": {
+    "decisions": 3,
+    "outcomes": 3,
+    "validated_campaigns": 2
+  },
+  "observed_effect": "After one validated campaign on the same frozen dataset, Contextual-UCB selected graph_hybrid first and reduced candidate trials from two to one while preserving search and Holdout scores.",
+  "claim_scope": "This is a two-campaign integration check on one lightweight dataset. It proves that validated experience is persisted and changes candidate ordering; it does not establish cross-dataset generalization or superiority over other search algorithms."
+}

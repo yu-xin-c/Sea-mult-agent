@@ -23,7 +23,7 @@ The README figure is a beginner-facing overview, not a complete component map. I
 | step_1 | left flow card | Paper, repository, data, budget and acceptance inputs | native | accepted |
 | step_2 | second flow card | Intent, frozen contract and validated DAG | native | accepted |
 | step_2_dag | second card visual | Four-node DAG and label | native | accepted |
-| step_3 | center flow card | Librarian, Research Coding, Data, Chat/Coder collaboration | native | accepted |
+| step_3 | center flow card | Librarian, Research Coding, Python candidate ranking and domain Adapter | native | accepted |
 | step_4 | fourth flow card | Docker execution, dependency install and bounded repair | native | accepted |
 | step_4_terminal | fourth card visual | Real command execution metaphor | native | accepted |
 | step_5 | right flow card | Evaluator, Keep/Reject, rollback and hidden holdout | native | accepted |
@@ -33,7 +33,7 @@ The README figure is a beginner-facing overview, not a complete component map. I
 | guard_scope | lower left | Commit, file, budget, command and evaluator boundary | native | accepted |
 | guard_runtime | lower center | Persistence, leases, retry and SSE | native | accepted |
 | guard_evidence | lower right | Repeated measurement, rollback, holdout and evidence | native | accepted |
-| foundation | bottom band | React, Go, storage, Docker and Artifact technology base | native | accepted |
+| foundation | bottom band | React, Go control plane, Python Contextual-UCB, SQLite, Docker and Artifact base | native | accepted |
 | footer | bottom | Benchmark and AutoResearch scope note | native | accepted |
 
 ## Arrow inventory
@@ -49,10 +49,11 @@ The README figure is a beginner-facing overview, not a complete component map. I
 ## Content boundaries
 
 - The figure does not present Sandbox as a model Agent.
-- Research Coding owns repository debugging and candidate generation; deterministic Go code owns writes, execution, scoring, rollback and acceptance.
+- Research Coding owns repository debugging and candidate generation; Python ranks only Go-approved candidates from bounded dataset features and validated history.
+- Deterministic Go code owns writes, execution, scoring, rollback, budgets and final acceptance; optimizer failure falls back to FIFO.
 - Native Docker is the current default; OpenSandbox is marked optional.
 - Public evaluator search and model-invisible hidden holdout are shown as different stages.
-- AutoResearch remains a bounded linear Keep/Reject loop, not tree search.
+- Configuration AutoResearch exposes a bounded result-driven candidate tree, but does not claim MCTS, Q-learning or a trained general RL policy.
 
 ## Final visual audit
 

@@ -32,11 +32,13 @@ func (a *ResearchCodingAgent) executeExperimentDatasetPrepare(ctx context.Contex
 	if err != nil {
 		return failResearchCodingTask(task, fmt.Errorf("%s dataset adaptation failed: %w", adapter.Name(), err))
 	}
+	profile := a.profileExperimentDataset(ctx, workspacePath, manifest)
+	manifest.FeatureProfile = &profile
 	payload, err := json.Marshal(manifest)
 	if err != nil {
 		return failResearchCodingTask(task, err)
 	}
-	report := fmt.Sprintf("adapted %s research data with %s; counts=%v; split=%s", manifest.Domain, manifest.Adapter, manifest.Counts, manifest.SplitMethod)
+	report := fmt.Sprintf("adapted %s research data with %s; counts=%v; split=%s; features=%s", manifest.Domain, manifest.Adapter, manifest.Counts, manifest.SplitMethod, profile.Extractor)
 	task.Result = string(payload)
 	task.StructuredData = string(payload)
 	task.Status = models.StatusCompleted
@@ -66,6 +68,8 @@ func (a *ResearchCodingAgent) executeExperimentSpec(ctx context.Context, task *m
 	if err != nil {
 		return failResearchCodingTask(task, fmt.Errorf("freeze experiment spec: %w", err))
 	}
+	spec.ContextProfile = manifest.FeatureProfile
+	normalizeExperimentSpecDefaults(&spec)
 	if err := validateExperimentSpec(workspacePath, spec); err != nil {
 		return failResearchCodingTask(task, err)
 	}
@@ -74,7 +78,7 @@ func (a *ResearchCodingAgent) executeExperimentSpec(ctx context.Context, task *m
 		return failResearchCodingTask(task, err)
 	}
 	dependencies, _ := json.Marshal(spec.Dependencies)
-	report := fmt.Sprintf("frozen %s experiment contract: %d strategy branches, %d trials, %ds, metric=%s", spec.Domain, len(spec.Strategies), spec.MaxTrials, spec.MaxWallSeconds, spec.MetricKey)
+	report := fmt.Sprintf("frozen %s experiment contract: %d strategy branches, %d trials, %ds, parallel=%dx%s, metric=%s", spec.Domain, len(spec.Strategies), spec.MaxTrials, spec.MaxWallSeconds, spec.MaxParallelTrials, spec.EvaluationIsolation, spec.MetricKey)
 	task.Result = string(payload)
 	task.StructuredData = string(payload)
 	task.Status = models.StatusCompleted
@@ -120,6 +124,7 @@ func experimentSpecFromTask(task *models.Task, workspacePath string) (models.Exp
 	if err := json.Unmarshal([]byte(raw), &spec); err != nil {
 		return spec, "", fmt.Errorf("decode experiment spec: %w", err)
 	}
+	normalizeExperimentSpecDefaults(&spec)
 	if err := validateExperimentSpec(workspacePath, spec); err != nil {
 		return spec, "", err
 	}
@@ -127,7 +132,23 @@ func experimentSpecFromTask(task *models.Task, workspacePath string) (models.Exp
 	return spec, hex.EncodeToString(hash[:]), nil
 }
 
+func normalizeExperimentSpecDefaults(spec *models.ExperimentResearchSpec) {
+	if spec == nil {
+		return
+	}
+	if spec.RewardSpec.Version == "" {
+		spec.RewardSpec = defaultExperimentRewardSpec()
+	}
+	if spec.MaxParallelTrials == 0 {
+		spec.MaxParallelTrials = 1
+	}
+	if spec.EvaluationIsolation == "" {
+		spec.EvaluationIsolation = models.ExperimentExecutionSerial
+	}
+}
+
 func validateExperimentSpec(workspacePath string, spec models.ExperimentResearchSpec) error {
+	normalizeExperimentSpecDefaults(&spec)
 	if spec.Version != models.ExperimentSpecVersion || spec.Domain == "" || spec.Adapter == "" || spec.CandidateKind != "strategy_config" {
 		return fmt.Errorf("experiment spec identity is incomplete")
 	}
@@ -136,6 +157,31 @@ func validateExperimentSpec(workspacePath string, spec models.ExperimentResearch
 	}
 	if spec.MinDelta < 0 || spec.MaxTrials < 1 || spec.MaxTrials > 40 || spec.MaxWallSeconds < 30 || spec.MaxWallSeconds > 3600 || spec.ValidationRuns < 1 || spec.ValidationRuns > 5 {
 		return fmt.Errorf("experiment spec budget is outside supported bounds")
+	}
+	if spec.MaxParallelTrials < 1 || spec.MaxParallelTrials > 4 {
+		return fmt.Errorf("experiment parallelism must be between 1 and 4")
+	}
+	if spec.EvaluationIsolation != models.ExperimentExecutionSerial && spec.EvaluationIsolation != models.ExperimentExecutionReadOnly {
+		return fmt.Errorf("experiment evaluation isolation is unsupported")
+	}
+	if spec.MaxParallelTrials > 1 && spec.EvaluationIsolation != models.ExperimentExecutionReadOnly {
+		return fmt.Errorf("parallel trials require the shared-readonly evaluator contract")
+	}
+	if spec.EvaluationIsolation == models.ExperimentExecutionSerial && spec.MaxParallelTrials != 1 {
+		return fmt.Errorf("serial evaluator contract requires max_parallel_trials=1")
+	}
+	if spec.RewardSpec.Version != "" {
+		if spec.RewardSpec.Version != models.ExperimentRewardVersion || spec.RewardSpec.QualityTransform != "baseline_scaled_delta" ||
+			spec.RewardSpec.DurationPenaltyPerSecond < 0 || spec.RewardSpec.DurationPenaltyPerSecond > 1 ||
+			spec.RewardSpec.FailurePenalty < 0 || spec.RewardSpec.FailurePenalty > 100 {
+			return fmt.Errorf("experiment reward contract is invalid")
+		}
+	}
+	if spec.ContextProfile != nil {
+		if spec.ContextProfile.Version != models.ExperimentFeatureVersion || spec.ContextProfile.ID == "" ||
+			spec.ContextProfile.Domain != spec.Domain || spec.ContextProfile.Adapter != spec.Adapter {
+			return fmt.Errorf("experiment context profile does not match the spec")
+		}
 	}
 	if len(spec.Strategies) == 0 || len(spec.Strategies) > 16 {
 		return fmt.Errorf("experiment spec must declare 1 to 16 strategy branches")
@@ -227,10 +273,17 @@ func (a *ResearchCodingAgent) executeExperimentRun(ctx context.Context, task *mo
 		return failResearchCodingTask(task, err)
 	}
 	started := time.Now().UTC()
+	campaignID := experimentCampaignID(task, specHash, started)
+	ablationHash, designedBranches, err := experimentAblationEvidence(task)
+	if err != nil {
+		return failResearchCodingTask(task, err)
+	}
 	ledger := models.ExperimentTrialLedger{
-		Version: models.ExperimentLedgerVersion, SpecSHA256: specHash, Status: "running",
+		Version: models.ExperimentLedgerVersion, CampaignID: campaignID, SpecSHA256: specHash, Status: "running",
 		Domain: spec.Domain, Adapter: spec.Adapter, MetricKey: spec.MetricKey, Direction: spec.Direction,
 		TargetScore: spec.TargetScore, MaxTrials: spec.MaxTrials,
+		MaxParallelTrials: spec.MaxParallelTrials, EvaluationIsolation: spec.EvaluationIsolation,
+		AblationPlanSHA256: ablationHash, DesignedBranches: designedBranches,
 		StrategySpace: append([]models.ExperimentStrategy(nil), spec.Strategies...),
 		Trials:        []models.ExperimentTrial{}, StartedAt: started,
 	}
@@ -241,12 +294,13 @@ func (a *ResearchCodingAgent) executeExperimentRun(ctx context.Context, task *mo
 	baselineStart := time.Now().UTC()
 	baselineEvaluation, baselineDuration, err := a.evaluateExperimentCandidate(runCtx, runtimeSession, workspacePath, spec, baseline, false)
 	baselineTrial := models.ExperimentTrial{
-		Number: 0, Candidate: baseline, Status: "baseline", Decision: "keep",
+		Number: 0, Batch: 0, Worker: 1, Candidate: baseline, Status: "baseline", Decision: "keep",
 		Reason: "frozen default establishes the baseline", DurationMS: baselineDuration,
 		StartedAt: baselineStart, FinishedAt: time.Now().UTC(),
 	}
 	ledger.ResourceUsage.EvaluatorRuns++
 	ledger.ResourceUsage.EvaluatorTimeMS += baselineDuration
+	ledger.ResourceUsage.PeakParallelism = 1
 	if err != nil {
 		baselineTrial.Status, baselineTrial.Decision, baselineTrial.Error = "failed", "abort", err.Error()
 		ledger.Trials = append(ledger.Trials, baselineTrial)
@@ -274,6 +328,7 @@ func (a *ResearchCodingAgent) executeExperimentRun(ctx context.Context, task *mo
 		ledger.StopReason = "baseline_target_reached"
 	}
 
+	batchNumber := 0
 	for ledger.CompletedTrials < spec.MaxTrials && ledger.StopReason == "" {
 		if runCtx.Err() != nil {
 			ledger.StopReason = "wall_time_budget_exhausted"
@@ -283,50 +338,100 @@ func (a *ResearchCodingAgent) executeExperimentRun(ctx context.Context, task *mo
 			ledger.StopReason = "candidate_space_exhausted"
 			break
 		}
-		candidate := queue[0]
-		queue = queue[1:]
-		trial := models.ExperimentTrial{
-			Number: ledger.CompletedTrials + 1, Candidate: candidate, Status: "running", Decision: "reject",
-			Reason: candidate.Reason, StartedAt: time.Now().UTC(),
+		batchNumber++
+		remainingTrials := spec.MaxTrials - ledger.CompletedTrials
+		batchSize := min(spec.MaxParallelTrials, min(remainingTrials, len(experimentSelectionFrontier(queue))))
+		selected := make([]experimentSelectedCandidate, 0, batchSize)
+		selectionQueue := queue
+		selectionLedger := ledger
+		for worker := 1; worker <= batchSize; worker++ {
+			remainingWallSeconds := int(time.Until(started.Add(time.Duration(spec.MaxWallSeconds) * time.Second)).Seconds())
+			trialNumber := ledger.CompletedTrials + worker
+			candidate, remainingQueue, policyDecision := a.selectExperimentCandidate(
+				runCtx, campaignID, trialNumber, spec, selectionLedger, selectionQueue, remainingWallSeconds,
+			)
+			selected = append(selected, experimentSelectedCandidate{
+				Index: worker - 1, TrialNumber: trialNumber, Batch: batchNumber, Worker: worker,
+				Candidate: candidate, PolicyDecision: policyDecision, StartedAt: time.Now().UTC(),
+			})
+			selectionQueue = remainingQueue
+			selectionLedger.CompletedTrials++
 		}
-		evaluation, duration, evalErr := a.evaluateExperimentCandidate(runCtx, runtimeSession, workspacePath, spec, candidate, false)
-		trial.DurationMS = duration
-		ledger.ResourceUsage.EvaluatorRuns++
-		ledger.ResourceUsage.EvaluatorTimeMS += duration
-		if evalErr != nil {
-			trial.Status, trial.Reason, trial.Error = "rejected", "candidate evaluator failed", evalErr.Error()
-		} else {
-			score := evaluation.Metrics[spec.MetricKey]
-			delta := experimentDelta(spec.Direction, score, ledger.BestScore)
-			trial.Metrics, trial.Score, trial.DeltaFromBest = evaluation.Metrics, experimentFloatPointer(score), experimentFloatPointer(delta)
-			if delta >= spec.MinDelta {
-				trial.Status, trial.Decision = "kept", "keep"
-				trial.Reason = fmt.Sprintf("%s improved by %.6f (required %.6f)", spec.MetricKey, delta, spec.MinDelta)
-				ledger.BestScore, ledger.BestCandidate, ledger.BestEvaluation = score, candidate, evaluation
-				ledger.AcceptedTrials++
-				for _, child := range refineExperimentCandidate(spec, candidate) {
-					experimentEnqueueCandidate(&queue, seen, child)
-				}
+		queue = selectionQueue
+		ledger.ResourceUsage.PeakParallelism = max(ledger.ResourceUsage.PeakParallelism, len(selected))
+		logToContext(ctx, "[%s] experiment batch %d launched %d candidate(s)", a.Name, batchNumber, len(selected))
+
+		resultChannel := make(chan experimentCandidateResult, len(selected))
+		for _, item := range selected {
+			item := item
+			go func() {
+				evaluation, duration, evalErr := a.evaluateExperimentCandidate(runCtx, runtimeSession, workspacePath, spec, item.Candidate, false)
+				resultChannel <- experimentCandidateResult{Selected: item, Evaluation: evaluation, DurationMS: duration, Err: evalErr, FinishedAt: time.Now().UTC()}
+			}()
+		}
+		results := make([]experimentCandidateResult, len(selected))
+		for range selected {
+			result := <-resultChannel
+			results[result.Selected.Index] = result
+		}
+
+		for _, result := range results {
+			candidate := result.Selected.Candidate
+			policyDecisionCopy := result.Selected.PolicyDecision
+			trial := models.ExperimentTrial{
+				Number: result.Selected.TrialNumber, Batch: result.Selected.Batch, Worker: result.Selected.Worker,
+				Candidate: candidate, Status: "running", Decision: "reject", Reason: candidate.Reason,
+				PolicyDecision: &policyDecisionCopy, DurationMS: result.DurationMS,
+				StartedAt: result.Selected.StartedAt, FinishedAt: result.FinishedAt,
+			}
+			ledger.ResourceUsage.EvaluatorRuns++
+			ledger.ResourceUsage.EvaluatorTimeMS += result.DurationMS
+			if result.Err != nil {
+				trial.Status, trial.Reason, trial.Error = "rejected", "candidate evaluator failed", result.Err.Error()
 			} else {
-				trial.Status = "rejected"
-				trial.Reason = fmt.Sprintf("%s delta %.6f did not meet %.6f", spec.MetricKey, delta, spec.MinDelta)
-			}
-			if candidate.Depth == 0 {
-				for _, child := range refineExperimentCandidate(spec, candidate) {
-					experimentEnqueueCandidate(&queue, seen, child)
+				score := result.Evaluation.Metrics[spec.MetricKey]
+				delta := experimentDelta(spec.Direction, score, ledger.BestScore)
+				trial.Metrics, trial.Score, trial.DeltaFromBest = result.Evaluation.Metrics, experimentFloatPointer(score), experimentFloatPointer(delta)
+				if delta >= spec.MinDelta {
+					trial.Status, trial.Decision = "kept", "keep"
+					trial.Reason = fmt.Sprintf("%s improved by %.6f (required %.6f)", spec.MetricKey, delta, spec.MinDelta)
+					ledger.BestScore, ledger.BestCandidate, ledger.BestEvaluation = score, candidate, result.Evaluation
+					ledger.AcceptedTrials++
+					for _, child := range refineExperimentCandidate(spec, candidate) {
+						experimentEnqueueCandidate(&queue, seen, child)
+					}
+				} else {
+					trial.Status = "rejected"
+					trial.Reason = fmt.Sprintf("%s delta %.6f did not meet %.6f", spec.MetricKey, delta, spec.MinDelta)
+				}
+				if candidate.Depth == 0 {
+					for _, child := range refineExperimentCandidate(spec, candidate) {
+						experimentEnqueueCandidate(&queue, seen, child)
+					}
 				}
 			}
-		}
-		trial.FinishedAt = time.Now().UTC()
-		ledger.Trials = append(ledger.Trials, trial)
-		ledger.CompletedTrials++
-		scoreText := "n/a"
-		if trial.Score != nil {
-			scoreText = fmt.Sprintf("%.6f", *trial.Score)
-		}
-		logToContext(ctx, "[%s] experiment trial %d %s strategy=%s score=%s", a.Name, trial.Number, trial.Status, candidate.Strategy, scoreText)
-		if trial.Status == "kept" && experimentTargetReached(spec.Direction, spec.TargetScore, ledger.BestScore) {
-			ledger.StopReason = "target_score_reached"
+			reward, deltaFromBaseline := experimentReward(spec, ledger.BaselineScore, trial.Score, result.DurationMS, result.Err != nil)
+			trial.Reward = experimentFloatPointer(reward)
+			ledger.Trials = append(ledger.Trials, trial)
+			ledger.CompletedTrials++
+			contextID := ""
+			if spec.ContextProfile != nil {
+				contextID = spec.ContextProfile.ID
+			}
+			a.recordExperimentOutcome(ctx, models.ExperimentExperienceOutcome{
+				Version: models.ExperimentOutcomeVersion, CampaignID: campaignID, TrialNumber: trial.Number,
+				ContextID: contextID, Candidate: candidate, Status: trial.Status,
+				BaselineScore: ledger.BaselineScore, CandidateScore: trial.Score, DeltaFromBaseline: deltaFromBaseline,
+				Reward: reward, DurationMS: result.DurationMS, Error: trial.Error, RecordedAt: trial.FinishedAt,
+			})
+			scoreText := "n/a"
+			if trial.Score != nil {
+				scoreText = fmt.Sprintf("%.6f", *trial.Score)
+			}
+			logToContext(ctx, "[%s] experiment batch %d worker %d trial %d %s strategy=%s score=%s", a.Name, trial.Batch, trial.Worker, trial.Number, trial.Status, candidate.Strategy, scoreText)
+			if trial.Status == "kept" && experimentTargetReached(spec.Direction, spec.TargetScore, ledger.BestScore) {
+				ledger.StopReason = "target_score_reached"
+			}
 		}
 	}
 	if ledger.StopReason == "" {
@@ -340,7 +445,7 @@ func (a *ResearchCodingAgent) executeExperimentRun(ctx context.Context, task *mo
 	}
 	ledgerJSON, _ := json.Marshal(ledger)
 	bestJSON, _ := json.Marshal(best)
-	report := fmt.Sprintf("experiment completed %d/%d trials; kept %d; %s %.6f -> %.6f; best=%s; stop=%s", ledger.CompletedTrials, spec.MaxTrials, ledger.AcceptedTrials, spec.MetricKey, ledger.BaselineScore, ledger.BestScore, best.Candidate.Strategy, ledger.StopReason)
+	report := fmt.Sprintf("experiment completed %d/%d trials; kept %d; peak parallelism=%d; %s %.6f -> %.6f; best=%s; stop=%s", ledger.CompletedTrials, spec.MaxTrials, ledger.AcceptedTrials, ledger.ResourceUsage.PeakParallelism, spec.MetricKey, ledger.BaselineScore, ledger.BestScore, best.Candidate.Strategy, ledger.StopReason)
 	task.Result, task.StructuredData, task.Status = string(ledgerJSON), string(ledgerJSON), models.StatusCompleted
 	setResearchCodingArtifacts(task, map[string]string{
 		"experiment_trial_ledger":   string(ledgerJSON),
@@ -356,6 +461,40 @@ func failExperimentRun(task *models.Task, ledger models.ExperimentTrialLedger, e
 		task.Result, task.StructuredData = string(payload), string(payload)
 	}
 	return failResearchCodingTask(task, err)
+}
+
+type experimentSelectedCandidate struct {
+	Index          int
+	TrialNumber    int
+	Batch          int
+	Worker         int
+	Candidate      models.ExperimentCandidate
+	PolicyDecision models.ExperimentPolicyDecision
+	StartedAt      time.Time
+}
+
+type experimentCandidateResult struct {
+	Selected   experimentSelectedCandidate
+	Evaluation models.ExperimentEvaluation
+	DurationMS int64
+	Err        error
+	FinishedAt time.Time
+}
+
+func experimentAblationEvidence(task *models.Task) (string, int, error) {
+	raw := strings.TrimSpace(extractTaskInputLike(task, "ablation_plan"))
+	if raw == "" {
+		return "", 0, nil
+	}
+	var plan models.AblationPlan
+	if err := json.Unmarshal([]byte(raw), &plan); err != nil {
+		return "", 0, fmt.Errorf("decode bounded ToT ablation plan: %w", err)
+	}
+	if plan.Strategy == "" || len(plan.Candidates) == 0 {
+		return "", 0, fmt.Errorf("bounded ToT ablation plan is incomplete")
+	}
+	hash := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(hash[:]), len(plan.Candidates), nil
 }
 
 func defaultExperimentCandidate(strategy models.ExperimentStrategy, reason string) models.ExperimentCandidate {
@@ -643,6 +782,15 @@ func (a *ResearchCodingAgent) executeExperimentValidation(ctx context.Context, t
 		Summary: fmt.Sprintf("%s: search %.6f -> %.6f; holdout passed %d/%d fresh runs", status, ledger.BaselineScore, ledger.BestScore, passed, spec.ValidationRuns),
 	}
 	payload, _ := json.Marshal(report)
+	if a != nil && a.Optimizer != nil && ledger.CampaignID != "" {
+		if recordErr := a.Optimizer.RecordValidation(ctx, optimizerValidationRecord{
+			Version: optimizerValidationVersion, CampaignID: ledger.CampaignID, Status: status,
+			RequestedRuns: spec.ValidationRuns, PassedRuns: passed,
+			SearchBaseline: ledger.BaselineScore, SearchBest: ledger.BestScore, RecordedAt: report.ValidatedAt,
+		}); recordErr != nil {
+			logToContext(ctx, "[%s] research optimizer validation recording failed: %v", a.Name, recordErr)
+		}
+	}
 	metrics := map[string]any{
 		"metric": spec.MetricKey, "search_baseline": ledger.BaselineScore, "search_best": ledger.BestScore,
 		"holdout_passed_runs": passed, "holdout_requested_runs": spec.ValidationRuns, "status": status,

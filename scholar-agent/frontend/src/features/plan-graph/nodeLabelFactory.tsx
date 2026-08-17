@@ -1,11 +1,14 @@
 import { CheckCircle2, Circle, CircleAlert, Clock3, LoaderCircle, ShieldAlert } from 'lucide-react';
+import type { Task } from '../../contracts/api';
 import { getAgentIcon } from '../shared/agentVisuals';
+import { ExperimentSearchNodeLabel } from './ExperimentSearchNodeLabel';
 
 interface CreateTaskNodeLabelOptions {
   assignedTo: string;
   taskName: string;
   status: string;
   step?: number;
+  task?: Task;
 }
 
 const agentLabels: Record<string, string> = {
@@ -13,6 +16,7 @@ const agentLabels: Record<string, string> = {
   coder_agent: '代码智能体',
   sandbox_agent: '沙箱执行器',
   data_agent: '数据智能体',
+	benchmark_agent: '评测智能体',
   research_coding_agent: '科研 Coding 智能体',
   general_agent: '通用智能体',
 };
@@ -29,7 +33,10 @@ const statusMeta: Record<string, { label: string; className: string; icon: typeo
 const getPrimaryTaskName = (taskName: string) => taskName.split(/\s+\/\s+/)[0]?.trim() || taskName;
 
 export const createTaskNodeLabel = (options: CreateTaskNodeLabelOptions) => {
-  const { assignedTo, taskName, status, step } = options;
+  const { assignedTo, taskName, status, step, task } = options;
+  if (task?.Type === 'experiment_run') {
+    return <ExperimentSearchNodeLabel task={task} status={status} step={step} />;
+  }
   const statusState = statusMeta[status] ?? statusMeta.pending;
   const StatusIcon = statusState.icon;
 

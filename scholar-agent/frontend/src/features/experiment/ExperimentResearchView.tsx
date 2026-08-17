@@ -247,6 +247,23 @@ function CandidateDetail({ trial, metricKey }: { trial: ExperimentTrialView; met
         <div className="text-[10px] font-semibold text-slate-700">系统判定</div>
         <p className="mt-1 text-[10px] leading-5 text-slate-600">{trial.reason || trial.candidate.reason}</p>
       </div>
+      {trial.policyDecision && (
+        <div className="mt-4 border-y border-cyan-100 bg-cyan-50/50 px-2 py-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[10px] font-semibold text-cyan-900">策略选择</div>
+            <span className={`rounded border px-1.5 py-0.5 text-[9px] font-semibold ${trial.policyDecision.fallback ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-cyan-200 bg-white text-cyan-800'}`}>
+              {trial.policyDecision.fallback ? '确定性回退' : 'Python Policy'}
+            </span>
+          </div>
+          <div className="mt-2 break-all font-mono text-[9px] text-slate-700">{trial.policyDecision.policyVersion}</div>
+          <div className="mt-2 grid grid-cols-3 gap-2 text-[9px]">
+            <div><div className="font-mono font-semibold text-slate-800">{(trial.policyDecision.propensity * 100).toFixed(1)}%</div><div className="mt-0.5 text-slate-500">选择概率</div></div>
+            <div><div className="font-mono font-semibold text-slate-800">{trial.policyDecision.predictedReward === null ? '-' : formatExperimentNumber(trial.policyDecision.predictedReward)}</div><div className="mt-0.5 text-slate-500">预测 Reward</div></div>
+            <div><div className="font-mono font-semibold text-slate-800">{trial.reward === null ? '-' : formatExperimentNumber(trial.reward)}</div><div className="mt-0.5 text-slate-500">实际 Reward</div></div>
+          </div>
+          {trial.policyDecision.reasonCodes.length > 0 && <div className="mt-2 break-words text-[9px] leading-4 text-cyan-800">{trial.policyDecision.reasonCodes.join(' · ')}</div>}
+        </div>
+      )}
       <div className="mt-4">
         <div className="text-[10px] font-semibold text-slate-700">实际配置</div>
         <dl className="mt-2 divide-y divide-slate-200 border-y border-slate-200">
@@ -345,7 +362,7 @@ function TrialRow({ trial, metricKey }: { trial: ExperimentTrialView; metricKey:
           </div>
           <div className="shrink-0 text-right"><div className="font-mono text-sm font-semibold text-slate-900">{trial.score === null ? 'N/A' : formatExperimentNumber(trial.score)}</div><div className="text-[9px] text-slate-500">{metricKey}</div></div>
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-x-3 border-t border-slate-200/70 pt-2 text-[9px] text-slate-500"><span className="font-semibold text-slate-700">{statusLabel(trial)}</span><span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatExperimentDuration(trial.durationMs)}</span>{trial.candidate.parentId && <span className="font-mono">depth {trial.candidate.depth}</span>}</div>
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 border-t border-slate-200/70 pt-2 text-[9px] text-slate-500"><span className="font-semibold text-slate-700">{statusLabel(trial)}</span><span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatExperimentDuration(trial.durationMs)}</span>{trial.number > 0 && <span className="font-mono text-cyan-700">batch {trial.batch} · worker {trial.worker}</span>}{trial.policyDecision && <span className="font-mono">{trial.policyDecision.policyVersion}</span>}{trial.reward !== null && <span className="font-mono">reward {formatExperimentNumber(trial.reward)}</span>}{trial.candidate.parentId && <span className="font-mono">depth {trial.candidate.depth}</span>}</div>
       </div>
     </li>
   );
@@ -380,20 +397,20 @@ function ExperimentRunPanel({ ledger, expanded }: { ledger: ExperimentLedgerView
       <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0"><div className="flex items-center gap-2 text-sm font-semibold text-slate-900"><FlaskConical className="h-4 w-4 text-cyan-700" />{ledger.domain} 自动研究</div><div className="mt-1 text-[10px] text-slate-500">{ledger.adapter} · {stopLabel(ledger.stopReason)}</div></div>
-          <div className="flex items-center gap-2 text-xs text-slate-600"><Target className="h-4 w-4 text-cyan-700" />{ledger.targetScore === null ? '无目标阈值' : `目标 ${formatExperimentNumber(ledger.targetScore)}`}</div>
+          <div className="flex flex-wrap items-center justify-end gap-2 text-[10px] font-semibold"><span className="border border-violet-200 bg-violet-50 px-2 py-1 text-violet-700">ToT {ledger.designedBranches || '-'} branches</span><span className="border border-cyan-200 bg-cyan-50 px-2 py-1 text-cyan-800">并发 {ledger.resourceUsage.peakParallelism}/{ledger.maxParallelTrials}</span><span className="flex items-center gap-1 text-slate-600"><Target className="h-4 w-4 text-cyan-700" />{ledger.targetScore === null ? '无目标阈值' : `目标 ${formatExperimentNumber(ledger.targetScore)}`}</span></div>
         </div>
       </div>
       <div className="grid grid-cols-2 border-b border-slate-200 sm:grid-cols-4"><Summary label="Baseline" value={ledger.baselineScore} /><Summary label="Best" value={ledger.bestScore} accent /><Summary label="Keep" text={String(ledger.acceptedTrials)} /><Summary label="Trials" text={`${ledger.completedTrials}/${ledger.maxTrials}`} /></div>
       <SearchProcessRail ledger={ledger} />
       <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-2">
-        <div className="min-w-0"><div className="text-xs font-semibold text-slate-900">生成策略树</div><div className="mt-0.5 truncate text-[9px] text-slate-500">方法分支 → 默认候选 → 单变量参数子节点 → 真实指标裁决</div></div>
+        <div className="min-w-0"><div className="text-xs font-semibold text-slate-900">生成策略树</div><div className="mt-0.5 truncate text-[9px] text-slate-500">ToT 设计 → 同层候选批次 → 并发 evaluator → 确定性入账 → Keep/Reject</div></div>
         <div className="flex shrink-0 rounded border border-slate-200 bg-slate-50 p-0.5" role="group" aria-label="实验视图模式">
           <button type="button" onClick={() => setViewMode('tree')} className={`flex h-7 items-center gap-1.5 rounded px-2 text-[10px] font-semibold ${viewMode === 'tree' ? 'bg-white text-cyan-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}><ListTree className="h-3.5 w-3.5" />策略树</button>
           <button type="button" onClick={() => setViewMode('timeline')} className={`flex h-7 items-center gap-1.5 rounded px-2 text-[10px] font-semibold ${viewMode === 'timeline' ? 'bg-white text-cyan-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}><ListOrdered className="h-3.5 w-3.5" />时间线</button>
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {viewMode === 'tree' ? <StrategyTreePanel ledger={ledger} /> : <div className="mx-auto max-w-4xl px-4 py-4"><ol className="space-y-2">{ledger.trials.map((trial) => <TrialRow key={trial.candidate.id} trial={trial} metricKey={ledger.metricKey} />)}</ol><div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 border-t border-slate-200 pt-3 text-[10px] text-slate-500"><span>Evaluator {ledger.resourceUsage.evaluatorRuns} runs</span><span>执行 {formatExperimentDuration(ledger.resourceUsage.evaluatorTimeMs)}</span><span>墙钟 {formatExperimentDuration(ledger.resourceUsage.wallDurationMs)}</span></div></div>}
+        {viewMode === 'tree' ? <StrategyTreePanel ledger={ledger} /> : <div className="mx-auto max-w-4xl px-4 py-4"><ol className="space-y-2">{ledger.trials.map((trial) => <TrialRow key={trial.candidate.id} trial={trial} metricKey={ledger.metricKey} />)}</ol><div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 border-t border-slate-200 pt-3 text-[10px] text-slate-500"><span>Evaluator {ledger.resourceUsage.evaluatorRuns} runs</span><span>累计执行 {formatExperimentDuration(ledger.resourceUsage.evaluatorTimeMs)}</span><span>墙钟 {formatExperimentDuration(ledger.resourceUsage.wallDurationMs)}</span><span>峰值并发 {ledger.resourceUsage.peakParallelism}</span><span className="font-mono">{ledger.evaluationIsolation}</span></div></div>}
       </div>
     </div>
   );

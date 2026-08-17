@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback, type MouseEvent as ReactMouse
 import { Background, Controls, ReactFlow, useNodesState, useEdgesState, Panel } from '@xyflow/react';
 import type { Node, Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Activity, AlertTriangle, CheckCircle2, Send, Bot, FileText, Code, Database, TerminalSquare, Play, X, Eye, FileUp, Maximize2, Languages, Loader2, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
+import { Activity, AlertTriangle, CheckCircle2, Send, Bot, FileText, Code, Database, Gauge, TerminalSquare, Play, X, Eye, FileUp, Maximize2, Languages, Loader2, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
 import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -156,6 +156,7 @@ const getAgentIcon = (agentName: string) => {
     case 'coder_agent': return <Code className="w-5 h-5 text-purple-500" />;
     case 'sandbox_agent': return <TerminalSquare className="w-5 h-5 text-orange-500" />;
     case 'data_agent': return <Database className="w-5 h-5 text-green-500" />;
+		case 'benchmark_agent': return <Gauge className="w-5 h-5 text-rose-600" />;
     default: return <Bot className="w-5 h-5 text-gray-500" />;
   }
 };
@@ -166,6 +167,7 @@ const getAgentLabel = (agentName: string) => {
     case 'coder_agent': return 'Coder';
     case 'sandbox_agent': return 'Sandbox';
     case 'data_agent': return 'Data';
+		case 'benchmark_agent': return 'Benchmark';
     default: return 'Agent';
   }
 };
@@ -180,6 +182,8 @@ const getAgentTone = (agentName: string) => {
       return { border: '#fb923c', soft: '#fff7ed', text: '#c2410c' };
     case 'data_agent':
       return { border: '#34d399', soft: '#ecfdf5', text: '#047857' };
+		case 'benchmark_agent':
+			return { border: '#fb7185', soft: '#fff1f2', text: '#be123c' };
     default:
       return { border: '#94a3b8', soft: '#f8fafc', text: '#475569' };
   }
@@ -406,7 +410,7 @@ export default function App() {
     setExecutionCode('');
     setExecutionImage('');
 
-    const initLog = `[System] 正在唤醒 ${task.AssignedTo}...\n[System] 正在通过 Eino 框架调用 DeepSeek 模型${task.AssignedTo === 'librarian_agent' || task.AssignedTo === 'data_agent' ? '生成报告' : '生成代码'}...\n`;
+    const initLog = `[System] 正在唤醒 ${task.AssignedTo}...\n[System] ${['librarian_agent', 'data_agent', 'benchmark_agent'].includes(task.AssignedTo) ? '正在生成结构化报告' : '正在生成或执行代码'}...\n`;
     setExecutionLogs(initLog);
     setNodeStates(prev => ({
       ...prev,
@@ -510,7 +514,7 @@ export default function App() {
               // 将执行结果推送到左侧对话框
               const taskActions: ('view_plot' | 'view_report')[] = [];
               if (imageBase64) taskActions.push('view_plot');
-              if (finalResult && (task.AssignedTo === 'librarian_agent' || task.AssignedTo === 'data_agent')) {
+              if (finalResult && ['librarian_agent', 'data_agent', 'benchmark_agent'].includes(task.AssignedTo)) {
                 taskActions.push('view_report');
               }
 
@@ -524,7 +528,7 @@ export default function App() {
               // 如果生成了图表，自动切换到图表视图
               if (imageBase64) {
                 setViewMode('plot');
-              } else if (task.AssignedTo === 'librarian_agent' || task.AssignedTo === 'data_agent') {
+              } else if (['librarian_agent', 'data_agent', 'benchmark_agent'].includes(task.AssignedTo)) {
                 setViewMode('report');
               }
 
@@ -692,7 +696,7 @@ export default function App() {
         setViewMode('plot');
       } else if (savedState.code && !savedState.result) {
         setViewMode('code');
-      } else if (savedState.result && (taskData.AssignedTo === 'librarian_agent' || taskData.AssignedTo === 'data_agent')) {
+      } else if (savedState.result && ['librarian_agent', 'data_agent', 'benchmark_agent'].includes(taskData.AssignedTo)) {
         setViewMode('report');
       } else {
         setViewMode('logs');
@@ -1276,7 +1280,7 @@ export default function App() {
                             生成图表
                           </button>
                         )}
-                        {(selectedTask.AssignedTo === 'librarian_agent' || selectedTask.AssignedTo === 'data_agent') && executionResult && (
+                        {['librarian_agent', 'data_agent', 'benchmark_agent'].includes(selectedTask.AssignedTo) && executionResult && (
                           <button
                             onClick={() => setViewMode('report')}
                             className={`flex-1 py-3 text-xs font-black text-center border-b-2 flex items-center justify-center gap-1 transition-all ${viewMode === 'report' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}
@@ -1316,7 +1320,7 @@ export default function App() {
                         </label>
                         <div className="bg-gray-900 rounded-2xl p-5 flex-1 overflow-y-auto font-mono text-[11px] text-green-400 leading-relaxed shadow-2xl border border-gray-800 whitespace-pre-wrap selection:bg-green-800 selection:text-white scrollbar-thin scrollbar-thumb-gray-700">
                           {executionLogs || '>>> 准备就绪，等待响应...'}
-                          {executionResult && !['librarian_agent', 'data_agent'].includes(selectedTask.AssignedTo) && (
+                          {executionResult && !['librarian_agent', 'data_agent', 'benchmark_agent'].includes(selectedTask.AssignedTo) && (
                             <div className="mt-5 pt-5 border-t border-gray-800 text-blue-400 font-bold">
                               [Output]:<br/>{executionResult}
                             </div>

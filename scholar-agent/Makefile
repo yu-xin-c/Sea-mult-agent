@@ -1,6 +1,6 @@
 # ScholarAgent development helpers
 
-.PHONY: all help install install-ai tidy lint build package sync-frontend-dist test eval example-paper-reproduction example-autoresearch run-backend run-frontend run-sandbox docker-up docker-down clean
+.PHONY: all help install install-ai tidy lint build package sync-frontend-dist test test-optimizer eval example-paper-reproduction example-autoresearch run-backend run-frontend run-sandbox run-optimizer docker-up docker-down clean
 
 all: help
 
@@ -13,10 +13,12 @@ help:
 	@echo "  make build         - Build frontend, backend and sandbox"
 	@echo "  make package       - Build a single executable with embedded frontend and sandbox"
 	@echo "  make test          - Run backend, sandbox, frontend and offline example tests"
+	@echo "  make test-optimizer - Run the Python Research Optimizer tests"
 	@echo "  make eval          - Run the deterministic Agent planning evaluation dataset"
 	@echo "  make example-paper-reproduction - Run the live Attention smoke example"
 	@echo "  make example-autoresearch - Run the frozen intent-router AutoResearch baseline"
 	@echo "  make run-sandbox   - Start docker-sandbox locally via scripts/unix/"
+	@echo "  make run-optimizer - Start the Python Research Optimizer locally"
 	@echo "  make run-backend   - Start backend locally via scripts/unix/"
 	@echo "  make run-frontend  - Start frontend locally via scripts/unix/"
 	@echo "  make docker-up     - Start services with docker compose via scripts/unix/"
@@ -58,6 +60,10 @@ test:
 	cd frontend && npm test
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s examples/paper-reproduction -p 'test_*.py'
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s examples/autoresearch/intent_router -p 'test_*.py'
+	$(MAKE) test-optimizer
+
+test-optimizer:
+	cd research-optimizer && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*.py'
 
 eval:
 	cd backend && go test -v ./evals
@@ -70,6 +76,9 @@ example-autoresearch:
 
 run-sandbox:
 	./scripts/unix/start-sandbox.sh
+
+run-optimizer:
+	cd research-optimizer && RESEARCH_OPTIMIZER_DB_PATH=$${RESEARCH_OPTIMIZER_DB_PATH:-/tmp/scholar-experiences.sqlite3} python3 -m research_optimizer.service
 
 run-backend:
 	./scripts/unix/start-backend.sh

@@ -1,10 +1,11 @@
-import { Bot, Code, Database, FileText, TerminalSquare, Wrench } from 'lucide-react';
+import { Bot, Code, Database, FileText, Gauge, TerminalSquare, Wrench } from 'lucide-react';
 
 const agentLabels: Record<string, string> = {
   librarian_agent: 'Librarian',
   coder_agent: 'Coder',
   sandbox_agent: 'Sandbox Runner',
   data_agent: 'Data',
+	benchmark_agent: 'Benchmark',
   research_coding_agent: 'Research Coding',
   general_agent: 'General',
 };
@@ -21,6 +22,8 @@ export const getAgentIcon = (agentName: string) => {
       return <TerminalSquare className="w-5 h-5 text-orange-500" />;
     case 'data_agent':
       return <Database className="w-5 h-5 text-green-500" />;
+		case 'benchmark_agent':
+			return <Gauge className="w-5 h-5 text-rose-600" />;
     case 'research_coding_agent':
       return <Wrench className="w-5 h-5 text-teal-600" />;
     default:

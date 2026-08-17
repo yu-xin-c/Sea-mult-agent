@@ -42,6 +42,11 @@ func (a *DataAgent) executeAblationDesign(ctx context.Context, task *models.Task
 	budget := ablationBudgetFromTask(task)
 	contextText := fmt.Sprintf("%s\n\nAvailable artifacts and constraints:\n%v", task.Description, task.Inputs)
 	defaults := defaultAblationCandidates()
+	if estimatedMinutes := boundedTaskInt(task, "ablation_estimated_minutes_per_experiment", 0, 0, 60); estimatedMinutes > 0 {
+		for index := range defaults {
+			defaults[index].EstimatedMinutes = minInt(defaults[index].EstimatedMinutes, estimatedMinutes)
+		}
+	}
 	rootCandidates := prepareAblationRootCandidates(nil, defaults)
 
 	if a != nil && a.ChatModel != nil {

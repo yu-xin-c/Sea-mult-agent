@@ -10,7 +10,7 @@ import scientificExperimentLedger from './fixtures/scientific-autoresearch-ledge
 import scientificExperimentValidation from './fixtures/scientific-autoresearch-validation.json';
 import type { ExecutionDisplayMode } from '../src/app/hooks/useScholarRuntime';
 import { LeftWorkspaceChat } from '../src/app/components/LeftWorkspace';
-import type { IntentContext, PlanGraph, Task } from '../src/contracts/api';
+import type { GraphTask, IntentContext, PlanGraph, Task } from '../src/contracts/api';
 import { ExecutionSidebar } from '../src/features/execution/ExecutionSidebar';
 import { GraphPanel } from '../src/features/plan-graph/GraphPanel';
 import { buildGraphLayout, graphTaskToTask } from '../src/features/plan-graph/buildGraphLayout';
@@ -18,7 +18,7 @@ import { buildGraphLayout, graphTaskToTask } from '../src/features/plan-graph/bu
 type PreviewMode = 'dashboard' | 'run' | 'validation' | 'ablation' | 'experiment' | 'experiment-validation';
 
 const rawPlanGraph = lightRagResult.plan_graph as unknown as PlanGraph;
-const planGraph: PlanGraph = {
+const repositoryPlanGraph: PlanGraph = {
   ...rawPlanGraph,
   nodes: rawPlanGraph.nodes.map((node) => ({
     ...node,
@@ -29,7 +29,7 @@ const planGraph: PlanGraph = {
 };
 
 const findTask = (type: string): Task => {
-  const graphTask = planGraph.nodes.find((node) => node.type === type);
+  const graphTask = repositoryPlanGraph.nodes.find((node) => node.type === type);
   if (!graphTask) throw new Error(`Missing ${type} task in LightRAG result fixture`);
   return graphTaskToTask(graphTask);
 };
@@ -60,7 +60,10 @@ const experimentTask: Task = {
   AssignedTo: 'research_coding_agent',
   Status: 'completed',
   Dependencies: [],
-  Inputs: { experiment_max_trials: 6, experiment_target_score: 0.6 },
+  Inputs: {
+    research_domain: 'retrieval', experiment_max_trials: 6, experiment_max_parallel_trials: 3,
+    experiment_target_score: 0.6, ablation_max_experiments: 5,
+  },
   Result: JSON.stringify(scientificExperimentLedger),
   StructuredData: JSON.stringify(scientificExperimentLedger),
 };
@@ -79,35 +82,91 @@ const experimentValidationTask: Task = {
 const previewMode = (new URLSearchParams(window.location.search).get('view') || 'dashboard') as PreviewMode;
 const noOp = () => undefined;
 
+const previewGraphTask = (
+  id: string,
+  name: string,
+  type: string,
+  assignedTo: string,
+  dependencies: string[],
+  task?: Task,
+  parallelizable = false,
+): GraphTask => ({
+  id,
+  name,
+  type,
+  description: task?.Description || name,
+  assigned_to: assignedTo,
+  status: 'completed',
+  dependencies,
+  inputs: task?.Inputs || {},
+  required_artifacts: [],
+  output_artifacts: [],
+  parallelizable,
+  priority: 0,
+  retry_limit: 1,
+  run_count: 1,
+  execution_epoch: 1,
+  contract: { version: 'task.contract/v1', input_artifacts: [], output_artifacts: [], allowed_tools: [] },
+  result: task?.Result,
+  structured_data: task?.StructuredData,
+});
+
+const scientificNodes = [
+  previewGraphTask('experiment-data-preview', '适配用户研究数据', 'experiment_dataset_prepare', 'research_coding_agent', []),
+  previewGraphTask('experiment-spec-preview', '冻结指标、策略空间与预算', 'experiment_spec', 'research_coding_agent', ['experiment-data-preview']),
+  previewGraphTask(ablationTask.ID, 'ToT 展开并筛选实验方向', 'ablation_design', 'data_agent', ['experiment-spec-preview'], ablationTask, true),
+  previewGraphTask('experiment-runtime-preview', '准备隔离运行环境', 'prepare_runtime', 'sandbox_agent', ['experiment-spec-preview'], undefined, true),
+  previewGraphTask('experiment-install-preview', '安装实验依赖', 'install_dependencies', 'sandbox_agent', ['experiment-runtime-preview']),
+  previewGraphTask(experimentTask.ID, '运行多策略异步搜索', 'experiment_run', 'research_coding_agent', ['experiment-install-preview', ablationTask.ID], experimentTask),
+  previewGraphTask(experimentValidationTask.ID, '在隐藏 Holdout 上复验最佳候选', 'experiment_validate', 'research_coding_agent', [experimentTask.ID], experimentValidationTask),
+  previewGraphTask('experiment-report-preview', '汇总可解释研究证据', 'verify_result', 'data_agent', [experimentValidationTask.ID]),
+];
+
+const scientificPlanGraph: PlanGraph = {
+  ...repositoryPlanGraph,
+  id: 'scientific-autoresearch-parallel-preview',
+  user_intent: '上传工业数据，在固定 NDCG@1 与 6 次预算内，用 ToT 设计候选并发比较多种策略，达到 0.60 后做 2 次 Holdout 复验。',
+  intent_type: 'AutoResearch',
+  status: 'completed',
+  nodes: scientificNodes,
+  edges: scientificNodes.flatMap((node) => node.dependencies.map((dependency) => ({
+    id: `${dependency}-${node.id}`,
+    from: dependency,
+    to: node.id,
+    type: 'control',
+  }))),
+};
+
 const intentContext: IntentContext = {
-  raw_intent: planGraph.user_intent,
-  intent_type: planGraph.intent_type,
+  raw_intent: scientificPlanGraph.user_intent,
+  intent_type: scientificPlanGraph.intent_type,
   entities: {
-    repository_url: 'https://github.com/HKUDS/LightRAG',
-    repository_revision: '24ee484864357865b20770e478b177ae68391796',
+    research_domain: 'retrieval',
+    experiment_adapter: 'retrieval.v1',
   },
   constraints: {
-    max_trials: 8,
-    max_wall_seconds: 300,
-    validation_runs: 3,
+    max_trials: 6,
+    max_parallel_trials: 3,
+    max_wall_seconds: 180,
+    validation_runs: 2,
   },
   metadata: {
-    source_result: '2026-08-10_lightrag_target_stop_e2e.json',
+    source_result: 'scientific-autoresearch-ledger.json',
   },
 };
 
 const chatHistory = [
   {
     role: 'user',
-    text: '在 LightRAG 上做受限 AutoResearch，最多 8 轮，并用模型不可见的隐藏测试复验 3 次。',
+    text: '上传工业检索数据，在 6 次预算内自动比较多种策略，并发 3 路，NDCG@1 达到 0.60 后停止。',
   },
   {
     role: 'system',
-    text: '已冻结代码版本、可编辑文件、公开与隐藏评测器，生成 8 节点执行计划。',
+    text: '已冻结数据、指标、策略空间和 Reward；ToT 设计与运行环境正在异步准备。',
   },
   {
     role: 'system',
-    text: '完成：公开指标 **0.50 → 1.00**；隐藏验证 **3/3 通过**。',
+    text: '完成：搜索指标 **0.40 → 0.60**；隐藏验证 **2/2 通过**。',
   },
 ];
 
@@ -119,7 +178,8 @@ const taskState = (task: Task) => ({
 });
 
 export function RuntimePreview() {
-  const initialLayout = useMemo(() => buildGraphLayout(planGraph), []);
+  const activePlanGraph = previewMode === 'run' ? repositoryPlanGraph : scientificPlanGraph;
+  const initialLayout = useMemo(() => buildGraphLayout(activePlanGraph), [activePlanGraph]);
   const [nodes, , onNodesChange] = useNodesState(initialLayout.nodes);
   const [edges, , onEdgesChange] = useEdgesState(initialLayout.edges);
   const [displayMode, setDisplayMode] = useState<ExecutionDisplayMode>(
@@ -186,7 +246,7 @@ export function RuntimePreview() {
           isExecuting={false}
           displayMode={displayMode}
           executionLogs={previewMode === 'experiment'
-            ? '[Experiment] baseline=0.4000\n[Trial 3] keep graph_hybrid=0.6000\n[Experiment] target_score_reached'
+            ? '[Experiment] baseline=0.4000\n[Policy] validated history -> graph_hybrid (p=0.933)\n[Trial 1] keep graph_hybrid=0.6000\n[Experiment] target_score_reached'
             : '[Validation] holdout baseline=0.3333 candidate=0.6667 passed=2/2'}
           executionResult={state.result}
           executionCode={state.code}
@@ -219,11 +279,11 @@ export function RuntimePreview() {
           isLoggedIn: true,
           userId: 'autoresearch-demo',
           loginInput: 'autoresearch-demo',
-          activeSessionId: 'lightrag-target-stop',
+          activeSessionId: showRunPanel ? 'lightrag-target-stop' : 'scientific-autoresearch-parallel',
           sessions: [
             {
-              id: 'lightrag-target-stop',
-              title: 'LightRAG 隐藏验证实验',
+              id: showRunPanel ? 'lightrag-target-stop' : 'scientific-autoresearch-parallel',
+              title: showRunPanel ? 'LightRAG 隐藏验证实验' : '工业数据多策略实验',
               createdAt: '2026-08-10T10:56:14Z',
               updatedAt: '2026-08-10T10:57:23Z',
               messageCount: chatHistory.length,
@@ -256,8 +316,8 @@ export function RuntimePreview() {
           onNodeClick={noOp}
           intentContext={intentContext}
           runAllText="运行计划"
-          graphTitle="LightRAG AutoResearch 执行流程"
-          graphHint={planGraph.user_intent}
+          graphTitle={showRunPanel ? 'LightRAG AutoResearch 执行流程' : 'Scientific AutoResearch 执行流程'}
+          graphHint={activePlanGraph.user_intent}
           isExecuting={false}
           requiresApproval={false}
           onRunAll={noOp}

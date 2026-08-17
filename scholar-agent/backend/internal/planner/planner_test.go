@@ -88,21 +88,22 @@ func TestCustomDatasetBenchmarkBuildsBoundedAdapterHarness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.IntentType != "Custom_Benchmark" || len(plan.Nodes) != 11 {
+	if plan.IntentType != "Custom_Benchmark" || len(plan.Nodes) != 13 {
 		t.Fatalf("unexpected custom benchmark graph: intent=%s nodes=%d", plan.IntentType, len(plan.Nodes))
 	}
 	wantedTypes := []string{
-		"dataset_profile", "repo_discovery", "repo_prepare", "benchmark_adapter_generate", "resolve_dependencies",
-		"prepare_runtime", "install_dependencies", "benchmark_adapter_preflight", "benchmark_execute", "benchmark_validate", "framework_report",
+		"benchmark_dataset_audit", "repo_discovery", "repo_prepare", "benchmark_split_materialize", "benchmark_contract_freeze",
+		"benchmark_adapter_generate", "resolve_dependencies", "prepare_runtime", "install_dependencies", "benchmark_adapter_preflight",
+		"benchmark_execute", "benchmark_validate", "framework_report",
 	}
 	for index, taskType := range wantedTypes {
 		if plan.Nodes[index].Type != taskType {
 			t.Fatalf("node %d type=%s, want %s", index, plan.Nodes[index].Type, taskType)
 		}
 	}
-	profile := plan.Nodes[0]
-	if profile.AssignedTo != "research_coding_agent" || profile.Inputs["benchmark_input_column"] != "review" || profile.Inputs["benchmark_target_column"] != "label" {
-		t.Fatalf("unexpected dataset profile node: %#v", profile)
+	audit := plan.Nodes[0]
+	if audit.AssignedTo != "benchmark_agent" || audit.Inputs["benchmark_input_column"] != "review" || audit.Inputs["benchmark_target_column"] != "label" {
+		t.Fatalf("unexpected dataset audit node: %#v", audit)
 	}
 	discovery := plan.Nodes[1]
 	if len(discovery.RequiredArtifacts) != 0 || discovery.Inputs["preferred_repo_url"] != "https://github.com/example/research-repo" {
@@ -113,12 +114,29 @@ func TestCustomDatasetBenchmarkBuildsBoundedAdapterHarness(t *testing.T) {
 	if _, leaked := preparedUploads[0]["text_excerpt"]; leaked {
 		t.Fatalf("workspace upload reference retained text excerpt: %#v", preparedUploads)
 	}
-	execute := plan.Nodes[8]
+	split := plan.Nodes[3]
+	if split.AssignedTo != "benchmark_agent" || !containsArtifact(split.OutputArtifacts, "benchmark_leakage_report") || !containsArtifact(split.OutputArtifacts, "benchmark_public_test_manifest") || !containsArtifact(split.OutputArtifacts, "benchmark_input_only_preflight_manifest") {
+		t.Fatalf("benchmark split contract is incomplete: %#v", split)
+	}
+	freeze := plan.Nodes[4]
+	if freeze.AssignedTo != "benchmark_agent" || !containsArtifact(freeze.OutputArtifacts, "benchmark_metric_contract") || !containsArtifact(freeze.OutputArtifacts, "benchmark_reward_contract") {
+		t.Fatalf("benchmark metric/reward contract is incomplete: %#v", freeze)
+	}
+	execute := plan.Nodes[10]
 	if execute.Inputs["benchmark_max_samples"] != 64 {
 		t.Fatalf("benchmark sample budget=%v", execute.Inputs["benchmark_max_samples"])
 	}
-	if !containsArtifact(execute.RequiredArtifacts, "validated_benchmark_adapter_spec") || !containsArtifact(plan.Nodes[9].OutputArtifacts, "benchmark_validation_report") {
+	if !containsArtifact(execute.RequiredArtifacts, "validated_benchmark_adapter_spec") || !containsArtifact(execute.OutputArtifacts, "benchmark_hidden_predictions_path") || !containsArtifact(plan.Nodes[11].OutputArtifacts, "benchmark_validation_report") {
 		t.Fatalf("benchmark evidence contracts are incomplete")
+	}
+	if !containsArtifact(plan.Nodes[9].RequiredArtifacts, "benchmark_input_only_preflight_manifest") {
+		t.Fatalf("benchmark adapter preflight is missing the unlabeled feature contract")
+	}
+	if plan.Nodes[11].AssignedTo != "benchmark_agent" {
+		t.Fatalf("hidden validation routed to %s", plan.Nodes[11].AssignedTo)
+	}
+	if err := validateCriticalNodeContracts(intent, plan.Nodes); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -188,7 +206,7 @@ func TestAutoResearchBuildsDeterministicBoundedHarness(t *testing.T) {
 
 func TestDatasetAutoResearchBuildsGenericExperimentHarness(t *testing.T) {
 	intent := models.IntentContext{
-		RawIntent:  "上传工业语料和评测问题，自动研究 RAG 策略与超参数，最多 14 次实验，总时长 20 分钟，目标分数 0.82，top_k=8",
+		RawIntent:  "上传工业语料和评测问题，自动研究 RAG 策略与超参数，最多 14 次实验，并发 3 路，总时长 20 分钟，目标分数 0.82，top_k=8",
 		IntentType: "AutoResearch",
 		Entities: map[string]any{
 			"needs_autoresearch": true, "needs_dataset_research": true,
@@ -200,7 +218,7 @@ func TestDatasetAutoResearchBuildsGenericExperimentHarness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wanted := []string{"experiment_dataset_prepare", "experiment_spec", "prepare_runtime", "install_dependencies", "experiment_run", "experiment_validate", "verify_result"}
+	wanted := []string{"experiment_dataset_prepare", "experiment_spec", "ablation_design", "prepare_runtime", "install_dependencies", "experiment_run", "experiment_validate", "verify_result"}
 	if len(plan.Nodes) != len(wanted) {
 		t.Fatalf("unexpected experiment plan length: %d", len(plan.Nodes))
 	}
@@ -209,14 +227,14 @@ func TestDatasetAutoResearchBuildsGenericExperimentHarness(t *testing.T) {
 			t.Fatalf("node %d type=%s, want %s", index, plan.Nodes[index].Type, taskType)
 		}
 	}
-	if plan.Nodes[0].Inputs["research_domain"] != "retrieval" || plan.Nodes[1].Inputs["experiment_max_trials"] != 14 || plan.Nodes[1].Inputs["experiment_cutoff"] != 8 {
+	if plan.Nodes[0].Inputs["research_domain"] != "retrieval" || plan.Nodes[1].Inputs["experiment_max_trials"] != 14 || plan.Nodes[1].Inputs["experiment_cutoff"] != 8 || plan.Nodes[1].Inputs["experiment_max_parallel_trials"] != 3 {
 		t.Fatalf("experiment inputs were not frozen: %#v", plan.Nodes[1].Inputs)
 	}
 	if got := plan.Nodes[1].Inputs["experiment_target_score"]; got != 0.82 {
 		t.Fatalf("target score=%v", got)
 	}
-	if plan.Nodes[4].TimeoutSeconds != 1230 || plan.Budget.MaxDurationSec != 2100 || plan.Nodes[5].RetryLimit != 0 {
-		t.Fatalf("experiment budgets are inconsistent: plan=%#v run=%#v validate=%#v", plan.Budget, plan.Nodes[4], plan.Nodes[5])
+	if !plan.Nodes[2].Parallelizable || !plan.Nodes[3].Parallelizable || plan.Nodes[5].TimeoutSeconds != 1230 || plan.Budget.MaxDurationSec != 2100 || plan.Nodes[6].RetryLimit != 0 {
+		t.Fatalf("experiment budgets or parallel branches are inconsistent: plan=%#v design=%#v runtime=%#v run=%#v validate=%#v", plan.Budget, plan.Nodes[2], plan.Nodes[3], plan.Nodes[5], plan.Nodes[6])
 	}
 }
 
