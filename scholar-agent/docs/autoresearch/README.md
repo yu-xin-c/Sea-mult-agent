@@ -20,7 +20,8 @@ AutoResearch 是 ScholarAgent 面向“持续提出小改动并用真实指标�
 | [07_repeated_validation_and_resource_evidence.md](07_repeated_validation_and_resource_evidence.md) | 重复验证与执行资源证据 | 多次独立进程复验、统计量、资源摘要、真实运行和边界 |
 | [08_real_repository_experiments.md](08_real_repository_experiments.md) | 真实外部仓库实验 | 四仓库全链运行、固定版本、重复搜索、目标停止、失败演进与可信边界 |
 | [09_general_scientific_autoresearch.md](09_general_scientific_autoresearch.md) | 通用 Scientific AutoResearch | 代码/配置双候选模式、Adapter 协议、结果驱动候选树、真实检索示例与当前边界 |
-| [10_python_research_optimizer.md](10_python_research_optimizer.md) | Python Research Optimizer | 数据特征、Contextual-UCB、Reward、SQLite Experience Store、Go 回退和学习边界 |
+| [10_python_research_optimizer.md](10_python_research_optimizer.md) | Python Research Optimizer | 数据特征、路线 UCB、树内 UCT、Reward、SQLite Experience Store、Go 回退和学习边界 |
+| [11_hierarchical_search_engine.md](11_hierarchical_search_engine.md) | 分层候选搜索引擎 | Model 默认穷举、外层 UCB、Top-K Beam、UCT-style 参数树、4 Agent 异步调度和路线榜单 |
 
 研究来源的逐项证据、本地落点和风险标记见 [`refs/evidence-map.md`](refs/evidence-map.md)。
 

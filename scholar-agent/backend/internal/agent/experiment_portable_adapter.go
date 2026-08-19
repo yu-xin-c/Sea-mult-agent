@@ -183,6 +183,16 @@ func (a portableExperimentAdapter) BuildSpec(task *models.Task, workspacePath st
 		parallelTrials = 1
 	}
 	spec.MaxParallelTrials = boundedTaskInt(task, "experiment_max_parallel_trials", parallelTrials, 1, 4)
+	beamWidth := spec.BeamWidth
+	if beamWidth == 0 {
+		beamWidth = models.ExperimentDefaultBeamWidth
+	}
+	explorationSlots := spec.ExplorationSlots
+	if explorationSlots == 0 {
+		explorationSlots = models.ExperimentDefaultExplorationSlots
+	}
+	spec.BeamWidth = boundedTaskInt(task, "experiment_beam_width", beamWidth, 1, 8)
+	spec.ExplorationSlots = boundedTaskInt(task, "experiment_exploration_slots", explorationSlots, 1, 4)
 	if spec.EvaluationIsolation == "" {
 		spec.EvaluationIsolation = models.ExperimentExecutionSerial
 	}

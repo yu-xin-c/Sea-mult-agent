@@ -56,7 +56,7 @@ export function GraphPanel(props: GraphPanelProps) {
   const experimentSearchTask = nodes.map((node) => node.data.task as Task | undefined).find((task) => task?.Type === 'experiment_run');
   const experimentParallelism = typeof experimentSearchTask?.Inputs?.experiment_max_parallel_trials === 'number'
     ? experimentSearchTask.Inputs.experiment_max_parallel_trials
-    : 1;
+    : 4;
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col bg-slate-50">
@@ -74,7 +74,7 @@ export function GraphPanel(props: GraphPanelProps) {
               {intentLabel && <span className="rounded-md bg-blue-50 px-2 py-1 font-medium text-blue-700">{intentLabel}</span>}
               <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-600">{nodes.length} 个步骤</span>
               {experimentSearchTask && <span className="rounded-md bg-violet-50 px-2 py-1 font-medium text-violet-700">ToT 设计与环境异步</span>}
-              {experimentSearchTask && <span className="rounded-md bg-cyan-50 px-2 py-1 font-medium text-cyan-800">策略评测并发 x{experimentParallelism}</span>}
+              {experimentSearchTask && <span className="rounded-md bg-cyan-50 px-2 py-1 font-medium text-cyan-800">Search Agent x{experimentParallelism}</span>}
               <span className="flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-1 text-emerald-700">
                 <CheckCircle2 className="h-3.5 w-3.5" />
                 {completedCount}/{nodes.length} 完成

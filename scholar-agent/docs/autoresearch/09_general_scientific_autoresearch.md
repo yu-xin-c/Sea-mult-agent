@@ -94,13 +94,13 @@ RAG 只是第一个内置领域 Adapter。相同内核可以用于分类模型�
 配置搜索不是让模型输出隐藏思维过程。它是一棵可审计的实验树：
 
 1. 第一个方法默认配置建立 baseline。
-2. 其余方法默认配置形成一级“方法消融”分支。
+2. 其余 Model 组合的默认配置全部运行，阶段屏障通过前不启动参数候选。
 3. 每个分支按一次只改变一个参数生成子候选。
-4. evaluator 的真实主指标决定 Keep/Reject。
-5. Keep 分支继续展开相邻参数；候选 ID 去重。
+4. evaluator 的真实主指标决定全局 Keep/Reject；所有成功执行的候选仍进入各自路线榜单。
+5. 每条路线的 Top-K 高分父路径和一条低访问探索路径可以继续展开，候选 ID 全局去重。
 6. 达到 `target_score`、耗尽 Trial、耗尽墙钟或搜索完空间时停止。
 
-启用 Python Research Optimizer 时，队列中的下一候选由 `contextual-ucb/v1` 根据冻结数据特征和已验证跨任务经验选择；Go 仍校验候选属于当前队列，并在服务异常时退回确定性 FIFO。每个节点记录 `parent_id`、`depth`、`changed_parameter`、完整参数、Policy 版本、propensity、预测/实际 Reward、分数、相对最佳值、耗时和判定原因，前端直接渲染为候选与参数消融树。它和论文理解阶段的两层 ToT 不同：ToT 负责在运行前选高信息增益实验，结果驱动树负责在运行中用真实指标筛选配置。
+启用 Python Research Optimizer 时，`hierarchical-contextual-ucb-uct/v2` 先用路线 Top-K Reward、访问次数、数据上下文先验和探索项选择 Model 参数树，再用 UCT-style 分数选择树内父路径。Go 仍校验候选、Beam/探索身份和数值统计，在服务异常时使用同结构的确定性本地实现。每个节点记录 `parent_id`、`backprop_path`、完整参数、Search Agent、派发/完成顺序、UCB/UCT 组成、virtual visits、真实 Reward、分数、耗时和判定原因。前端提供全局路线 Top-K、参数树和时间线三种视图。完整设计见[分层候选搜索引擎](11_hierarchical_search_engine.md)。
 
 ### ToT 设计与两层异步
 
@@ -108,11 +108,12 @@ RAG 只是第一个内置领域 Adapter。相同内核可以用于分类模型�
 
 1. 契约冻结后，`ablation_design` 使用两层受限 ToT 展开参数、模块、数据、稳定性和成本方向；它与 `prepare_runtime -> install_dependencies` 分支异步执行。
 2. 两个分支在 `experiment_run` 汇合。ToT 产物的 SHA-256 和探索分支数写入 TrialLedger，用于解释“运行前考虑过什么”；它不能覆盖冻结策略空间，也不能自行宣布实验成功。
-3. 运行期按最小深度形成候选前沿。若契约声明 `shared-readonly/v1`，Harness 最多并发 1 至 4 个同层候选；否则强制 `serial/v1`。
-4. 并发候选各自使用独立配置文件，账本记录 `batch`、`worker` 与 `peak_parallelism`。结果即使以不同顺序完成，也按 Policy 的固定选择顺序提交 Keep/Reject，避免完成时序改变最佳候选。
-5. 某个 worker 达到目标时，同批已经启动的候选仍会完成并入账，下一批不再启动。这是可见的并发预算开销，不会被隐藏成“只运行了一次”。
+3. Model 默认配置先进入受限穷举阶段；参数阶段的活跃前沿由每条路线 `Top-K Beam + exploration_slots` 组成。
+4. 外层 UCB 分配路线预算，内层 UCT-style 分数选择父路径。若契约声明 `shared-readonly/v1`，Harness 最多使用 4 个 Search Agent；否则强制 `serial/v1`。
+5. Coordinator 是队列与 Ledger 的唯一写入者。每个 Agent 使用独立配置文件，预留时登记 virtual visit，完成后按真实完成顺序进入中央事件循环；账本同时保留 `dispatch_order` 和 `completion_order`。
+6. 某个 Agent 达到目标时，已经启动的候选仍会完成并入账，新的候选不再派发。这是可见的异步预算开销。
 
-内置 `retrieval.v1` evaluator 只读冻结数据，因此用户明确请求“并发 3 路”时可以使用共享只读模式。Portable Adapter 默认串行；只有契约作者确认 evaluator 不写共享状态并显式声明隔离模式后，才允许提高并行度。这里实现的是**受限同层并发**，不是 MCTS 式任意异步树搜索。
+内置 `retrieval.v1` evaluator 只读冻结数据，默认提供 4 个 Search Agent 槽位。Portable Adapter 默认串行；只有契约作者确认 evaluator 不写共享状态并显式声明隔离模式后，才允许提高并行度。这里实现的是**UCT-style 真实实验树搜索**，没有模拟 rollout，因此不称为完整 MCTS。
 
 Reward 仅用于学习“下次先尝试什么”，不参与 Keep/Reject。只有最终 Holdout 为 `validated` 的 campaign 会成为后续策略历史；完整协议见 [Python Research Optimizer](10_python_research_optimizer.md)。
 
@@ -132,7 +133,7 @@ Reward 仅用于学习“下次先尝试什么”，不参与 Keep/Reject。只�
 
 - BM25 baseline：Search `0.4000`，Holdout `0.3333`。
 - TF-IDF 与普通 RRF：Search 均为 `0.4000`，被 Reject。
-- 图增强分支：Search `0.6000`，确定性 FIFO 基线在第 3 轮达到目标后停止。
+- 图增强分支：Search `0.6000`，当时记录的旧版确定性 FIFO 基线在第 3 轮达到目标后停止。
 - 最佳配置 Holdout：`0.6667`，两个新进程通过 `2/2`。
 
 这证明通用协议、真实 evaluator、目标停止和 Holdout 闭环可以运行，不证明图增强在所有数据上更好，也不证明任意论文已经零配置适配。
@@ -141,11 +142,11 @@ Reward 仅用于学习“下次先尝试什么”，不参与 Keep/Reject。只�
 
 ![真实候选搜索界面](../assets/scientific-autoresearch-search.png)
 
-上图是产品内的真实交互视图，由前端直接解析 `experiment.ledger/v1` fixture。顶部同时展示 ToT 分支数和 `3/3` 峰值并发；三个一级方法候选保留相同 batch、不同 worker，策略树展示全部有限域、真实分数和目标停止后的剪枝状态。点击节点可以查看配置、Policy、propensity、预测/实际 Reward、耗时与 Keep/Reject 原因，也可以切换时间线核对确定性入账顺序。这棵树是可公开、可复核的实验谱系，不是模型私有思维过程；fixture 负责稳定重放 UI，并发行为由 Go 集成测试真实执行验证。
+上图是产品内的交互视图，由前端直接解析 `experiment.ledger/v1` fixture。默认页并排展示每条 Model 路线的 Top-K、默认分数、路线最佳和 Top-K Reward；参数树显示 Beam 与探索节点；候选详情拆分 UCB 路线统计、UCT 节点统计、virtual visits 和真实 Reward；时间线展示 Search Agent、派发顺序与完成顺序。fixture 负责稳定重放 UI，阶段屏障、异步补位和并发上限由 Go 集成测试真实执行验证。
 
 ![真实 Holdout 验收界面](../assets/scientific-autoresearch-validation.png)
 
-验收页把搜索分数与 Holdout 分数分开呈现，并展示两个新进程的逐次结果和样例级证据。机器可读 FIFO 基线见 [`result.json`](../../examples/scientific-autoresearch/retrieval/result.json)，策略经验复验见 [`optimizer_experience_result.json`](../../examples/scientific-autoresearch/retrieval/optimizer_experience_result.json)；本次运行环境是本地 CPU，不冒充 Docker/GPU 或第三方官方 Benchmark。
+验收页把搜索分数与 Holdout 分数分开呈现，并展示两个新进程的逐次结果和样例级证据。历史机器记录中的旧版 FIFO 基线见 [`result.json`](../../examples/scientific-autoresearch/retrieval/result.json)，策略经验复验见 [`optimizer_experience_result.json`](../../examples/scientific-autoresearch/retrieval/optimizer_experience_result.json)；它们用于保留升级前事实，不代表当前 v2 调度策略。本次运行环境是本地 CPU，不冒充 Docker/GPU 或第三方官方 Benchmark。
 
 ## 8. 当前能力与目标之间的差距
 
@@ -155,8 +156,11 @@ Reward 仅用于学习“下次先尝试什么”，不参与 Keep/Reject。只�
 | 任意领域的配置搜索 | 已支持 Portable Adapter 协议，需要 evaluator 和候选空间 |
 | 检索/RAG 数据的零配置适配 | 已支持轻量内置 Adapter |
 | ToT 设计与环境准备异步 | 已支持固定 DAG 双分支，搜索前汇合并保留 ToT 产物哈希 |
-| 多策略候选并发 | 已支持 `shared-readonly/v1` 下 1-4 路同层并发；Portable Adapter 默认串行 |
-| 任意异步树搜索 / MCTS | 尚未支持；当前批次只从同一最小深度前沿取候选 |
+| 多策略候选并发 | 已支持 `shared-readonly/v1` 下 1-4 个异步 Search Agent；Portable Adapter 默认串行 |
+| 分层离散树搜索 | 已支持 Model 默认穷举、外层 UCB、Top-K Beam + 探索通道、内层 UCT-style 与 virtual visits |
+| 完整 MCTS | 不支持；当前没有模拟 rollout 或价值网络 |
+| 连续参数贝叶斯优化 | 尚未接入；当前 `experiment.spec/v1` 使用显式有限值域 |
+| Hyperband 多保真训练 | 尚未接入；需要 fidelity、checkpoint 和恢复命令契约 |
 | 任意论文上传后自动生成可靠 Adapter | 尚未完全支持；Research Coding Agent 具备仓库分析和 Benchmark 代码生成基础，但还没有对所有领域做自动契约验收 |
 | 自动证明全局最优 | 不支持；系统只能返回给定候选空间、数据、指标和预算内观察到的最佳配置 |
 | 无标签数据自动判断效果 | 不支持；可做无监督代理指标，但不能冒充业务正确率 |

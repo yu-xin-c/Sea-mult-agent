@@ -19,7 +19,7 @@
 
 Sea-Mult-Agent 面向论文复现、自有数据评测和预算受限的 Scientific AutoResearch。用户可以给出论文仓库，也可以上传自己的研究数据、评测目标和候选方法空间；系统在固定指标与预算下自动尝试代码补丁或方法/超参数配置，真实执行后 Keep/Reject，达到目标即停止，并在 Holdout 上复验最佳候选。RAG 只是首个内置领域 Adapter，不是项目边界。
 
-Intent Router 与 Planner 把目标转换为经过校验的 DAG，Scheduler 通过类型化 Artifact 路由给 Librarian、Benchmark、Coder、Research Coding 和 Data 等专业 Agent。Benchmark Agent 先冻结数据划分、主指标、Reward 和隐藏验收；模型负责论文理解、仓库适配和提出可证伪候选；Python Research Optimizer 利用已验证经验决定优先尝试哪个候选；确定性 Go Harness 掌握候选合法性、真实执行、指标判定、回滚、预算和最终验收。日志、状态和结构化证据通过 SSE 返回工作台。
+Intent Router 与 Planner 把目标转换为经过校验的 DAG，Scheduler 通过类型化 Artifact 路由给 Librarian、Benchmark、Coder、Research Coding 和 Data 等专业 Agent。Benchmark Agent 先冻结数据划分、主指标、Reward 和隐藏验收；模型负责论文理解、仓库适配和提出可证伪候选；Python Research Optimizer 先用外层 UCB 在 Model 参数树之间分配预算，再用 Beam + UCT-style 选择树内路径；确定性 Go Harness 掌握候选合法性、4 Agent 异步执行、指标判定、回滚、预算和最终验收。日志、状态和结构化证据通过 SSE 返回工作台。
 
 总图用五个步骤说明系统如何完成一次复现或预算受限自动研究，可编辑源文件见 [ArchitectureDiagram.drawio](ArchitectureDiagram.drawio)，完整组件边界见[项目架构文档](scholar-agent/docs/project_architecture.md)。其中 Native Docker 是当前默认执行引擎；OpenSandbox 仅为可选 fallback，BERT/Qwen 意图模型也未接入默认生产请求链。
 
@@ -28,7 +28,7 @@ Intent Router 与 Planner 把目标转换为经过校验的 DAG，Scheduler 通�
 
 ![ScholarAgent dashboard](scholar-agent/docs/assets/scholar-agent-dashboard.png)
 
-界面截图由当前 React 组件回放 [`experiment.ledger/v1` 并发候选记录](scholar-agent/frontend/test/fixtures/scientific-autoresearch-ledger.json)生成，不是手工绘制的流程图。外层 DAG 展示数据适配、契约冻结、ToT 设计与环境准备的异步分支、Holdout 和报告；搜索复合节点展开 4 个策略、3 路 evaluator、真实分数以及 `batch / worker / Keep / Reject`。同层并发行为由 Go 集成测试实际执行验证，截图 fixture 用于稳定复现界面。
+界面截图由当前 React 组件回放 [`experiment.ledger/v1` 异步搜索记录](scholar-agent/frontend/test/fixtures/scientific-autoresearch-ledger.json)生成，不是手工绘制的流程图。外层 DAG 展示数据适配、契约冻结、ToT 设计与环境准备的异步分支、Holdout 和报告；搜索复合节点展示 Model 默认配置阶段屏障、路线 UCB、Beam/探索前沿、树内 UCT、4 个 Search Agent 以及真实 Reward。调度行为由 Go 集成测试实际执行验证，截图 fixture 用于稳定复现界面。
 
 ## Why Sea-Mult-Agent
 
@@ -44,8 +44,8 @@ Intent Router 与 Planner 把目标转换为经过校验的 DAG，Scheduler 通�
 | **可信 Benchmark Agent** | 自动审计任务与列映射，生成 train/validation/test，执行分层/group/time 划分和泄漏检查，冻结 Metric/Reward 契约，并在仓库不可见的标签上重算最终指标 |
 | **自有数据仓库评测** | Research Coding Agent 生成受限适配器，经有标签指标预检、无标签推理预检和有限 ReAct 修复后运行 validation；test 仅提供特征与 ID，最终指标由 Benchmark Agent 对隐藏标签重算 |
 | **受限 AutoResearch 循环** | 冻结仓库提交、评测器与数据，只允许修改白名单文件；重复测量后 Keep/Reject、退化回滚、目标分数停止，并隐藏复验最佳候选 |
-| **通用实验配置搜索** | 通过 `experiment.spec/v1` 描述方法分支与参数有限域，按真实指标生成结果驱动候选树；只读 evaluator 可冻结 1-4 路同层并发，账本记录 batch、worker 与峰值并发；Portable Adapter 默认串行 |
-| **跨任务策略经验** | Python Optimizer 将数据特征、候选选择概率、实际 Reward 和 Holdout 状态写入 SQLite；仅使用已验证 campaign 的历史做 Contextual-UCB 排序，冷启动和服务异常均有可审计回退 |
+| **通用实验配置搜索** | 通过 `experiment.spec/v1` 描述 Model 组合与参数有限域；先受限穷举所有默认配置，再由外层 UCB 分配调参预算、Top-K Beam 保留高分路径、UCT-style 选择树内扩展；只读 evaluator 默认支持 4 个异步 Search Agent，Portable Adapter 默认串行 |
+| **跨任务策略经验** | Python Optimizer 将数据特征、候选选择概率、实际 Reward 和 Holdout 状态写入 SQLite；仅使用已验证 campaign 的历史提供 Contextual Bandit 先验，当前 Validation 结果始终优先，服务异常时回退到同结构的 Go 策略 |
 | **检索/RAG 示例 Adapter** | 上传语料、查询与相关文档标注后，自动比较 BM25、TF-IDF、RRF 和显式关系边图增强检索；它是通用协议示例，不是产品边界 |
 | **逐主张复现验收** | 实验前冻结分层 Rubric，实验后把论文主张、判定准则与真实 Artifact 绑定成可视化证据图 |
 | **实时可观测执行** | SSE 推送计划、节点、日志和 Artifact 事件，前端同步展示执行状态 |
@@ -135,16 +135,16 @@ AutoResearch 有两个入口：论文仓库的代码候选模式，以及自有�
 
 ```text
 请在这批工业数据上做自动研究，比较 RAG 检索策略和超参数。
-固定 NDCG@1，最多 6 次实验，并发 3 路，总时长 3 分钟，目标分数 0.60，独立复验 2 次。
+固定 NDCG@1，最多 6 次实验，4 个 Search Agent，总时长 3 分钟，目标分数 0.60，独立复验 2 次。
 ```
 
-系统会执行 `数据适配 -> 冻结方法与参数空间 -> (ToT 设计 || 沙箱准备) -> 多策略搜索 -> Holdout -> 报告`。一级候选比较方法，子候选一次只改变一个参数；同一深度的候选可在只读 evaluator 契约下并发运行，但按固定选择顺序提交判定，避免完成时序改变最佳结果。每轮保存父节点、完整配置、真实指标、Reward 和 Keep/Reject 原因。非检索论文可以上传 `experiment.json`、领域 evaluator 和数据，通过 Portable Adapter 复用同一 Harness；未显式声明只读隔离时保持串行。
+系统会执行 `数据适配 -> 冻结 Model 与参数空间 -> (ToT 设计 || 沙箱准备) -> 分层异步搜索 -> Holdout -> 报告`。所有合法 Model 组合先以默认配置各运行一次；阶段屏障通过后，外层 UCB 在多棵参数树之间分配预算，内层 Top-K Beam + 探索通道形成前沿，再由 UCT-style 分数选择父路径。最多 4 个隔离 Search Agent 按结果返回立即补位，virtual visit 避免并发任务重复涌入同一路线。每轮保存父节点、完整配置、真实指标、Reward、UCB/UCT 组成、派发/完成顺序和 Keep/Reject 原因。非检索论文可以上传 `experiment.json`、领域 evaluator 和数据，通过 Portable Adapter 复用同一 Harness；未显式声明只读隔离时保持串行。
 
 真实轻量示例中，固定 `NDCG@1` 后，BM25 baseline 为 `0.4000`，图增强分支达到 `0.6000`；未参与搜索的 Holdout 从 `0.3333` 提升到 `0.6667`，两个新进程通过 `2/2`。随后连续运行两个真实 HTTP campaign：第一轮冷启动用了 2 个候选，第二轮读取已验证经验后直接优先 `graph_hybrid`，只用 1 个候选达到同一结果。详见[检索 Adapter 示例](scholar-agent/examples/scientific-autoresearch/retrieval/)和[通用 Scientific AutoResearch 协议](scholar-agent/docs/autoresearch/09_general_scientific_autoresearch.md)。这表示“给定候选空间与预算内观察到的最佳结果”，不表示全局最优或已经具备跨数据集泛化。
 
 ![Scientific AutoResearch candidate search](scholar-agent/docs/assets/scientific-autoresearch-search.png)
 
-这不是单独绘制的示意图，而是产品中的交互式候选搜索视图。后端把冻结的方法/参数空间和 Trial 谱系写入 `experiment.ledger/v1`；前端按“冻结空间、建立基线、展开方法、细化参数、Holdout 验收”展示进度，并显示 ToT 分支数、并发上限、峰值并发和每个候选的 batch/worker。用户可以点击分支查看完整配置、指标、耗时、Policy、Reward 和 Keep/Reject 原因，也可以切换时间线核对确定性入账顺序。上图中 BM25 是基线，TF-IDF 与普通 RRF 被 Reject，`graph_hybrid` 提升后 Keep；达到目标后尚未执行的参数候选明确标记为已剪枝。对应的搜索/隐藏集分离与 `2/2` 复验界面见[完整协议文档](scholar-agent/docs/autoresearch/09_general_scientific_autoresearch.md)。
+这不是单独绘制的示意图，而是产品中的交互式候选搜索视图。后端把冻结的 Model/参数空间和 Trial 谱系写入 `experiment.ledger/v1`；前端默认显示跨路线 Top-K 全局视图，也可切换参数树和异步时间线。用户可以查看每个候选为何被提出、相对父节点的参数变化、Beam 或探索身份、路线 UCB、节点 UCT、virtual visits、真实 Reward、Search Agent、派发/完成顺序以及 Keep/Reject 原因。根节点默认分数与后代调度统计分开保存，不会因回传而被改写；最终只冻结全局最佳 `Model + parameters` 进入 Holdout。完整协议见[分层候选搜索引擎](scholar-agent/docs/autoresearch/11_hierarchical_search_engine.md)。
 
 #### Optimize A Paper Repository
 
@@ -175,8 +175,8 @@ AutoResearch 有两个入口：论文仓库的代码候选模式，以及自有�
 | [MLE-bench](https://arxiv.org/abs/2410.07095) | 同时观察任务效果和计算资源投入 | 已记录命令次数与耗时，尚不包含 GPU、token 和费用账本 |
 | [Microsoft R&D-Agent](https://github.com/microsoft/RD-Agent) | Research/Development 分工，以及多次实验的统计报告方式 | 已输出重复验证的均值、标准差和失败率；当前不会自动注入不同 seed |
 | [Auto-Research-Recipes](https://github.com/cxcscmu/Auto-Research-Recipes) | 任务无关核心、Task Adapter、外部 evaluator 和可发布 Artifact | 已实现通用 `experiment.* /v1`、内置/Portable Adapter 与配置候选 lineage；代码补丁模式仍使用线性 TrialLedger |
-| [Arbor](https://github.com/RUC-NLPIR/Arbor) | Coordinator/Executor、想法树、隔离 worktree 和开发/heldout 分离 | 已有隔离工作区、搜索/隐藏验收边界与受限同层并发；尚未实现 MCTS 式异步树搜索和 checkpoint 恢复 |
-| [AI Scientist v2](https://github.com/SakanaAI/AI-Scientist-v2) | 渐进式 Agent tree search 与实验管理 | 消融设计已有两层方案树，但 AutoResearch 代码搜索仍是线性 TrialLedger，不宣称已实现结果驱动树搜索 |
+| [Arbor](https://github.com/RUC-NLPIR/Arbor) | Coordinator/Executor、想法树、隔离 worktree 和开发/heldout 分离 | 配置模式已实现中央 Coordinator、4 Agent 异步参数树和搜索/隐藏验收边界；尚未实现并行 Git worktree 与逐轮 checkpoint 恢复 |
+| [AI Scientist v2](https://github.com/SakanaAI/AI-Scientist-v2) | 渐进式 Agent tree search 与实验管理 | 配置模式已有真实 Validation 驱动的 UCT-style 参数树；没有模拟 rollout，代码补丁模式仍使用线性 TrialLedger，因此不宣称完整 MCTS |
 | [Deep Research Agent Stochasticity](https://arxiv.org/abs/2602.23271) | 独立运行存在方差，需要重复测量和聚合 | baseline 与每个候选已支持重复 evaluator、标准差和方向相关 worst |
 
 这些方法位于不同决策层：ToT 选择高价值消融，ReAct 处理有限故障恢复，AutoResearch 按冻结指标执行 Keep/Reject，PaperBench 风格 Rubric 与证据图负责上层论文验收。完整来源事实、代码落点和过度声明风险见 [AutoResearch 项目介绍](scholar-agent/docs/autoresearch/00_project_introduction.md)与[证据表](scholar-agent/docs/autoresearch/refs/evidence-map.md)。
@@ -191,7 +191,7 @@ AutoResearch 有两个入口：论文仓库的代码候选模式，以及自有�
 
 ## Interface
 
-执行图突出主控制链和必要的数据依赖，重复连线会自动合并。普通任务使用紧凑 DAG；Scientific AutoResearch 会把搜索节点展开为“候选生成、策略前沿、并发评测、确定性裁决”复合节点，并从账本显示实际策略、batch/worker、Keep/Reject 和分数。移动端可在“对话 / 流程”视图间切换。
+执行图突出主控制链和必要的数据依赖，重复连线会自动合并。普通任务使用紧凑 DAG；Scientific AutoResearch 会把搜索节点展开为“默认配置穷举、路线 UCB、Beam + UCT 前沿、4 Agent 异步评测、Holdout”复合节点，并从账本显示 Search Agent、派发/完成顺序、Reward、Keep/Reject 和分数。移动端可在“对话 / 流程”视图间切换。
 
 点击节点后可以查看任务描述、实时日志、生成代码、报告、指标和图表。论文复现末端还会提供三泳道 Claim-to-Evidence Graph，可缩放查看每条主张、独立准则、证据状态和 Artifact 哈希。
 
@@ -227,7 +227,7 @@ Researcher / Paper / Repository / Dataset
                                                                Domain Adapter
                                                                     |
                                                   Python Research Optimizer
-                                           Features / Contextual-UCB / Experience
+                                      Context / Route UCB / Beam + UCT / Experience
                                    |
               Sandbox Client -> docker-sandbox -> Native Docker
                                    |
@@ -293,7 +293,7 @@ Researcher / Paper / Repository / Dataset
 | `REDIS_ADDR` | No | 启用会话记忆；未设置时使用 No-op memory store |
 | `REDIS_USERNAME` / `REDIS_PASSWORD` / `REDIS_DB` | No | 可选 Redis 认证与数据库配置 |
 | `PLAN_STORE_PATH` | No | 单机计划和事件 JSON 存储；Compose 默认启用持久卷 |
-| `RESEARCH_OPTIMIZER_URL` | No | Python Research Optimizer 地址；不配置时使用确定性 FIFO |
+| `RESEARCH_OPTIMIZER_URL` | No | Python Research Optimizer 地址；不配置时使用同结构的确定性 Go UCB/UCT fallback |
 | `RESEARCH_OPTIMIZER_API_TOKEN` | No | Backend 与内部 Optimizer 之间的 Bearer Token |
 | `PLAN_MAX_TASK_ATTEMPTS` / `PLAN_MAX_DURATION_SECONDS` | No | 计划尝试次数与时长预算 |
 | `REQUIRE_PLAN_APPROVAL` | No | 强制计划在执行前人工审批 |
@@ -392,6 +392,7 @@ Sea-mult-agent/
 - [AutoResearch 项目介绍](scholar-agent/docs/autoresearch/00_project_introduction.md)
 - [AutoResearch 模块文档](scholar-agent/docs/autoresearch/)
 - [Python Research Optimizer](scholar-agent/docs/autoresearch/10_python_research_optimizer.md)
+- [分层候选搜索引擎](scholar-agent/docs/autoresearch/11_hierarchical_search_engine.md)
 - [Claim-to-Evidence Graph](scholar-agent/docs/claim_evidence_graph.md)
 - [Claim-to-Evidence 可运行验收](scholar-agent/test/claim-evidence/)
 - [论文仓库发现](scholar-agent/docs/papers_with_code/)
@@ -407,7 +408,7 @@ Sea-mult-agent/
 - **Sandbox privilege**：已有 CPU、内存、PID、capability、镜像与挂载限制，Compose 仅本机暴露沙箱端口；但 Docker socket 仍等同于较高宿主机权限。
 - **GPU runtime**：GPU 透传已在 V100 主机验证，但默认运行时镜像为 CPU/通用 Python 镜像。
 - **Full reproduction**：当前重点是轻量 smoke 与结构消融，不包含大规模数据集训练。
-- **Learning policy**：当前实现是基于已验证历史的 Contextual-UCB 第一版，不是 Q-learning 或已经充分训练的通用 RL Policy；经验少时会进行可复现冷启动探索。
+- **Learning policy**：当前实现是基于真实 Validation Reward 的分层 UCB、Top-K Beam 和 UCT-style 搜索，并使用已验证历史提供 Contextual Bandit 先验；它不是 Q-learning、完整 MCTS 或已经充分训练的通用 RL Policy。
 
 ## Contributing
 
@@ -425,3 +426,157 @@ make build
 ## License
 
 Sea-Mult-Agent 使用 [MIT License](LICENSE)。
+
+## Search Strategy Matrix
+
+Scientific AutoResearch 没有用一种算法处理所有候选。Model 组合、离散参数、连续参数和渐进训练预算是不同的搜索对象，错误地把它们全部平铺成 Bandit 手臂会迅速产生组合爆炸，也很难解释为什么某条路径获得了预算。
+
+### Why These Algorithms
+
+| 决策层 | 当前选择 | 选择原因 | 明确边界 |
+|---|---|---|---|
+| Model 组合冷启动 | 受限穷举 | 每个合法组合先用同一默认预算真实运行一次，避免先验在没有本任务证据时提前淘汰路线 | 穷举的是 Adapter/ToT 已冻结的有限合法组合，不是自动生成所有模块幂集；当前最多 16 条路线 |
+| Model 路线预算 | UCB + Contextual Bandit prior | 路线是有限离散选项，实验后立即得到 Validation Reward，适合平衡利用和探索 | 只优化下一次预算分配，不建模长期环境状态，因此不是 Q-learning |
+| 路线内活跃前沿 | Top-K Beam + 探索通道 | Beam 保留当前主指标最好的 K 条父路径，探索通道防止一次早期低分永久剪掉潜在路径 | 默认 `K=3`、每条路线 1 个探索槽；所有 Trial 仍保留在账本中 |
+| 路线内父路径选择 | UCT-style | 参数具有父子关系，真实 Reward 可以沿路径累计访问数和均值 | 没有模拟 rollout、价值网络或随机 playout，因此不是完整 MCTS |
+| 候选执行 | 4 Agent 异步 worker pool | 慢候选不阻塞快候选补位，virtual visit 可避免并发任务重复选择同一路线 | 只有 `shared-readonly/v1` evaluator 才允许并发；Portable Adapter 默认串行 |
+| 最终可信验收 | 隐藏 Holdout | 搜索只看 Validation，冻结全局最佳后再测试未参与搜索的数据 | Holdout 不提供给搜索 Policy，也不参与 UCB、Beam、UCT 或 Reward 更新 |
+
+### End-To-End Search Flow
+
+```mermaid
+flowchart TD
+    A["冻结 ExperimentSpec<br/>Model、参数域、指标、预算、Evaluator"] --> B["运行 Baseline"]
+    B --> C["受限穷举其余 Model 默认配置<br/>最多 4 个 Search Agent"]
+    C --> D{"默认配置阶段屏障"}
+    D -->|"尚未全部完成"| C
+    D -->|"全部完成"| E["为每条 Model 路线建立参数树"]
+    E --> F["Top-K Beam + 低访问探索通道"]
+    F --> G["外层 UCB 选择 Model 路线"]
+    G --> H["内层 UCT-style 选择父路径"]
+    H --> I["Coordinator 原子预留候选<br/>登记 virtual visit"]
+    I --> J["异步 Search Agent 真实执行 Evaluator"]
+    J --> K["Validation Score + Reward<br/>Keep / Reject / TrialLedger"]
+    K --> L{"目标、Trial、墙钟或空间预算"}
+    L -->|"继续"| F
+    L -->|"停止"| M["冻结全局最佳 Model + parameters"]
+    M --> N["隐藏 Holdout 独立复验"]
+    N --> O["报告、路线 Top-K 与可解释证据"]
+```
+
+第一阶段是硬屏障。假设冻结空间包含 `A+B`、`A+C`、`A+B+C`，它们的默认配置必须全部产生真实分数，参数搜索才能开始。即使其中一条路线提前达到目标，也不会跳过其他默认配置；这样前端最终仍能同时展示每条路线的默认分数和最佳候选。
+
+### Candidate Generation And Beam
+
+每条 Model 路线有独立参数树，子候选一次只改变一个离散参数。例如：
+
+```text
+A+C 默认配置
+├── top_k=10
+├── top_k=20
+│   ├── rerank_k=5
+│   └── rerank_k=10
+└── threshold=0.6
+```
+
+候选 ID 由 `Model + 完整参数 JSON` 的规范哈希生成，相同配置即使通过不同路径到达也只执行一次。离散参数值按 Adapter 冻结的顺序排列，每次只向当前值的相邻位置 `index-1/index+1` 扩展，避免一次跨越多个取值后无法判断是哪项变化带来效果。每轮按冻结主指标对每条路线的父节点排序：方向为 `maximize` 时高分优先，`minimize` 时低分优先，同分再比较耗时和 Trial 编号。默认保留 Top-3 Beam 父节点，并从 Beam 之外选择最低访问节点进入探索通道：
+
+```text
+ActiveFrontier(route) = TopKParentsByMetric + LowestVisitExplorationParents
+```
+
+Beam 只控制“谁还能继续长出子节点”，不删除历史。一个候选即使没有击败当前全局最佳而被标记为 Reject，只要 evaluator 成功，它的真实分数仍进入该路线榜单，也可以继续生成受限子候选；执行失败且没有可信分数的候选不会进入高分 Beam。
+
+### Outer Route UCB
+
+外层 UCB 决定下一份实验预算投给哪棵 Model 参数树。Python Optimizer 先组合本次任务的路线 Top-K Reward 与相似数据集先验：
+
+\[
+P_i = \frac{k_i \cdot \operatorname{TopKMeanReward}_i + w_i \cdot \operatorname{ContextMeanReward}_i}{k_i+w_i}
+\]
+
+其中 `k_i=min(3, 本路线已完成 Trial 数)`；只有 Holdout 已验证的历史 campaign 能成为 Contextual prior，并且每条路线的 `w_i` 被限制在 `[0, 0.75]`。默认配置阶段保证本任务至少已有一个真实观察，因此历史经验不能覆盖当前数据的真实结果。
+
+当前路线选择分为：
+
+\[
+\operatorname{RouteScore}_i=P_i+0.35\sqrt{\frac{\ln(N+2)}{\max(1,n_i+v_i)}}-0.05v_i
+\]
+
+- `N`：全部路线的有效访问量；Go fallback 使用本次 campaign 已完成和已预留的访问，Python Policy 还计入封顶后的 Contextual 伪访问。
+- `n_i`：当前路线的有效访问量；对外审计的 `route_visit_count` 始终只记录本次真实访问。
+- `v_i`：路线中正在运行、尚未返回的 virtual visits。
+- 第一项偏向当前高收益路线，平方根项奖励访问较少的路线，最后一项阻止 4 个 Agent 同时挤入同一路线。
+
+Python 服务不可用或响应未通过 Go 校验时，Harness 使用同样结构的确定性 Go fallback；fallback 不使用跨任务先验，此时 `P_i=TopKMeanReward_i`。
+
+### Inner UCT-Style Selection
+
+路线选定后，内层分数决定从哪条参数父路径继续展开：
+
+\[
+\operatorname{NodeScore}_p=Q_p+0.35\sqrt{\frac{\ln(N_i+2)}{\max(1,n_p+v_p)}}-0.05v_p
+\]
+
+- `Q_p`：真实 Validation Reward 沿 `backprop_path` 回传后，该父路径的平均 Reward。
+- `N_i`：当前 Model 路线的有效访问量，Python Policy 可包含不超过 `0.75` 的 Contextual 伪访问。
+- `n_p`：父路径访问次数。
+- `v_p`：该父路径正在执行的候选数。
+
+这里的“回传”只更新 `visit_count`、`mean_reward` 和调度优先级。候选的 `score`、路线的 `default_score` 以及全局排行榜都来自真实 evaluator，绝不会因为祖先统计更新而被改写。系统最终比较的是 `A+C`、`A+B` 等路线各自真实最好的若干候选，而不是一个被回传值污染的根节点分数。
+
+### Concrete Ledger Example
+
+README 截图使用的稳定回放账本展示了这套规则如何留下证据，而不是只画一棵理想化的树：
+
+| 阶段 | 候选 | Validation Score | 调度身份 | 全局判定 |
+|---|---|---:|---|---|
+| Baseline | `bm25` 默认配置 | `0.40` | Baseline | Keep |
+| Model 默认穷举 | `tfidf` 默认配置 | `0.44` | bounded exhaustive | Reject，但保留路线分数 |
+| Model 默认穷举 | `hybrid_rrf` 默认配置 | `0.52` | bounded exhaustive | Keep |
+| Model 默认穷举 | `graph_hybrid` 默认配置 | `0.60` | bounded exhaustive | Keep |
+| 参数搜索 | `bm25.k1=1.8` | `0.46` | exploration | Reject，成为 BM25 路线 Top-2 |
+| 参数搜索 | `hybrid_rrf.alpha=0.8` | `0.64` | Beam #1 | Keep，成为全局最佳 |
+| 参数搜索 | `graph_hybrid.graph_weight=0.75` | `0.62` | Beam #1 | Reject，但成为 Graph 路线最佳 |
+
+最终全局榜单选择 `hybrid_rrf + alpha=0.8` 的 `0.64`，同时仍展示 `graph_hybrid` 的路线最佳 `0.62`、BM25 的 `0.46` 和 TF-IDF 的 `0.44`。这正是“根节点真实分数不被回传覆盖、每条 Model 路线保留自己的最好几条、最后再做全局比较”的产品行为。对应机器 fixture 是 [`scientific-autoresearch-ledger.json`](scholar-agent/frontend/test/fixtures/scientific-autoresearch-ledger.json)。
+
+### Reward, Keep And Reject
+
+Reward 用于安排下一次搜索，不直接决定科学验收。最大化指标时 `directional_delta=score-baseline`，最小化指标时方向相反；默认 Reward 为：
+
+\[
+\operatorname{Reward}=\frac{\operatorname{directional\_delta}}{\max(|baseline|,1)}-0.0001\times\operatorname{duration\_seconds}
+\]
+
+执行失败使用 `-1-duration_penalty`。Keep/Reject 则使用另一条确定性规则：候选相对**当前全局最佳主指标**至少提升冻结的 `min_delta` 才 Keep，否则 Reject。这样便宜但退化的候选不能仅凭较高性价比取代科学最佳候选。
+
+由于执行是异步的，候选按照真实完成顺序与当时的全局最佳比较。账本同时保存 `dispatch_order` 和 `completion_order`，所以完成顺序造成的 Keep/Reject 差异可以复核；每条路线的 Top-K 与最终全局最佳仍按真实 Score 重算。
+
+### Four-Agent Async Scheduling
+
+Go Coordinator 是候选队列和 TrialLedger 的唯一写入者：
+
+1. 计算冻结前沿并原子选择候选。
+2. 从队列移除候选，分配 `search-agent-01` 至 `search-agent-04`。
+3. 在结果返回前登记 virtual visit。
+4. evaluator 在独立配置文件上运行；任一 Agent 完成后立即释放槽位并重新计算 UCB/UCT。
+5. Coordinator 单线程写入 Score、Reward、Keep/Reject、路线 Top-K 和 `backprop_path`。
+6. 达到目标后不再派发新候选，但已经启动的 Trial 会完成并写入账本。
+
+这种结构实现的是共享只读数据上的异步实验搜索，并不意味着四个 LLM 共享上下文。每个 Search Agent 只接收自己的候选配置；并发安全由候选原子移除、virtual visit 和中央 Ledger 写入保证。
+
+### Stop And Holdout
+
+搜索在 `target_score_reached`、`trial_budget_exhausted`、`wall_time_budget_exhausted` 或 `candidate_space_exhausted` 时停止。随后冻结全局最佳候选及其哈希，在 Search Agent 和 Policy 看不到的 Holdout 上启动独立 evaluator 进程。只有全部请求轮次满足冻结阈值，结果才标记为 `validated`。
+
+因此系统返回的是“给定 Model/参数空间、数据、指标与预算内观察到的最佳配置”，不是数学意义上的全局最优。当前版本已接入受限穷举、UCB/Contextual Bandit、Top-K Beam、UCT-style 与隐藏 Holdout；贝叶斯优化需要连续域提议器，Hyperband 需要 fidelity 和 checkpoint 契约，协议未满足时不会用离散枚举冒充这些算法。完整字段与实现入口见[分层候选搜索引擎](scholar-agent/docs/autoresearch/11_hierarchical_search_engine.md)。
+
+| 搜索对象 | 算法 |
+|---|---|
+| 全部合法 Model 组合的默认配置 | 受限穷举 |
+| 哪个 Model 值得继续调参 | UCB / Contextual Bandit |
+| 离散、条件化参数路径 | UCT |
+| 连续参数 | 贝叶斯优化 |
+| epoch、数据量、训练步数 | Hyperband |
+| 最终可信结果 | 隐藏 Holdout |

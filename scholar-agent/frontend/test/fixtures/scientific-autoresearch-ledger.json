@@ -1,22 +1,25 @@
 {
   "version": "experiment.ledger/v1",
-  "campaign_id": "campaign-2223e8231acac90bb822",
+  "campaign_id": "campaign-search-portfolio-demo",
   "status": "completed",
   "domain": "retrieval",
   "adapter": "retrieval.v1",
   "metric_key": "ndcg_at_k",
   "direction": "maximize",
-  "target_score": 0.6,
+  "target_score": 0.75,
   "baseline_score": 0.4,
-  "best_score": 0.6,
+  "best_score": 0.64,
   "max_trials": 6,
-  "max_parallel_trials": 3,
+  "max_parallel_trials": 4,
+  "beam_width": 3,
+  "exploration_slots": 1,
   "evaluation_isolation": "shared-readonly/v1",
+  "scheduling_policy": "async-worker-pool/v1",
   "ablation_plan_sha256": "54f380a788945133b382b3145c5b67566c38f87e60fd3d431262f8b247db3e42",
   "designed_branches": 6,
-  "completed_trials": 3,
-  "accepted_trials": 1,
-  "stop_reason": "target_score_reached",
+  "completed_trials": 6,
+  "accepted_trials": 2,
+  "stop_reason": "trial_budget_exhausted",
   "strategy_space": [
     {
       "name": "bm25",
@@ -38,10 +41,6 @@
       "name": "hybrid_rrf",
       "description": "BM25 and TF-IDF reciprocal-rank fusion",
       "parameters": [
-        { "name": "k1", "description": "term-frequency saturation", "values": [0.8, 1.2, 1.5, 1.8, 2.2], "default": 1.5 },
-        { "name": "b", "description": "document-length normalization", "values": [0.2, 0.5, 0.75, 1.0], "default": 0.75 },
-        { "name": "ngram_max", "description": "maximum token n-gram", "values": [1, 2], "default": 1 },
-        { "name": "sublinear_tf", "description": "log-scale term frequency", "values": [false, true], "default": true },
         { "name": "alpha", "description": "BM25 share in reciprocal-rank fusion", "values": [0.2, 0.5, 0.8], "default": 0.5 },
         { "name": "rrf_k", "description": "reciprocal-rank smoothing", "values": [10, 30, 60], "default": 60 }
       ]
@@ -50,171 +49,126 @@
       "name": "graph_hybrid",
       "description": "hybrid retrieval with explicit corpus-link expansion",
       "parameters": [
-        { "name": "k1", "description": "term-frequency saturation", "values": [0.8, 1.2, 1.5, 1.8, 2.2], "default": 1.5 },
-        { "name": "b", "description": "document-length normalization", "values": [0.2, 0.5, 0.75, 1.0], "default": 0.75 },
-        { "name": "ngram_max", "description": "maximum token n-gram", "values": [1, 2], "default": 1 },
-        { "name": "sublinear_tf", "description": "log-scale term frequency", "values": [false, true], "default": true },
-        { "name": "alpha", "description": "BM25 share in reciprocal-rank fusion", "values": [0.2, 0.5, 0.8], "default": 0.5 },
-        { "name": "rrf_k", "description": "reciprocal-rank smoothing", "values": [10, 30, 60], "default": 60 },
         { "name": "graph_weight", "description": "linked-document propagation weight", "values": [0.25, 0.75, 1.25], "default": 1.25 },
         { "name": "graph_depth", "description": "maximum graph expansion hops", "values": [1, 2], "default": 1 }
       ]
     }
   ],
   "best_candidate": {
-    "id": "candidate-11eb14ea18e6",
-    "parent_id": "",
-    "strategy": "graph_hybrid",
-    "parameters": {
-      "alpha": 0.5,
-      "b": 0.75,
-      "graph_depth": 1,
-      "graph_weight": 1.25,
-      "k1": 1.5,
-      "ngram_max": 1,
-      "rrf_k": 60,
-      "sublinear_tf": true
-    },
-    "depth": 0,
-    "changed_parameter": "",
-    "reason": "compare method branch against the baseline"
+    "id": "candidate-hybrid-alpha08",
+    "parent_id": "candidate-hybrid-default",
+    "strategy": "hybrid_rrf",
+    "parameters": { "alpha": 0.8, "rrf_k": 60 },
+    "depth": 1,
+    "changed_parameter": "alpha",
+    "reason": "one-factor ablation: alpha 0.5 -> 0.8"
   },
+  "route_summaries": [
+    {
+      "strategy": "bm25",
+      "default_score": 0.4,
+      "trial_count": 2,
+      "best_score": 0.46,
+      "top_k_mean_reward": 0.03,
+      "top_candidates": [
+        { "trial_number": 4, "candidate": { "id": "candidate-bm25-k18", "parent_id": "candidate-bm25-default", "strategy": "bm25", "parameters": { "b": 0.75, "k1": 1.8 }, "depth": 1, "changed_parameter": "k1", "reason": "one-factor ablation: k1 1.5 -> 1.8" }, "score": 0.46, "reward": 0.06, "duration_ms": 690 },
+        { "trial_number": 0, "candidate": { "id": "candidate-bm25-default", "parent_id": "", "strategy": "bm25", "parameters": { "b": 0.75, "k1": 1.5 }, "depth": 0, "changed_parameter": "", "reason": "baseline default" }, "score": 0.4, "reward": 0.0, "duration_ms": 540 }
+      ]
+    },
+    {
+      "strategy": "tfidf",
+      "default_score": 0.44,
+      "trial_count": 1,
+      "best_score": 0.44,
+      "top_k_mean_reward": 0.04,
+      "top_candidates": [
+        { "trial_number": 1, "candidate": { "id": "candidate-tfidf-default", "parent_id": "", "strategy": "tfidf", "parameters": { "ngram_max": 1, "sublinear_tf": true }, "depth": 0, "changed_parameter": "", "reason": "compare model default" }, "score": 0.44, "reward": 0.04, "duration_ms": 610 }
+      ]
+    },
+    {
+      "strategy": "hybrid_rrf",
+      "default_score": 0.52,
+      "trial_count": 2,
+      "best_score": 0.64,
+      "top_k_mean_reward": 0.18,
+      "top_candidates": [
+        { "trial_number": 5, "candidate": { "id": "candidate-hybrid-alpha08", "parent_id": "candidate-hybrid-default", "strategy": "hybrid_rrf", "parameters": { "alpha": 0.8, "rrf_k": 60 }, "depth": 1, "changed_parameter": "alpha", "reason": "one-factor ablation: alpha 0.5 -> 0.8" }, "score": 0.64, "reward": 0.24, "duration_ms": 820 },
+        { "trial_number": 2, "candidate": { "id": "candidate-hybrid-default", "parent_id": "", "strategy": "hybrid_rrf", "parameters": { "alpha": 0.5, "rrf_k": 60 }, "depth": 0, "changed_parameter": "", "reason": "compare model default" }, "score": 0.52, "reward": 0.12, "duration_ms": 760 }
+      ]
+    },
+    {
+      "strategy": "graph_hybrid",
+      "default_score": 0.6,
+      "trial_count": 2,
+      "best_score": 0.62,
+      "top_k_mean_reward": 0.21,
+      "top_candidates": [
+        { "trial_number": 6, "candidate": { "id": "candidate-graph-weight075", "parent_id": "candidate-graph-default", "strategy": "graph_hybrid", "parameters": { "graph_depth": 1, "graph_weight": 0.75 }, "depth": 1, "changed_parameter": "graph_weight", "reason": "one-factor ablation: graph_weight 1.25 -> 0.75" }, "score": 0.62, "reward": 0.22, "duration_ms": 980 },
+        { "trial_number": 3, "candidate": { "id": "candidate-graph-default", "parent_id": "", "strategy": "graph_hybrid", "parameters": { "graph_depth": 1, "graph_weight": 1.25 }, "depth": 0, "changed_parameter": "", "reason": "compare model default" }, "score": 0.6, "reward": 0.2, "duration_ms": 930 }
+      ]
+    }
+  ],
   "trials": [
     {
-      "number": 0,
-      "batch": 0,
-      "worker": 1,
-      "candidate": {
-        "id": "candidate-0512f026791f",
-        "parent_id": "",
-        "strategy": "bm25",
-        "parameters": { "b": 0.75, "k1": 1.5 },
-        "depth": 0,
-        "changed_parameter": "",
-        "reason": "baseline default"
-      },
-      "status": "kept",
-      "decision": "baseline",
-      "reason": "frozen baseline",
-      "metrics": { "ndcg_at_k": 0.4, "mrr": 0.4, "recall_at_k": 0.4 },
-      "score": 0.4,
-      "delta_from_best": null,
-      "duration_ms": 546,
-      "error": ""
+      "number": 0, "batch": 0, "worker": 0, "agent_id": "baseline", "dispatch_order": 0, "completion_order": 0,
+      "candidate": { "id": "candidate-bm25-default", "parent_id": "", "strategy": "bm25", "parameters": { "b": 0.75, "k1": 1.5 }, "depth": 0, "changed_parameter": "", "reason": "baseline default" },
+      "backprop_path": ["candidate-bm25-default"], "status": "baseline", "decision": "keep", "reason": "frozen default establishes the baseline",
+      "metrics": { "ndcg_at_k": 0.4, "mrr": 0.4 }, "score": 0.4, "reward": 0.0, "duration_ms": 540, "error": ""
     },
     {
-      "number": 1,
-      "batch": 1,
-      "worker": 1,
-      "candidate": {
-        "id": "candidate-57e9b628a810",
-        "parent_id": "",
-        "strategy": "tfidf",
-        "parameters": { "ngram_max": 1, "sublinear_tf": true },
-        "depth": 0,
-        "changed_parameter": "",
-        "reason": "compare method branch against the baseline"
-      },
-      "status": "rejected",
-      "decision": "reject",
-      "reason": "ndcg_at_k delta 0.000000 did not meet 0.000100",
-      "metrics": { "ndcg_at_k": 0.4, "mrr": 0.4, "recall_at_k": 0.4 },
-      "score": 0.4,
-      "delta_from_best": 0.0,
-      "reward": -0.00005,
-      "policy_decision": {
-        "version": "experiment.policy-decision/v1",
-        "campaign_id": "campaign-2223e8231acac90bb822",
-        "trial_number": 1,
-        "policy_version": "contextual-ucb/v1",
-        "candidate_id": "candidate-57e9b628a810",
-        "available_candidate_ids": ["candidate-57e9b628a810", "candidate-2e10dbe67b0c", "candidate-11eb14ea18e6"],
-        "propensity": 0.45,
-        "predicted_reward": 0.02,
-        "reason_codes": ["parallel_frontier", "contextual_ucb_exploration"],
-        "fallback": false,
-        "selected_at": "2026-08-18T02:40:09.010Z"
-      },
-      "duration_ms": 505,
-      "error": ""
+      "number": 1, "batch": 1, "worker": 1, "agent_id": "search-agent-01", "dispatch_order": 1, "completion_order": 2,
+      "candidate": { "id": "candidate-tfidf-default", "parent_id": "", "strategy": "tfidf", "parameters": { "ngram_max": 1, "sublinear_tf": true }, "depth": 0, "changed_parameter": "", "reason": "compare model default" },
+      "backprop_path": ["candidate-tfidf-default"], "status": "rejected", "decision": "reject", "reason": "route improved baseline but did not replace the current global best",
+      "metrics": { "ndcg_at_k": 0.44, "mrr": 0.44 }, "score": 0.44, "delta_from_best": -0.08, "reward": 0.04,
+      "policy_decision": { "version": "experiment.policy-decision/v1", "campaign_id": "campaign-search-portfolio-demo", "trial_number": 1, "phase": "model_defaults", "policy_version": "bounded-exhaustive/v1", "candidate_id": "candidate-tfidf-default", "available_candidate_ids": ["candidate-tfidf-default", "candidate-hybrid-default", "candidate-graph-default"], "route": "tfidf", "frontier_kind": "beam", "beam_rank": 1, "propensity": 1.0, "predicted_reward": 0.0, "reason_codes": ["model_default_required", "bounded_exhaustive_enumeration"], "fallback": false },
+      "duration_ms": 610, "error": ""
     },
     {
-      "number": 2,
-      "batch": 1,
-      "worker": 2,
-      "candidate": {
-        "id": "candidate-2e10dbe67b0c",
-        "parent_id": "",
-        "strategy": "hybrid_rrf",
-        "parameters": { "alpha": 0.5, "b": 0.75, "k1": 1.5, "ngram_max": 1, "rrf_k": 60, "sublinear_tf": true },
-        "depth": 0,
-        "changed_parameter": "",
-        "reason": "compare method branch against the baseline"
-      },
-      "status": "rejected",
-      "decision": "reject",
-      "reason": "ndcg_at_k delta 0.000000 did not meet 0.000100",
-      "metrics": { "ndcg_at_k": 0.4, "mrr": 0.4, "recall_at_k": 0.4 },
-      "score": 0.4,
-      "delta_from_best": 0.0,
-      "reward": -0.00005,
-      "policy_decision": {
-        "version": "experiment.policy-decision/v1",
-        "campaign_id": "campaign-2223e8231acac90bb822",
-        "trial_number": 2,
-        "policy_version": "contextual-ucb/v1",
-        "candidate_id": "candidate-2e10dbe67b0c",
-        "available_candidate_ids": ["candidate-2e10dbe67b0c", "candidate-11eb14ea18e6"],
-        "propensity": 0.72,
-        "predicted_reward": 0.12,
-        "reason_codes": ["parallel_frontier", "validated_history_available"],
-        "fallback": false,
-        "selected_at": "2026-08-18T02:40:09.011Z"
-      },
-      "duration_ms": 498,
-      "error": ""
+      "number": 2, "batch": 1, "worker": 2, "agent_id": "search-agent-02", "dispatch_order": 2, "completion_order": 1,
+      "candidate": { "id": "candidate-hybrid-default", "parent_id": "", "strategy": "hybrid_rrf", "parameters": { "alpha": 0.5, "rrf_k": 60 }, "depth": 0, "changed_parameter": "", "reason": "compare model default" },
+      "backprop_path": ["candidate-hybrid-default"], "status": "kept", "decision": "keep", "reason": "ndcg_at_k improved by 0.12",
+      "metrics": { "ndcg_at_k": 0.52, "mrr": 0.52 }, "score": 0.52, "delta_from_best": 0.12, "reward": 0.12,
+      "policy_decision": { "version": "experiment.policy-decision/v1", "campaign_id": "campaign-search-portfolio-demo", "trial_number": 2, "phase": "model_defaults", "policy_version": "bounded-exhaustive/v1", "candidate_id": "candidate-hybrid-default", "available_candidate_ids": ["candidate-hybrid-default", "candidate-graph-default"], "route": "hybrid_rrf", "frontier_kind": "beam", "beam_rank": 1, "propensity": 1.0, "predicted_reward": 0.0, "reason_codes": ["model_default_required", "bounded_exhaustive_enumeration"], "fallback": false },
+      "duration_ms": 760, "error": ""
     },
     {
-      "number": 3,
-      "batch": 1,
-      "worker": 3,
-      "candidate": {
-        "id": "candidate-11eb14ea18e6",
-        "parent_id": "",
-        "strategy": "graph_hybrid",
-        "parameters": { "alpha": 0.5, "b": 0.75, "graph_depth": 1, "graph_weight": 1.25, "k1": 1.5, "ngram_max": 1, "rrf_k": 60, "sublinear_tf": true },
-        "depth": 0,
-        "changed_parameter": "",
-        "reason": "compare method branch against the baseline"
-      },
-      "status": "kept",
-      "decision": "keep",
-      "reason": "improved best score by 0.2000",
-      "metrics": { "ndcg_at_k": 0.6, "mrr": 0.6, "recall_at_k": 0.6 },
-      "score": 0.6,
-      "delta_from_best": 0.2,
-      "reward": 0.19995,
-      "policy_decision": {
-        "version": "experiment.policy-decision/v1",
-        "campaign_id": "campaign-2223e8231acac90bb822",
-        "trial_number": 3,
-        "policy_version": "contextual-ucb/v1",
-        "candidate_id": "candidate-11eb14ea18e6",
-        "available_candidate_ids": ["candidate-11eb14ea18e6"],
-        "propensity": 0.9333333333333333,
-        "predicted_reward": 0.1999494,
-        "reason_codes": ["parallel_frontier", "contextual_ucb_exploitation", "validated_history_available"],
-        "fallback": false,
-        "selected_at": "2026-08-13T09:42:09.012Z"
-      },
-      "duration_ms": 500,
-      "error": ""
+      "number": 3, "batch": 1, "worker": 3, "agent_id": "search-agent-03", "dispatch_order": 3, "completion_order": 3,
+      "candidate": { "id": "candidate-graph-default", "parent_id": "", "strategy": "graph_hybrid", "parameters": { "graph_depth": 1, "graph_weight": 1.25 }, "depth": 0, "changed_parameter": "", "reason": "compare model default" },
+      "backprop_path": ["candidate-graph-default"], "status": "kept", "decision": "keep", "reason": "ndcg_at_k improved by 0.08",
+      "metrics": { "ndcg_at_k": 0.6, "mrr": 0.6 }, "score": 0.6, "delta_from_best": 0.08, "reward": 0.2,
+      "policy_decision": { "version": "experiment.policy-decision/v1", "campaign_id": "campaign-search-portfolio-demo", "trial_number": 3, "phase": "model_defaults", "policy_version": "bounded-exhaustive/v1", "candidate_id": "candidate-graph-default", "available_candidate_ids": ["candidate-graph-default"], "route": "graph_hybrid", "frontier_kind": "beam", "beam_rank": 1, "propensity": 1.0, "predicted_reward": 0.0, "reason_codes": ["model_default_required", "bounded_exhaustive_enumeration"], "fallback": false },
+      "duration_ms": 930, "error": ""
+    },
+    {
+      "number": 4, "batch": 2, "worker": 1, "agent_id": "search-agent-01", "dispatch_order": 4, "completion_order": 5,
+      "candidate": { "id": "candidate-bm25-k18", "parent_id": "candidate-bm25-default", "strategy": "bm25", "parameters": { "b": 0.75, "k1": 1.8 }, "depth": 1, "changed_parameter": "k1", "reason": "one-factor ablation: k1 1.5 -> 1.8" },
+      "backprop_path": ["candidate-bm25-default", "candidate-bm25-k18"], "status": "rejected", "decision": "reject", "reason": "candidate did not replace the current global best",
+      "metrics": { "ndcg_at_k": 0.46, "mrr": 0.46 }, "score": 0.46, "delta_from_best": -0.14, "reward": 0.06,
+      "policy_decision": { "version": "experiment.policy-decision/v1", "campaign_id": "campaign-search-portfolio-demo", "trial_number": 4, "phase": "parameter_search", "policy_version": "hierarchical-contextual-ucb-uct/v2", "candidate_id": "candidate-bm25-k18", "available_candidate_ids": ["candidate-bm25-k18", "candidate-hybrid-alpha08", "candidate-graph-weight075"], "route": "bm25", "frontier_kind": "exploration", "beam_rank": 0, "route_visit_count": 1, "route_mean_reward": 0.0, "route_top_k_mean_reward": 0.0, "route_best_reward": 0.0, "route_exploration_bonus": 0.42, "node_visit_count": 1, "node_mean_reward": 0.0, "node_exploration_bonus": 0.29, "virtual_visits": 0, "selection_score": 0.71, "propensity": 1.0, "predicted_reward": 0.0, "reason_codes": ["outer_contextual_ucb_route", "inner_uct_parameter_path", "low_visit_exploration_lane"], "fallback": false },
+      "duration_ms": 690, "error": ""
+    },
+    {
+      "number": 5, "batch": 2, "worker": 2, "agent_id": "search-agent-02", "dispatch_order": 5, "completion_order": 4,
+      "candidate": { "id": "candidate-hybrid-alpha08", "parent_id": "candidate-hybrid-default", "strategy": "hybrid_rrf", "parameters": { "alpha": 0.8, "rrf_k": 60 }, "depth": 1, "changed_parameter": "alpha", "reason": "one-factor ablation: alpha 0.5 -> 0.8" },
+      "backprop_path": ["candidate-hybrid-default", "candidate-hybrid-alpha08"], "status": "kept", "decision": "keep", "reason": "ndcg_at_k improved by 0.04",
+      "metrics": { "ndcg_at_k": 0.64, "mrr": 0.64 }, "score": 0.64, "delta_from_best": 0.04, "reward": 0.24,
+      "policy_decision": { "version": "experiment.policy-decision/v1", "campaign_id": "campaign-search-portfolio-demo", "trial_number": 5, "phase": "parameter_search", "policy_version": "hierarchical-contextual-ucb-uct/v2", "candidate_id": "candidate-hybrid-alpha08", "available_candidate_ids": ["candidate-hybrid-alpha08", "candidate-graph-weight075"], "route": "hybrid_rrf", "frontier_kind": "beam", "beam_rank": 1, "route_visit_count": 1, "route_mean_reward": 0.12, "route_top_k_mean_reward": 0.12, "route_best_reward": 0.12, "route_exploration_bonus": 0.38, "node_visit_count": 1, "node_mean_reward": 0.12, "node_exploration_bonus": 0.29, "virtual_visits": 0, "selection_score": 0.91, "propensity": 1.0, "predicted_reward": 0.12, "reason_codes": ["outer_contextual_ucb_route", "inner_uct_parameter_path", "route_top_k_portfolio", "top_k_beam_parent"], "fallback": false },
+      "duration_ms": 820, "error": ""
+    },
+    {
+      "number": 6, "batch": 2, "worker": 3, "agent_id": "search-agent-03", "dispatch_order": 6, "completion_order": 6,
+      "candidate": { "id": "candidate-graph-weight075", "parent_id": "candidate-graph-default", "strategy": "graph_hybrid", "parameters": { "graph_depth": 1, "graph_weight": 0.75 }, "depth": 1, "changed_parameter": "graph_weight", "reason": "one-factor ablation: graph_weight 1.25 -> 0.75" },
+      "backprop_path": ["candidate-graph-default", "candidate-graph-weight075"], "status": "rejected", "decision": "reject", "reason": "candidate did not replace the current global best",
+      "metrics": { "ndcg_at_k": 0.62, "mrr": 0.62 }, "score": 0.62, "delta_from_best": -0.02, "reward": 0.22,
+      "policy_decision": { "version": "experiment.policy-decision/v1", "campaign_id": "campaign-search-portfolio-demo", "trial_number": 6, "phase": "parameter_search", "policy_version": "hierarchical-contextual-ucb-uct/v2", "candidate_id": "candidate-graph-weight075", "available_candidate_ids": ["candidate-graph-weight075"], "route": "graph_hybrid", "frontier_kind": "beam", "beam_rank": 1, "route_visit_count": 1, "route_mean_reward": 0.2, "route_top_k_mean_reward": 0.2, "route_best_reward": 0.2, "route_exploration_bonus": 0.34, "node_visit_count": 1, "node_mean_reward": 0.2, "node_exploration_bonus": 0.29, "virtual_visits": 1, "selection_score": 0.98, "propensity": 1.0, "predicted_reward": 0.2, "reason_codes": ["outer_contextual_ucb_route", "inner_uct_parameter_path", "route_top_k_portfolio", "top_k_beam_parent", "in_flight_virtual_visit_penalty"], "fallback": false },
+      "duration_ms": 980, "error": ""
     }
   ],
   "resource_usage": {
-    "evaluator_runs": 4,
-    "evaluator_time_ms": 2049,
-    "wall_duration_ms": 1082,
-    "peak_parallelism": 3
+    "evaluator_runs": 7,
+    "evaluator_time_ms": 5330,
+    "wall_duration_ms": 2470,
+    "peak_parallelism": 3,
+    "worker_slots": 4
   }
 }

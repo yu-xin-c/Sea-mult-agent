@@ -61,7 +61,7 @@ const experimentTask: Task = {
   Status: 'completed',
   Dependencies: [],
   Inputs: {
-    research_domain: 'retrieval', experiment_max_trials: 6, experiment_max_parallel_trials: 3,
+    research_domain: 'retrieval', experiment_max_trials: 6, experiment_max_parallel_trials: 4,
     experiment_target_score: 0.6, ablation_max_experiments: 5,
   },
   Result: JSON.stringify(scientificExperimentLedger),
@@ -125,7 +125,7 @@ const scientificNodes = [
 const scientificPlanGraph: PlanGraph = {
   ...repositoryPlanGraph,
   id: 'scientific-autoresearch-parallel-preview',
-  user_intent: '上传工业数据，在固定 NDCG@1 与 6 次预算内，用 ToT 设计候选并发比较多种策略，达到 0.60 后做 2 次 Holdout 复验。',
+  user_intent: '上传工业数据，在固定 NDCG@1 与 6 次预算内，完整比较 Model 默认配置，再用 UCB、Beam 和 UCT 异步搜索参数。',
   intent_type: 'AutoResearch',
   status: 'completed',
   nodes: scientificNodes,
@@ -146,7 +146,7 @@ const intentContext: IntentContext = {
   },
   constraints: {
     max_trials: 6,
-    max_parallel_trials: 3,
+    max_parallel_trials: 4,
     max_wall_seconds: 180,
     validation_runs: 2,
   },
@@ -158,7 +158,7 @@ const intentContext: IntentContext = {
 const chatHistory = [
   {
     role: 'user',
-    text: '上传工业检索数据，在 6 次预算内自动比较多种策略，并发 3 路，NDCG@1 达到 0.60 后停止。',
+    text: '上传工业检索数据，在 6 次预算内比较 Model 组合，并用 4 个 Search Agent 搜索参数。',
   },
   {
     role: 'system',
@@ -166,7 +166,7 @@ const chatHistory = [
   },
   {
     role: 'system',
-    text: '完成：搜索指标 **0.40 → 0.60**；隐藏验证 **2/2 通过**。',
+    text: '完成：搜索指标 **0.40 → 0.64**；已冻结最佳候选等待隐藏 Holdout。',
   },
 ];
 
@@ -246,7 +246,7 @@ export function RuntimePreview() {
           isExecuting={false}
           displayMode={displayMode}
           executionLogs={previewMode === 'experiment'
-            ? '[Experiment] baseline=0.4000\n[Policy] validated history -> graph_hybrid (p=0.933)\n[Trial 1] keep graph_hybrid=0.6000\n[Experiment] target_score_reached'
+            ? '[Experiment] all model defaults completed\n[UCB] route=hybrid_rrf\n[UCT] beam=1 alpha=0.8\n[Agent 02] keep score=0.6400'
             : '[Validation] holdout baseline=0.3333 candidate=0.6667 passed=2/2'}
           executionResult={state.result}
           executionCode={state.code}
@@ -307,7 +307,7 @@ export function RuntimePreview() {
 
       <div className="w-1.5 shrink-0 bg-slate-200" />
 
-      <section className="flex min-w-0 flex-1 overflow-hidden">
+      <section className="flex h-full min-w-0 flex-1 overflow-hidden">
         <GraphPanel
           nodes={nodes}
           edges={edges}

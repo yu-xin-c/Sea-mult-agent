@@ -6,8 +6,8 @@ import {
   Layers3,
   LoaderCircle,
   Network,
-  Scale,
   TimerReset,
+  Waypoints,
   XCircle,
   Zap,
 } from 'lucide-react';
@@ -55,7 +55,7 @@ const shortStrategyName = (name: string) => name.replaceAll('_', ' ').replace(/\
 export function ExperimentSearchNodeLabel({ task, status, step }: ExperimentSearchNodeLabelProps) {
   const parsed = parseExperimentLedger(task.StructuredData || task.Result || '');
   const ledger = parsed.ok ? parsed.ledger : null;
-  const parallelism = ledger?.maxParallelTrials ?? inputNumber(task, 'experiment_max_parallel_trials', 1);
+  const parallelism = ledger?.maxParallelTrials ?? inputNumber(task, 'experiment_max_parallel_trials', 4);
   const peakParallelism = ledger?.resourceUsage.peakParallelism ?? (status === 'in_progress' ? parallelism : 0);
   const strategies = ledger?.strategySpace.map((strategy) => strategy.name) ?? strategyFallback(task);
   const targetStopped = ledger?.stopReason === 'target_score_reached' || ledger?.stopReason === 'baseline_target_reached';
@@ -72,24 +72,24 @@ export function ExperimentSearchNodeLabel({ task, status, step }: ExperimentSear
         </div>
         <div className="flex shrink-0 items-center gap-2 text-[10px] font-semibold">
           <span className="border border-violet-200 bg-white px-2 py-1 text-violet-700">ToT {totBranches} branches</span>
-          <span className="border border-cyan-200 bg-white px-2 py-1 text-cyan-800">并发 x{parallelism}</span>
+          <span className="border border-cyan-200 bg-white px-2 py-1 text-cyan-800">Agent x{parallelism}</span>
           <span className={status === 'failed' ? 'text-rose-700' : status === 'completed' ? 'text-emerald-700' : 'text-amber-700'}>{statusText[status] ?? status}</span>
         </div>
       </div>
 
       <div className="grid grid-cols-4 border-b border-slate-200 bg-white">
         {[
-          { icon: GitBranch, title: '候选生成', detail: 'ToT + Adapter' },
-          { icon: Layers3, title: '策略前沿', detail: `${strategies.length} 个方法分支` },
-          { icon: Zap, title: '并发评测', detail: `${Math.max(peakParallelism, parallelism)} 个只读 worker` },
-          { icon: Scale, title: '确定性裁决', detail: 'Reward · Keep/Reject' },
+          { icon: GitBranch, title: '默认穷举', detail: `${strategies.length} 个 Model` },
+          { icon: Waypoints, title: '路线 UCB', detail: '预算与探索平衡' },
+          { icon: Layers3, title: 'Beam + UCT', detail: `Top-${ledger?.beamWidth ?? 3} + Explore` },
+          { icon: Zap, title: '异步评测', detail: `${Math.max(peakParallelism, parallelism)} 个 Search Agent` },
         ].map((stage, index) => {
           const Icon = stage.icon;
           return (
-            <div key={stage.title} className="relative border-r border-slate-200 px-3 py-2.5 last:border-r-0">
+            <div key={stage.title} className="relative min-w-0 border-r border-slate-200 px-3 py-2.5 last:border-r-0">
               {index < 3 && <span className="absolute -right-1.5 top-1/2 z-10 h-3 w-3 -translate-y-1/2 rotate-45 border-r border-t border-slate-300 bg-white" aria-hidden="true" />}
-              <div className="flex items-center gap-1.5 text-[10px] font-semibold text-slate-800"><Icon className="h-3.5 w-3.5 text-cyan-700" />{stage.title}</div>
-              <div className="mt-1 truncate text-[9px] text-slate-500">{stage.detail}</div>
+              <div className="flex min-w-0 items-center gap-1.5 text-[10px] font-semibold text-slate-800"><Icon className="h-3.5 w-3.5 shrink-0 text-cyan-700" /><span className="truncate">{stage.title}</span></div>
+              <div className="mt-1 break-words text-[9px] leading-3.5 text-slate-500">{stage.detail}</div>
             </div>
           );
         })}
@@ -111,13 +111,13 @@ export function ExperimentSearchNodeLabel({ task, status, step }: ExperimentSear
                   <span className={`font-semibold ${state.tone}`}>{state.label}</span>
                   <span className="font-mono text-slate-500">{rootTrial?.score === null || rootTrial?.score === undefined ? 'awaiting' : formatExperimentNumber(rootTrial.score)}</span>
                 </div>
-                {rootTrial && rootTrial.number > 0 && <div className="mt-1 truncate font-mono text-[8px] text-slate-400">batch {rootTrial.batch} · worker {rootTrial.worker}</div>}
+                {rootTrial && rootTrial.number > 0 && <div className="mt-1 truncate font-mono text-[8px] text-slate-400">{rootTrial.agentId} · C{rootTrial.completionOrder}</div>}
               </div>
             );
           })}
         </div>
         <div className="mt-3 flex items-center justify-between gap-4 border-t border-slate-200 pt-2 text-[9px] text-slate-500">
-          <span className="truncate">同层并发，结果按选择顺序入账；子节点由真实指标触发展开</span>
+          <span className="truncate">默认配置屏障 · UCB/UCT 调度 · 完成顺序入账 · 隐藏 Holdout</span>
           <span className="shrink-0 font-mono font-semibold text-slate-700">
             {ledger ? `${ledger.metricKey} ${formatExperimentNumber(ledger.baselineScore)} → ${formatExperimentNumber(ledger.bestScore)}` : 'metric pending'}
           </span>

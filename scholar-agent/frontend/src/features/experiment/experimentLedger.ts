@@ -22,7 +22,21 @@ export interface ExperimentStrategyView {
 }
 
 export interface ExperimentPolicyDecisionView {
+  phase: string;
   policyVersion: string;
+  route: string;
+  frontierKind: string;
+  beamRank: number;
+  routeVisitCount: number;
+  routeMeanReward: number;
+  routeTopKMeanReward: number;
+  routeBestReward: number;
+  routeExplorationBonus: number;
+  nodeVisitCount: number;
+  nodeMeanReward: number;
+  nodeExplorationBonus: number;
+  virtualVisits: number;
+  selectionScore: number;
   propensity: number;
   predictedReward: number | null;
   reasonCodes: string[];
@@ -33,7 +47,11 @@ export interface ExperimentTrialView {
   number: number;
   batch: number;
   worker: number;
+  agentId: string;
+  dispatchOrder: number;
+  completionOrder: number;
   candidate: ExperimentCandidateView;
+  backpropPath: string[];
   status: string;
   decision: string;
   reason: string;
@@ -44,6 +62,23 @@ export interface ExperimentTrialView {
   policyDecision: ExperimentPolicyDecisionView | null;
   durationMs: number;
   error: string;
+}
+
+export interface ExperimentRankedCandidateView {
+  trialNumber: number;
+  candidate: ExperimentCandidateView;
+  score: number;
+  reward: number;
+  durationMs: number;
+}
+
+export interface ExperimentRouteSummaryView {
+  strategy: string;
+  defaultScore: number | null;
+  trialCount: number;
+  bestScore: number | null;
+  topKMeanReward: number;
+  topCandidates: ExperimentRankedCandidateView[];
 }
 
 export interface ExperimentLedgerView {
@@ -59,7 +94,10 @@ export interface ExperimentLedgerView {
   bestScore: number;
   maxTrials: number;
   maxParallelTrials: number;
+  beamWidth: number;
+  explorationSlots: number;
   evaluationIsolation: string;
+  schedulingPolicy: string;
   ablationPlanSha256: string;
   designedBranches: number;
   completedTrials: number;
@@ -67,8 +105,9 @@ export interface ExperimentLedgerView {
   stopReason: string;
   bestCandidate: ExperimentCandidateView;
   strategySpace: ExperimentStrategyView[];
+  routeSummaries: ExperimentRouteSummaryView[];
   trials: ExperimentTrialView[];
-  resourceUsage: { evaluatorRuns: number; evaluatorTimeMs: number; wallDurationMs: number; peakParallelism: number };
+  resourceUsage: { evaluatorRuns: number; evaluatorTimeMs: number; wallDurationMs: number; peakParallelism: number; workerSlots: number };
 }
 
 export interface ExperimentEvidenceView {
@@ -174,11 +213,39 @@ const parsePolicyDecision = (value: unknown): ExperimentPolicyDecisionView | nul
   const decision = objectValue(value);
   const propensity = numberValue(decision?.propensity);
   const predictedReward = decision?.predicted_reward === undefined || decision.predicted_reward === null ? null : numberValue(decision.predicted_reward);
+  const routeVisitCount = integerValue(decision?.route_visit_count ?? 0);
+  const beamRank = integerValue(decision?.beam_rank ?? 0);
+  const nodeVisitCount = integerValue(decision?.node_visit_count ?? 0);
+  const virtualVisits = integerValue(decision?.virtual_visits ?? 0);
+  const statistics = [
+    decision?.route_mean_reward ?? 0,
+    decision?.route_top_k_mean_reward ?? 0,
+    decision?.route_best_reward ?? 0,
+    decision?.route_exploration_bonus ?? 0,
+    decision?.node_mean_reward ?? 0,
+    decision?.node_exploration_bonus ?? 0,
+    decision?.selection_score ?? 0,
+  ].map(numberValue);
   if (!decision || !textValue(decision.policy_version) || propensity === null || propensity <= 0 || propensity > 1 ||
       predictedReward === null && decision.predicted_reward !== null && decision.predicted_reward !== undefined ||
+      routeVisitCount === null || beamRank === null || nodeVisitCount === null || virtualVisits === null || statistics.some((item) => item === null) ||
       !Array.isArray(decision.reason_codes) || typeof decision.fallback !== 'boolean') return null;
   return {
+    phase: textValue(decision.phase),
     policyVersion: textValue(decision.policy_version),
+    route: textValue(decision.route),
+    frontierKind: textValue(decision.frontier_kind),
+    beamRank,
+    routeVisitCount,
+    routeMeanReward: statistics[0] as number,
+    routeTopKMeanReward: statistics[1] as number,
+    routeBestReward: statistics[2] as number,
+    routeExplorationBonus: statistics[3] as number,
+    nodeVisitCount,
+    nodeMeanReward: statistics[4] as number,
+    nodeExplorationBonus: statistics[5] as number,
+    virtualVisits,
+    selectionScore: statistics[6] as number,
     propensity,
     predictedReward,
     reasonCodes: decision.reason_codes.filter((item): item is string => typeof item === 'string'),
@@ -191,14 +258,17 @@ const parseTrial = (value: unknown): ExperimentTrialView | null => {
   const number = integerValue(trial?.number);
   const batch = integerValue(trial?.batch ?? 0);
   const worker = integerValue(trial?.worker ?? 1);
+  const dispatchOrder = integerValue(trial?.dispatch_order ?? number ?? 0);
+  const completionOrder = integerValue(trial?.completion_order ?? number ?? 0);
   const candidate = parseCandidate(trial?.candidate);
+  const backpropPath = Array.isArray(trial?.backprop_path) ? trial.backprop_path.filter((item): item is string => typeof item === 'string') : [];
   const score = trial?.score === undefined || trial.score === null ? null : numberValue(trial.score);
   const delta = trial?.delta_from_best === undefined || trial.delta_from_best === null ? null : numberValue(trial.delta_from_best);
   const reward = trial?.reward === undefined || trial.reward === null ? null : numberValue(trial.reward);
   const policyDecision = parsePolicyDecision(trial?.policy_decision);
   const duration = integerValue(trial?.duration_ms);
   const metrics = parseNumberMap(trial?.metrics ?? {});
-  if (!trial || number === null || batch === null || worker === null || !candidate || score === null && trial.score !== null && trial.score !== undefined ||
+  if (!trial || number === null || batch === null || worker === null || dispatchOrder === null || completionOrder === null || !candidate || score === null && trial.score !== null && trial.score !== undefined ||
       delta === null && trial.delta_from_best !== null && trial.delta_from_best !== undefined ||
       reward === null && trial.reward !== null && trial.reward !== undefined ||
       policyDecision === null && trial.policy_decision !== null && trial.policy_decision !== undefined || duration === null || !metrics) return null;
@@ -206,7 +276,11 @@ const parseTrial = (value: unknown): ExperimentTrialView | null => {
     number,
     batch,
     worker,
+    agentId: textValue(trial.agent_id) || (number === 0 ? 'baseline' : `search-agent-${String(worker).padStart(2, '0')}`),
+    dispatchOrder,
+    completionOrder,
     candidate,
+    backpropPath,
     status: textValue(trial.status),
     decision: textValue(trial.decision),
     reason: textValue(trial.reason),
@@ -220,6 +294,30 @@ const parseTrial = (value: unknown): ExperimentTrialView | null => {
   };
 };
 
+const parseRankedCandidate = (value: unknown): ExperimentRankedCandidateView | null => {
+  const ranked = objectValue(value);
+  const trialNumber = integerValue(ranked?.trial_number);
+  const candidate = parseCandidate(ranked?.candidate);
+  const score = numberValue(ranked?.score);
+  const reward = numberValue(ranked?.reward);
+  const durationMs = integerValue(ranked?.duration_ms);
+  if (!ranked || trialNumber === null || !candidate || score === null || reward === null || durationMs === null) return null;
+  return { trialNumber, candidate, score, reward, durationMs };
+};
+
+const parseRouteSummary = (value: unknown): ExperimentRouteSummaryView | null => {
+  const summary = objectValue(value);
+  const defaultScore = summary?.default_score === undefined || summary.default_score === null ? null : numberValue(summary.default_score);
+  const bestScore = summary?.best_score === undefined || summary.best_score === null ? null : numberValue(summary.best_score);
+  const trialCount = integerValue(summary?.trial_count);
+  const topKMeanReward = numberValue(summary?.top_k_mean_reward);
+  if (!summary || !textValue(summary.strategy) || defaultScore === null && summary.default_score !== null && summary.default_score !== undefined ||
+      bestScore === null && summary.best_score !== null && summary.best_score !== undefined || trialCount === null || topKMeanReward === null || !Array.isArray(summary.top_candidates)) return null;
+  const topCandidates = summary.top_candidates.map(parseRankedCandidate);
+  if (topCandidates.some((candidate) => candidate === null)) return null;
+  return { strategy: textValue(summary.strategy), defaultScore, trialCount, bestScore, topKMeanReward, topCandidates: topCandidates as ExperimentRankedCandidateView[] };
+};
+
 export function parseExperimentLedger(raw: string | unknown): LedgerParseResult {
   try {
     const value = objectValue(decode(raw));
@@ -230,6 +328,8 @@ export function parseExperimentLedger(raw: string | unknown): LedgerParseResult 
     const best = numberValue(value.best_score);
     const maxTrials = integerValue(value.max_trials);
     const maxParallelTrials = integerValue(value.max_parallel_trials ?? 1);
+    const beamWidth = integerValue(value.beam_width ?? 3);
+    const explorationSlots = integerValue(value.exploration_slots ?? 1);
     const designedBranches = integerValue(value.designed_branches ?? 0);
     const completed = integerValue(value.completed_trials);
     const accepted = integerValue(value.accepted_trials);
@@ -239,7 +339,8 @@ export function parseExperimentLedger(raw: string | unknown): LedgerParseResult 
     const evaluatorTime = integerValue(rawUsage?.evaluator_time_ms);
     const wallDuration = integerValue(rawUsage?.wall_duration_ms);
     const peakParallelism = integerValue(rawUsage?.peak_parallelism ?? 1);
-    if ((direction !== 'maximize' && direction !== 'minimize') || baseline === null || best === null || maxTrials === null || maxParallelTrials === null || maxParallelTrials < 1 || designedBranches === null || completed === null || accepted === null || !bestCandidate || !Array.isArray(value.trials) || !rawUsage || evaluatorRuns === null || evaluatorTime === null || wallDuration === null || peakParallelism === null || peakParallelism < 1 || target === null && value.target_score !== null && value.target_score !== undefined) {
+    const workerSlots = integerValue(rawUsage?.worker_slots ?? maxParallelTrials ?? 1);
+    if ((direction !== 'maximize' && direction !== 'minimize') || baseline === null || best === null || maxTrials === null || maxParallelTrials === null || maxParallelTrials < 1 || beamWidth === null || beamWidth < 1 || explorationSlots === null || explorationSlots < 1 || designedBranches === null || completed === null || accepted === null || !bestCandidate || !Array.isArray(value.trials) || !rawUsage || evaluatorRuns === null || evaluatorTime === null || wallDuration === null || peakParallelism === null || peakParallelism < 1 || workerSlots === null || workerSlots < 1 || target === null && value.target_score !== null && value.target_score !== undefined) {
       return { ok: false, error: '实验账本缺少候选、指标或预算字段。' };
     }
     const trials = value.trials.map(parseTrial);
@@ -249,6 +350,10 @@ export function parseExperimentLedger(raw: string | unknown): LedgerParseResult 
     const strategySpace = rawStrategySpace.map(parseStrategy);
     if (strategySpace.some((strategy) => strategy === null)) return { ok: false, error: '实验账本中的方法或参数定义无效。' };
     const normalizedTrials = trials as ExperimentTrialView[];
+    const rawRouteSummaries = value.route_summaries === undefined ? [] : value.route_summaries;
+    if (!Array.isArray(rawRouteSummaries)) return { ok: false, error: '实验账本中的路线榜单无效。' };
+    const routeSummaries = rawRouteSummaries.map(parseRouteSummary);
+    if (routeSummaries.some((summary) => summary === null)) return { ok: false, error: '实验账本中的路线候选无效。' };
     const ids = new Set(normalizedTrials.map((trial) => trial.candidate.id));
     if (ids.size !== normalizedTrials.length || normalizedTrials[0]?.number !== 0) return { ok: false, error: '实验候选重复或缺少基线。' };
     for (const trial of normalizedTrials) {
@@ -269,7 +374,10 @@ export function parseExperimentLedger(raw: string | unknown): LedgerParseResult 
         bestScore: best,
         maxTrials,
         maxParallelTrials,
+        beamWidth,
+        explorationSlots,
         evaluationIsolation: textValue(value.evaluation_isolation) || 'serial/v1',
+        schedulingPolicy: textValue(value.scheduling_policy) || 'bounded-batch/v1',
         ablationPlanSha256: textValue(value.ablation_plan_sha256),
         designedBranches,
         completedTrials: completed,
@@ -277,8 +385,9 @@ export function parseExperimentLedger(raw: string | unknown): LedgerParseResult 
         stopReason: textValue(value.stop_reason),
         bestCandidate,
         strategySpace: strategySpace as ExperimentStrategyView[],
+        routeSummaries: routeSummaries as ExperimentRouteSummaryView[],
         trials: normalizedTrials,
-        resourceUsage: { evaluatorRuns, evaluatorTimeMs: evaluatorTime, wallDurationMs: wallDuration, peakParallelism },
+        resourceUsage: { evaluatorRuns, evaluatorTimeMs: evaluatorTime, wallDurationMs: wallDuration, peakParallelism, workerSlots },
       },
     };
   } catch {

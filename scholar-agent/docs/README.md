@@ -12,6 +12,7 @@
 - [benchmark_agent.md](benchmark_agent.md)：独立评测智能体、train/validation/test 划分、泄漏检查、Metric/Reward 契约和隐藏指标重算
 - [autoresearch/00_project_introduction.md](autoresearch/00_project_introduction.md)：AutoResearch 项目定位、架构、核心能力，以及与相关项目和论文的借鉴关系
 - [autoresearch/](autoresearch/)：AutoResearch Planner/ResearchSpec、Keep/Reject harness、冻结评测器、证据边界、真实示例与研究路线图
+- [autoresearch/11_hierarchical_search_engine.md](autoresearch/11_hierarchical_search_engine.md)：Model 默认穷举、UCB、Beam、UCT-style 参数树、异步 Search Agent 与全局候选榜单
 - [claim_evidence_graph.md](claim_evidence_graph.md)：分层论文主张、冻结 Rubric、运行证据绑定、判定边界与前端可视化
 - [intent/02_dual_model_finetuning_guide.md](intent/02_dual_model_finetuning_guide.md)：CPU BERT 与 GPU Qwen 双配置、共用数据、微调流程、路由仲裁和 V100 实践
 - [intent/03_bert_cpu_architecture.md](intent/03_bert_cpu_architecture.md)：BERT/BGE 编码器、自注意力、分类头、微调与 CPU 部署原理

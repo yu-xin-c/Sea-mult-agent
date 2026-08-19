@@ -238,6 +238,16 @@ func TestDatasetAutoResearchBuildsGenericExperimentHarness(t *testing.T) {
 	}
 }
 
+func TestDatasetExperimentDefaultsToFourSearchAgents(t *testing.T) {
+	inputs := buildDatasetExperimentInputs(models.IntentContext{
+		RawIntent: "上传数据自动比较方法和参数",
+		Entities:  map[string]any{"research_domain": "retrieval"},
+	})
+	if got := inputs["experiment_max_parallel_trials"]; got != 4 {
+		t.Fatalf("default Search Agent count=%v, want 4", got)
+	}
+}
+
 func TestDatasetAutoResearchRequiresAnUploadedContractOrDataset(t *testing.T) {
 	intent := models.IntentContext{
 		RawIntent:  "对论文仓库做 AutoResearch，并比较方法和超参数",

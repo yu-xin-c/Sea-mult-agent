@@ -7,7 +7,7 @@
 1. 论文仓库代码运行失败或结果差异明显时，定位有限源码上下文，生成最小补丁并在同一沙箱中重跑。
 2. 接收 Benchmark Agent 已冻结的数据与指标契约，为指定公开仓库生成独立 Adapter，完成公开预检、修复、validation 运行和无标签 test 推理。
 3. 根据冻结的 `ResearchSpec` 执行有预算的 AutoResearch 循环，用真实指标 Keep/Reject 候选，回滚退化修改并对最佳结果执行公开重放或隐藏 holdout。
-4. 根据 `ExperimentResearchSpec` 执行跨领域方法/超参数搜索；领域 Adapter 负责数据与 evaluator，通用 Harness 负责候选树、受限同层并发、确定性入账、目标停止和 Holdout。
+4. 根据 `ExperimentResearchSpec` 执行跨领域方法/超参数搜索；领域 Adapter 负责数据与 evaluator，通用 Harness 负责默认 Model 穷举、外层 UCB、Beam + UCT-style 参数树、4 Agent 异步执行、目标停止和 Holdout。
 
 底层 `CoderAgent` 继续提供通用代码生成、依赖解析和沙箱能力；Research Coding Agent 负责仓库级诊断、受控写入、重跑和证据闭环。它不会把一次代码运行成功解释成论文结论已经复现。
 
@@ -29,7 +29,7 @@ flowchart LR
     D --> BH["Repository Benchmark Harness<br/>适配、公开预检、validation、无标签 test 推理"]
     D --> AH["AutoResearch Harness<br/>冻结规格、Baseline、Keep/Reject、复验"]
     D --> EH["Experiment Harness<br/>Domain Adapter、配置候选树、Holdout"]
-    EH --> RO["Python Research Optimizer<br/>Features、Contextual-UCB、Experience"]
+    EH --> RO["Python Research Optimizer<br/>Context、Route UCB、Beam + UCT、Experience"]
 
     PH --> X["Sandbox Service<br/>执行真实仓库入口"]
     BH --> X
@@ -52,11 +52,11 @@ flowchart LR
 | Benchmark harness | [`benchmark_harness.go`](../backend/internal/agent/benchmark_harness.go) | 小样本预检、有限修复、正式运行、输出检查和指标重算 |
 | AutoResearch harness | [`autoresearch.go`](../backend/internal/agent/autoresearch.go) | 冻结研究规格、候选白名单写入、Keep/Reject、回滚、TrialLedger、重复复验和资源汇总 |
 | AutoResearch 模型 | [`models/autoresearch.go`](../backend/internal/models/autoresearch.go) | `ResearchSpec`、Trial、Ledger、最佳候选和验证报告版本化契约 |
-| Experiment harness | [`experiment_research.go`](../backend/internal/agent/experiment_research.go) | 通用策略/参数候选、真实 evaluator、目标停止、TrialLedger 和 Holdout |
+| Experiment harness | [`experiment_research.go`](../backend/internal/agent/experiment_research.go) | Model 默认配置阶段屏障、4 Agent 异步执行、真实 evaluator、目标停止、TrialLedger 和 Holdout |
 | Experiment Adapter | [`experiment_retrieval_adapter.go`](../backend/internal/agent/experiment_retrieval_adapter.go)、[`experiment_portable_adapter.go`](../backend/internal/agent/experiment_portable_adapter.go) | 内置检索数据适配，以及任意领域 Portable 契约 |
 | Experiment 模型 | [`models/experiment_research.go`](../backend/internal/models/experiment_research.go) | 数据清单、方法/参数空间、候选谱系、评测和验证契约 |
-| Research Optimizer Client | [`research_optimizer_client.go`](../backend/internal/agent/research_optimizer_client.go) | 版本化 HTTP 契约、返回校验、Reward 和确定性回退 |
-| Python Research Optimizer | [`research-optimizer/`](../research-optimizer/) | 数据特征、Contextual-UCB 候选排序和 SQLite 跨任务经验 |
+| Research Optimizer Client | [`research_optimizer_client.go`](../backend/internal/agent/research_optimizer_client.go) | Beam/探索前沿、UCB/UCT 返回校验、virtual visit、Reward 回传和同结构 Go 回退 |
+| Python Research Optimizer | [`research-optimizer/`](../research-optimizer/) | 数据特征、路线 UCB、树内 UCT-style 选择和 SQLite 跨任务经验 |
 | Prompt 契约 | [`prompts.go`](../backend/internal/prompts/prompts.go) | 约束模型返回结构、修复范围和禁止行为 |
 | 计划路由 | [`planner.go`](../backend/internal/planner/planner.go) | 生成论文调试、Benchmark 和固定 AutoResearch DAG |
 | 运行时路由 | [`executor.go`](../backend/internal/scheduler/executor.go) | 把上游 Artifact 转为任务输入，并将 Agent 输出写回计划 Artifact |
@@ -81,7 +81,7 @@ flowchart LR
 | `autoresearch_validate` | spec、TrialLedger、最佳候选和同一运行时 | AutoResearch Harness | 重复验证统计、资源证据和最佳指标 |
 | `experiment_dataset_prepare` | 上传数据和领域提示 | Domain Adapter | `workspace_path`、数据清单和映射报告 |
 | `experiment_spec` | 数据清单、指标、目标与预算 | Domain Adapter + Contract Validator | `experiment_spec`、依赖和冻结报告 |
-| `experiment_run` | 工作区、运行时、ExperimentSpec 和 ToT 消融计划 | Generic Experiment Harness | 带 batch/worker 的参数候选树、最佳配置和运行报告 |
+| `experiment_run` | 工作区、运行时、ExperimentSpec 和 ToT 消融计划 | Generic Experiment Harness | 带 Search Agent、UCB/UCT 审计和 Route Top-K 的参数候选树、最佳配置和运行报告 |
 | `experiment_validate` | spec、TrialLedger、最佳配置和运行时 | Generic Holdout Validator | Holdout 重复结果、样例证据和最佳指标 |
 
 不在白名单中的任务会直接失败，不会回退到通用模型执行。
@@ -157,17 +157,20 @@ baseline 在模型第一次调用前运行。editable 源码使用结构化 JSON
 配置搜索把领域知识移出核心循环。`experimentDomainAdapter` 只负责准备冻结资产和声明离散候选空间；`experiment_research.go` 不理解具体算法，统一执行以下状态机：
 
 ```text
-领域默认配置 baseline
-    -> 其他方法默认配置（一级方法消融）
-    -> 单参数相邻值（子候选）
-    -> evaluator 真实指标
-        -> Keep：更新最佳并继续展开
-        -> Reject：保留记录，不改变最佳
+领域 baseline
+    -> 所有其他 Model 默认配置（阶段屏障）
+    -> 外层 UCB 分配路线预算
+    -> Top-K Beam + 探索通道形成前沿
+    -> 内层 UCT-style 选择单参数子候选
+    -> 4 个隔离 Search Agent 异步执行 evaluator
+        -> Keep：更新全局最佳
+        -> Reject：保留记录，仍可进入路线榜单
+    -> Validation Reward 回传调度统计，不覆盖根节点真实分数
     -> target / trial / wall-time / space stop
     -> 新进程 Holdout baseline vs best
 ```
 
-每个候选的 ID 由 `strategy + parameters` 的规范 JSON 哈希生成，重复路径只执行一次。配置文件写入 `.scholar/experiment/runtime/`，不能覆盖数据或 runner；命令只替换一个 `{config_path}` 占位符。evaluator 必须输出 `experiment.evaluation/v1`，并回传实际读取资产的 SHA-256。Python Optimizer 会在执行前记录候选集合、选中动作、Policy 版本和 propensity，执行后再接收由 Go 计算的结果与 Reward；Holdout 通过后才将该 campaign 标记为可学习历史。前端 [`ExperimentResearchView.tsx`](../frontend/src/features/experiment/ExperimentResearchView.tsx) 展示方法根分支、单参数子分支、策略选择、预测/实际 Reward、Keep/Reject、最佳配置、停止原因和 Holdout 样例证据。
+每个候选的 ID 由 `strategy + parameters` 的规范 JSON 哈希生成，重复路径只执行一次。配置文件写入 `.scholar/experiment/runtime/`，不能覆盖数据或 runner；命令只替换一个 `{config_path}` 占位符。evaluator 必须输出 `experiment.evaluation/v1`，并回传实际读取资产的 SHA-256。Python Optimizer 会在执行前记录候选集合、选中动作、Policy 版本、UCB/UCT 组成和 propensity，执行后再接收由 Go 计算的结果与 Reward；Holdout 通过后才将该 campaign 标记为可学习历史。Go Harness 使用 virtual visit 隔离并发选择，并作为 Ledger 的唯一写入者。前端 [`ExperimentResearchView.tsx`](../frontend/src/features/experiment/ExperimentResearchView.tsx) 提供跨 Model 路线 Top-K、参数树和异步时间线三种视图。完整算法和边界见 [`autoresearch/11_hierarchical_search_engine.md`](autoresearch/11_hierarchical_search_engine.md)。
 
 当前 `retrieval.v1` 是首个内置 Adapter；`portable.v1` 允许其他论文领域上传 `experiment.json`、evaluator 与数据。详细协议和真实示例见 [`autoresearch/09_general_scientific_autoresearch.md`](autoresearch/09_general_scientific_autoresearch.md)。
 

@@ -15,8 +15,14 @@ def selection_request(campaign_id: str, context: dict, candidates: list[dict]) -
         "version": "research-optimizer.selection-request/v1",
         "campaign_id": campaign_id,
         "trial_number": 1,
+        "phase": "parameter_search",
         "context": context,
         "candidates": candidates,
+        "candidate_hints": [
+            {"candidate_id": candidate["id"], "frontier_kind": "beam", "beam_rank": 1}
+            for candidate in candidates
+        ],
+        "in_flight": [],
         "history": [],
         "baseline_score": 0.4,
         "best_score": 0.4,
@@ -159,6 +165,70 @@ class ExperienceTests(unittest.TestCase):
         self.assertEqual(response["candidate_id"], "candidate-graph")
         self.assertIn("contextual", " ".join(response["reason_codes"]))
         self.assertGreater(response["predicted_reward"], 0)
+
+    def test_contextual_prior_cannot_overwrite_current_validation(self) -> None:
+        context = {
+            "id": "context-current",
+            "domain": "retrieval",
+            "adapter": "retrieval.v1",
+            "numeric": {"document_count": 100},
+            "boolean": {},
+        }
+        candidates = [
+            {"id": "a-next", "parent_id": "a-root", "strategy": "a", "parameters": {}, "depth": 1},
+            {"id": "b-next", "parent_id": "b-root", "strategy": "b", "parameters": {}, "depth": 1},
+        ]
+        request = selection_request("campaign-prior-cap", context, candidates)
+        request["history"] = [
+            {"candidate": {"id": "a-root", "strategy": "a"}, "reward": 0.5, "backprop_path": ["a-root"]},
+            {"candidate": {"id": "b-root", "strategy": "b"}, "reward": 0.0, "backprop_path": ["b-root"]},
+        ]
+        experiences = [
+            {"context": dict(context, id=f"old-{index}"), "strategy": "b", "reward": 1.0}
+            for index in range(40)
+        ]
+        response = select_candidate(request, experiences)
+        self.assertEqual(response["candidate_id"], "a-next")
+        self.assertIn("validated_contextual_prior", response["reason_codes"])
+
+    def test_model_defaults_use_bounded_exhaustive_policy(self) -> None:
+        candidates = [{"id": "model-a", "strategy": "a", "parameters": {}, "depth": 0}]
+        request = selection_request("campaign-default", {}, candidates)
+        request["phase"] = "model_defaults"
+        response = select_candidate(request, [])
+        self.assertEqual(response["policy_version"], "bounded-exhaustive/v1")
+        self.assertEqual(response["candidate_id"], "model-a")
+
+    def test_virtual_visit_spreads_parallel_agents_across_routes(self) -> None:
+        candidates = [
+            {"id": "a-next", "parent_id": "a-root", "strategy": "a", "parameters": {}, "depth": 1},
+            {"id": "b-next", "parent_id": "b-root", "strategy": "b", "parameters": {}, "depth": 1},
+        ]
+        request = selection_request("campaign-parallel", {}, candidates)
+        request["history"] = [
+            {"candidate": {"id": "a-root", "strategy": "a"}, "reward": 0.0, "backprop_path": ["a-root"]},
+            {"candidate": {"id": "b-root", "strategy": "b"}, "reward": 0.0, "backprop_path": ["b-root"]},
+        ]
+        request["in_flight"] = [candidates[0]]
+        response = select_candidate(request, [])
+        self.assertEqual(response["candidate_id"], "b-next")
+        self.assertIn("outer_contextual_ucb_route", response["reason_codes"])
+
+    def test_uct_prefers_stronger_parent_inside_selected_route(self) -> None:
+        candidates = [
+            {"id": "best-child", "parent_id": "parent-best", "strategy": "a", "parameters": {}, "depth": 2},
+            {"id": "weak-child", "parent_id": "parent-weak", "strategy": "a", "parameters": {}, "depth": 2},
+        ]
+        request = selection_request("campaign-uct", {}, candidates)
+        request["history"] = [
+            {"candidate": {"id": "a-root", "strategy": "a"}, "reward": 0.0, "backprop_path": ["a-root"]},
+            {"candidate": {"id": "parent-best", "strategy": "a"}, "reward": 0.5, "backprop_path": ["a-root", "parent-best"]},
+            {"candidate": {"id": "parent-weak", "strategy": "a"}, "reward": -0.2, "backprop_path": ["a-root", "parent-weak"]},
+        ]
+        response = select_candidate(request, [])
+        self.assertEqual(response["candidate_id"], "best-child")
+        self.assertGreater(response["node_mean_reward"], 0)
+        self.assertIn("inner_uct_parameter_path", response["reason_codes"])
 
 
 if __name__ == "__main__":

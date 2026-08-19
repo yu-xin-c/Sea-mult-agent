@@ -18,13 +18,16 @@ import (
 )
 
 type scriptedExperimentSandbox struct {
-	workspace string
-	mu        sync.Mutex
-	calls     int
-	failAfter int
-	active    int
-	peak      int
-	delay     time.Duration
+	workspace     string
+	mu            sync.Mutex
+	calls         int
+	failAfter     int
+	active        int
+	peak          int
+	delay         time.Duration
+	strategyDelay map[string]time.Duration
+	startedAt     map[string]time.Time
+	finishedAt    map[string]time.Time
 }
 
 type localExperimentSandbox struct {
@@ -48,9 +51,16 @@ func (s *scriptedResearchOptimizer) Profile(_ context.Context, request optimizer
 func (s *scriptedResearchOptimizer) Select(_ context.Context, request optimizerSelectionRequest) (optimizerSelectionResponse, error) {
 	s.selections = append(s.selections, request)
 	predicted := 0.05
+	policyVersion := models.ExperimentPolicyHierarchicalSearch
+	if request.Phase == models.ExperimentPhaseModelDefaults {
+		policyVersion = models.ExperimentPolicyModelEnumeration
+	}
+	hint := request.CandidateHints[0]
 	return optimizerSelectionResponse{
-		Version: optimizerSelectionVersion, PolicyVersion: "contextual-ucb/v1",
-		CandidateID: request.Candidates[0].ID, Propensity: 0.5, PredictedReward: &predicted,
+		Version: optimizerSelectionVersion, PolicyVersion: policyVersion,
+		CandidateID: request.Candidates[0].ID, Route: request.Candidates[0].Strategy,
+		FrontierKind: hint.FrontierKind, BeamRank: hint.BeamRank,
+		Propensity: 0.5, PredictedReward: &predicted,
 		ReasonCodes: []string{"fixture_policy"},
 	}, nil
 }
@@ -100,16 +110,19 @@ func (s *scriptedExperimentSandbox) ExecCommandStream(_ context.Context, _ strin
 	callNumber := s.calls
 	s.active++
 	s.peak = max(s.peak, s.active)
-	delay := s.delay
 	s.mu.Unlock()
+	strategy := ""
 	defer func() {
 		s.mu.Lock()
 		s.active--
+		if strategy != "" {
+			if s.finishedAt == nil {
+				s.finishedAt = map[string]time.Time{}
+			}
+			s.finishedAt[strategy] = time.Now()
+		}
 		s.mu.Unlock()
 	}()
-	if delay > 0 {
-		time.Sleep(delay)
-	}
 	if s.failAfter > 0 && callNumber >= s.failAfter {
 		return &sandbox.PythonRunResponse{ExitCode: 1, Stderr: "fixture evaluator failure"}, nil
 	}
@@ -126,6 +139,22 @@ func (s *scriptedExperimentSandbox) ExecCommandStream(_ context.Context, _ strin
 	raw, err := os.ReadFile(configPath)
 	if err != nil || json.Unmarshal(raw, &candidate) != nil {
 		return nil, fmt.Errorf("read candidate config: %w", err)
+	}
+	strategy = candidate.Strategy
+	delay := s.delay
+	s.mu.Lock()
+	if s.startedAt == nil {
+		s.startedAt = map[string]time.Time{}
+	}
+	if _, exists := s.startedAt[strategy]; !exists {
+		s.startedAt[strategy] = time.Now()
+	}
+	if configured, exists := s.strategyDelay[strategy]; exists {
+		delay = configured
+	}
+	s.mu.Unlock()
+	if delay > 0 {
+		time.Sleep(delay)
 	}
 	score := map[string]float64{"bm25": 0.40, "tfidf": 0.55, "hybrid_rrf": 0.80, "graph_hybrid": 0.70}[candidate.Strategy]
 	if strings.Contains(queryPath, "holdout_queries") {
@@ -208,8 +237,13 @@ func TestDatasetExperimentRunsStrategySearchAndHoldoutValidation(t *testing.T) {
 	if len(spec.Strategies) != 4 || spec.Strategies[3].Name != "graph_hybrid" {
 		t.Fatalf("retrieval strategy space is incomplete: %#v", spec.Strategies)
 	}
+	if spec.MaxParallelTrials != 4 || spec.EvaluationIsolation != models.ExperimentExecutionReadOnly {
+		t.Fatalf("built-in read-only experiments should default to four Search Agents: %#v", spec)
+	}
 
-	sandboxRunner := &scriptedExperimentSandbox{workspace: workspace}
+	sandboxRunner := &scriptedExperimentSandbox{workspace: workspace, strategyDelay: map[string]time.Duration{
+		"hybrid_rrf": time.Millisecond, "tfidf": 20 * time.Millisecond, "graph_hybrid": 20 * time.Millisecond,
+	}}
 	agent.Sandbox = sandboxRunner
 	run := &models.Task{
 		Type: "experiment_run",
@@ -225,28 +259,37 @@ func TestDatasetExperimentRunsStrategySearchAndHoldoutValidation(t *testing.T) {
 	if err := json.Unmarshal([]byte(runArtifacts["experiment_trial_ledger"]), &ledger); err != nil {
 		t.Fatal(err)
 	}
-	if ledger.StopReason != "target_score_reached" || ledger.CompletedTrials != 2 || ledger.BestCandidate.Strategy != "hybrid_rrf" || ledger.BestScore != 0.8 {
+	if ledger.StopReason != "target_score_reached" || ledger.CompletedTrials != 3 || ledger.BestCandidate.Strategy != "hybrid_rrf" || ledger.BestScore != 0.8 {
 		t.Fatalf("unexpected experiment search result: %#v", ledger)
 	}
 	if len(ledger.StrategySpace) != 4 || ledger.StrategySpace[3].Name != "graph_hybrid" || len(ledger.StrategySpace[3].Parameters) == 0 {
 		t.Fatalf("trial ledger must retain the frozen strategy tree: %#v", ledger.StrategySpace)
 	}
-	if ledger.Trials[2].Candidate.ParentID != "" || ledger.Trials[2].Candidate.Depth != 0 {
-		t.Fatalf("method branch should remain a root-level ablation: %#v", ledger.Trials[2].Candidate)
+	for _, trial := range ledger.Trials[1:] {
+		if trial.Candidate.ParentID != "" || trial.Candidate.Depth != 0 {
+			t.Fatalf("method branch should remain a root-level ablation: %#v", trial.Candidate)
+		}
 	}
-	if len(optimizer.selections) != 2 || len(optimizer.outcomes) != 2 || ledger.Trials[1].PolicyDecision == nil || ledger.Trials[1].PolicyDecision.PolicyVersion != "contextual-ucb/v1" || ledger.Trials[1].Reward == nil {
+	if len(optimizer.selections) != 3 || len(optimizer.outcomes) != 3 || ledger.Trials[1].PolicyDecision == nil || ledger.Trials[1].PolicyDecision.PolicyVersion != models.ExperimentPolicyModelEnumeration || ledger.Trials[1].PolicyDecision.Phase != models.ExperimentPhaseModelDefaults || ledger.Trials[1].Reward == nil {
 		t.Fatalf("policy decisions and outcomes must be auditable: selections=%d outcomes=%d trial=%#v", len(optimizer.selections), len(optimizer.outcomes), ledger.Trials[1])
+	}
+	if len(ledger.RouteSummaries) != 4 {
+		t.Fatalf("each model route must retain an independent leaderboard: %#v", ledger.RouteSummaries)
 	}
 
 	parallelSpec := spec
 	parallelSpec.MaxTrials = 3
-	parallelSpec.MaxParallelTrials = 3
+	parallelSpec.MaxParallelTrials = 2
 	parallelSpec.EvaluationIsolation = models.ExperimentExecutionReadOnly
+	parallelTarget := 1.0
+	parallelSpec.TargetScore = &parallelTarget
 	parallelPayload, err := json.Marshal(parallelSpec)
 	if err != nil {
 		t.Fatal(err)
 	}
-	parallelSandbox := &scriptedExperimentSandbox{workspace: workspace, delay: 25 * time.Millisecond}
+	parallelSandbox := &scriptedExperimentSandbox{workspace: workspace, strategyDelay: map[string]time.Duration{
+		"tfidf": 100 * time.Millisecond, "hybrid_rrf": 10 * time.Millisecond, "graph_hybrid": 10 * time.Millisecond,
+	}}
 	parallelAgent := &ResearchCodingAgent{Name: "research_coding_agent", Sandbox: parallelSandbox}
 	parallelRun := &models.Task{Type: "experiment_run", Inputs: map[string]any{
 		"workspace_path": workspace, "prepared_runtime": "dk-parallel-fixture", "experiment_spec": string(parallelPayload),
@@ -258,13 +301,24 @@ func TestDatasetExperimentRunsStrategySearchAndHoldoutValidation(t *testing.T) {
 	if err := json.Unmarshal([]byte(parallelRun.Result), &parallelLedger); err != nil {
 		t.Fatal(err)
 	}
-	if parallelLedger.CompletedTrials != 3 || parallelLedger.ResourceUsage.PeakParallelism != 3 || parallelSandbox.peak != 3 || parallelLedger.BestCandidate.Strategy != "hybrid_rrf" {
-		t.Fatalf("parallel strategy frontier was not executed as one bounded batch: ledger=%#v peak=%d", parallelLedger, parallelSandbox.peak)
+	if parallelLedger.CompletedTrials != 3 || parallelLedger.ResourceUsage.PeakParallelism != 2 || parallelLedger.ResourceUsage.WorkerSlots != 2 || parallelSandbox.peak != 2 || parallelLedger.BestCandidate.Strategy != "hybrid_rrf" {
+		t.Fatalf("asynchronous strategy frontier did not respect the worker limit: ledger=%#v peak=%d", parallelLedger, parallelSandbox.peak)
 	}
-	for index, trial := range parallelLedger.Trials[1:] {
-		if trial.Batch != 1 || trial.Worker != index+1 {
-			t.Fatalf("parallel trial lost batch/worker evidence: %#v", trial)
+	if parallelLedger.SchedulingPolicy != models.ExperimentSchedulingAsync {
+		t.Fatalf("unexpected scheduling policy: %q", parallelLedger.SchedulingPolicy)
+	}
+	if !parallelSandbox.startedAt["graph_hybrid"].Before(parallelSandbox.finishedAt["tfidf"]) {
+		t.Fatalf("an idle Search Agent did not refill before the slow path completed: started=%v finished=%v", parallelSandbox.startedAt, parallelSandbox.finishedAt)
+	}
+	seenCompletion := map[int]struct{}{}
+	for _, trial := range parallelLedger.Trials[1:] {
+		if trial.AgentID == "" || trial.DispatchOrder != trial.Number || trial.CompletionOrder <= 0 {
+			t.Fatalf("parallel trial lost agent dispatch evidence: %#v", trial)
 		}
+		if _, exists := seenCompletion[trial.CompletionOrder]; exists {
+			t.Fatalf("completion order must be unique: %#v", parallelLedger.Trials)
+		}
+		seenCompletion[trial.CompletionOrder] = struct{}{}
 	}
 
 	validate := &models.Task{
@@ -313,6 +367,62 @@ func TestRetrievalExperimentRejectsUnlabeledQueries(t *testing.T) {
 	err := (&ResearchCodingAgent{Name: "research_coding_agent"}).ExecuteTask(t.Context(), task, nil)
 	if err == nil || !strings.Contains(err.Error(), "relevant document IDs") {
 		t.Fatalf("expected an actionable missing-label error, got %v", err)
+	}
+}
+
+func TestExperimentBeamFrontierKeepsTopKAndExplorationLane(t *testing.T) {
+	trial := func(number int, id, parent string, score, reward float64) models.ExperimentTrial {
+		return models.ExperimentTrial{
+			Number: number, Candidate: models.ExperimentCandidate{ID: id, ParentID: parent, Strategy: "route-a", Depth: number},
+			Score: experimentFloatPointer(score), Reward: experimentFloatPointer(reward), BackpropPath: []string{"root-a", id},
+		}
+	}
+	history := []models.ExperimentTrial{
+		{Number: 0, Candidate: models.ExperimentCandidate{ID: "root-a", Strategy: "route-a"}, Score: experimentFloatPointer(0.5), Reward: experimentFloatPointer(0), BackpropPath: []string{"root-a"}},
+		trial(1, "parent-best", "root-a", 0.9, 0.4),
+		trial(2, "parent-second", "root-a", 0.8, 0.3),
+		trial(3, "parent-explore", "root-a", 0.7, 0.2),
+		trial(4, "parent-pruned", "root-a", 0.6, 0.1),
+	}
+	queue := []models.ExperimentCandidate{
+		{ID: "child-best", ParentID: "parent-best", Strategy: "route-a", Depth: 2},
+		{ID: "child-second", ParentID: "parent-second", Strategy: "route-a", Depth: 2},
+		{ID: "child-explore", ParentID: "parent-explore", Strategy: "route-a", Depth: 2},
+		{ID: "child-pruned", ParentID: "parent-pruned", Strategy: "route-a", Depth: 2},
+	}
+	frontier, hints := experimentSelectionFrontier(queue, models.ExperimentPhaseParameterSearch, history, "maximize", 2, 1)
+	if len(frontier) != 3 {
+		t.Fatalf("expected two beam paths plus one exploration path, got %#v", frontier)
+	}
+	if hints["child-best"].FrontierKind != models.ExperimentFrontierBeam || hints["child-best"].BeamRank != 1 ||
+		hints["child-second"].BeamRank != 2 || hints["child-explore"].FrontierKind != models.ExperimentFrontierExploration {
+		t.Fatalf("frontier evidence does not match Top-K + exploration: %#v", hints)
+	}
+	if _, exists := hints["child-pruned"]; exists {
+		t.Fatalf("a fourth parent should remain in the ledger but not in the active frontier: %#v", hints)
+	}
+}
+
+func TestExperimentHierarchicalSelectionUsesVirtualVisits(t *testing.T) {
+	history := []models.ExperimentTrial{
+		{Number: 0, Candidate: models.ExperimentCandidate{ID: "root-a", Strategy: "route-a"}, Reward: experimentFloatPointer(0), BackpropPath: []string{"root-a"}},
+		{Number: 1, Candidate: models.ExperimentCandidate{ID: "root-b", Strategy: "route-b"}, Reward: experimentFloatPointer(0), BackpropPath: []string{"root-b"}},
+	}
+	candidates := []models.ExperimentCandidate{
+		{ID: "a-next", ParentID: "root-a", Strategy: "route-a", Depth: 1},
+		{ID: "b-next", ParentID: "root-b", Strategy: "route-b", Depth: 1},
+	}
+	hints := map[string]experimentFrontierHint{
+		"a-next": {FrontierKind: models.ExperimentFrontierBeam, BeamRank: 1},
+		"b-next": {FrontierKind: models.ExperimentFrontierBeam, BeamRank: 1},
+	}
+	first, _ := experimentFallbackSelection(models.ExperimentPhaseParameterSearch, candidates, hints, history, nil)
+	if candidates[first].Strategy != "route-a" {
+		t.Fatalf("deterministic tie should select the first route, got %s", candidates[first].Strategy)
+	}
+	second, decision := experimentFallbackSelection(models.ExperimentPhaseParameterSearch, candidates, hints, history, []models.ExperimentCandidate{candidates[first]})
+	if candidates[second].Strategy != "route-b" || decision.VirtualVisits != 0 {
+		t.Fatalf("virtual reservation should move the next Search Agent to route-b: index=%d decision=%#v", second, decision)
 	}
 }
 

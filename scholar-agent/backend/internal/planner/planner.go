@@ -484,7 +484,7 @@ func buildDatasetExperimentInputs(intent models.IntentContext) map[string]any {
 	}, 3, 1, 5)
 	parallelTrials := boundedIntentNumber(intent.RawIntent, []string{
 		`(?i)(?:并发|并行|parallel(?:ism)?|workers?)\s*(?:为|是|[:：=])?\s*(\d+)\s*(?:个|路|组|workers?|trials?)?`,
-	}, 1, 1, 4)
+	}, 4, 1, 4)
 	inputs := map[string]any{
 		"experiment_max_trials":          maxTrials,
 		"experiment_max_parallel_trials": parallelTrials,

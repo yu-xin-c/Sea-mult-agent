@@ -216,7 +216,9 @@ func (a retrievalExperimentAdapter) BuildSpec(task *models.Task, workspacePath s
 	}
 	cutoff := boundedTaskInt(task, "experiment_cutoff", 5, 1, 100)
 	maxTrials := boundedTaskInt(task, "experiment_max_trials", 12, 1, 40)
-	maxParallelTrials := boundedTaskInt(task, "experiment_max_parallel_trials", 1, 1, 4)
+	maxParallelTrials := boundedTaskInt(task, "experiment_max_parallel_trials", 4, 1, 4)
+	beamWidth := boundedTaskInt(task, "experiment_beam_width", models.ExperimentDefaultBeamWidth, 1, 8)
+	explorationSlots := boundedTaskInt(task, "experiment_exploration_slots", models.ExperimentDefaultExplorationSlots, 1, 4)
 	maxWall := boundedTaskInt(task, "experiment_max_wall_seconds", 900, 30, 3600)
 	validationRuns := boundedTaskInt(task, "experiment_validation_runs", 3, 1, 5)
 	target, err := optionalExperimentTaskFloat(task, "experiment_target_score", 0, 1)
@@ -253,8 +255,9 @@ func (a retrievalExperimentAdapter) BuildSpec(task *models.Task, workspacePath s
 		SearchCommand: command(manifest.Assets["search_cases"]), HoldoutCommand: command(manifest.Assets["holdout_cases"]),
 		Strategies: strategies, MetricKey: metric, Direction: "maximize", MinDelta: 0.0001,
 		TargetScore: target, HoldoutTargetScore: holdoutTarget, MaxTrials: maxTrials,
-		MaxParallelTrials: maxParallelTrials, EvaluationIsolation: evaluationIsolation,
-		MaxWallSeconds: maxWall, ValidationRuns: validationRuns,
+		MaxParallelTrials: maxParallelTrials, BeamWidth: beamWidth, ExplorationSlots: explorationSlots,
+		EvaluationIsolation: evaluationIsolation,
+		MaxWallSeconds:      maxWall, ValidationRuns: validationRuns,
 		Dependencies: []string{"rank-bm25>=0.2.2,<0.3", "scikit-learn>=1.4,<2", "networkx>=3.2,<4"},
 		FrozenFiles:  append([]models.ResearchFileHash(nil), manifest.FrozenFiles...), CreatedAt: time.Now().UTC(),
 	}, nil

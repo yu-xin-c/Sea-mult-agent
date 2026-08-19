@@ -3,17 +3,26 @@ package models
 import "time"
 
 const (
-	ExperimentDatasetVersion    = "experiment.dataset/v1"
-	ExperimentSpecVersion       = "experiment.spec/v1"
-	ExperimentLedgerVersion     = "experiment.ledger/v1"
-	ExperimentValidationVersion = "experiment.validation/v1"
-	ExperimentEvaluationVersion = "experiment.evaluation/v1"
-	ExperimentFeatureVersion    = "experiment.features/v1"
-	ExperimentDecisionVersion   = "experiment.policy-decision/v1"
-	ExperimentOutcomeVersion    = "experiment.experience-outcome/v1"
-	ExperimentRewardVersion     = "experiment.reward/v1"
-	ExperimentExecutionSerial   = "serial/v1"
-	ExperimentExecutionReadOnly = "shared-readonly/v1"
+	ExperimentDatasetVersion           = "experiment.dataset/v1"
+	ExperimentSpecVersion              = "experiment.spec/v1"
+	ExperimentLedgerVersion            = "experiment.ledger/v1"
+	ExperimentValidationVersion        = "experiment.validation/v1"
+	ExperimentEvaluationVersion        = "experiment.evaluation/v1"
+	ExperimentFeatureVersion           = "experiment.features/v1"
+	ExperimentDecisionVersion          = "experiment.policy-decision/v1"
+	ExperimentOutcomeVersion           = "experiment.experience-outcome/v1"
+	ExperimentRewardVersion            = "experiment.reward/v1"
+	ExperimentExecutionSerial          = "serial/v1"
+	ExperimentExecutionReadOnly        = "shared-readonly/v1"
+	ExperimentSchedulingAsync          = "async-worker-pool/v1"
+	ExperimentPhaseModelDefaults       = "model_defaults"
+	ExperimentPhaseParameterSearch     = "parameter_search"
+	ExperimentPolicyModelEnumeration   = "bounded-exhaustive/v1"
+	ExperimentPolicyHierarchicalSearch = "hierarchical-contextual-ucb-uct/v2"
+	ExperimentFrontierBeam             = "beam"
+	ExperimentFrontierExploration      = "exploration"
+	ExperimentDefaultBeamWidth         = 3
+	ExperimentDefaultExplorationSlots  = 1
 )
 
 // ExperimentDatasetFeatureProfile is the stable context supplied to a search
@@ -97,6 +106,8 @@ type ExperimentResearchSpec struct {
 	HoldoutTargetScore  *float64                         `json:"holdout_target_score,omitempty"`
 	MaxTrials           int                              `json:"max_trials"`
 	MaxParallelTrials   int                              `json:"max_parallel_trials"`
+	BeamWidth           int                              `json:"beam_width"`
+	ExplorationSlots    int                              `json:"exploration_slots"`
 	EvaluationIsolation string                           `json:"evaluation_isolation"`
 	MaxWallSeconds      int                              `json:"max_wall_seconds"`
 	ValidationRuns      int                              `json:"validation_runs"`
@@ -114,9 +125,23 @@ type ExperimentPolicyDecision struct {
 	Version               string    `json:"version"`
 	CampaignID            string    `json:"campaign_id"`
 	TrialNumber           int       `json:"trial_number"`
+	Phase                 string    `json:"phase"`
 	PolicyVersion         string    `json:"policy_version"`
 	CandidateID           string    `json:"candidate_id"`
 	AvailableCandidateIDs []string  `json:"available_candidate_ids"`
+	Route                 string    `json:"route,omitempty"`
+	FrontierKind          string    `json:"frontier_kind,omitempty"`
+	BeamRank              int       `json:"beam_rank,omitempty"`
+	RouteVisitCount       int       `json:"route_visit_count,omitempty"`
+	RouteMeanReward       float64   `json:"route_mean_reward,omitempty"`
+	RouteTopKMeanReward   float64   `json:"route_top_k_mean_reward,omitempty"`
+	RouteBestReward       float64   `json:"route_best_reward,omitempty"`
+	RouteExplorationBonus float64   `json:"route_exploration_bonus,omitempty"`
+	NodeVisitCount        int       `json:"node_visit_count,omitempty"`
+	NodeMeanReward        float64   `json:"node_mean_reward,omitempty"`
+	NodeExplorationBonus  float64   `json:"node_exploration_bonus,omitempty"`
+	VirtualVisits         int       `json:"virtual_visits,omitempty"`
+	SelectionScore        float64   `json:"selection_score,omitempty"`
 	Propensity            float64   `json:"propensity"`
 	PredictedReward       *float64  `json:"predicted_reward,omitempty"`
 	ReasonCodes           []string  `json:"reason_codes,omitempty"`
@@ -161,22 +186,26 @@ type ExperimentEvaluation struct {
 // ExperimentTrial records why a candidate existed, what it scored and whether
 // the deterministic harness retained it.
 type ExperimentTrial struct {
-	Number         int                       `json:"number"`
-	Batch          int                       `json:"batch"`
-	Worker         int                       `json:"worker"`
-	Candidate      ExperimentCandidate       `json:"candidate"`
-	Status         string                    `json:"status"`
-	Decision       string                    `json:"decision"`
-	Reason         string                    `json:"reason"`
-	Metrics        map[string]float64        `json:"metrics,omitempty"`
-	Score          *float64                  `json:"score,omitempty"`
-	DeltaFromBest  *float64                  `json:"delta_from_best,omitempty"`
-	Reward         *float64                  `json:"reward,omitempty"`
-	PolicyDecision *ExperimentPolicyDecision `json:"policy_decision,omitempty"`
-	DurationMS     int64                     `json:"duration_ms"`
-	Error          string                    `json:"error,omitempty"`
-	StartedAt      time.Time                 `json:"started_at"`
-	FinishedAt     time.Time                 `json:"finished_at"`
+	Number          int                       `json:"number"`
+	Batch           int                       `json:"batch"`
+	Worker          int                       `json:"worker"`
+	AgentID         string                    `json:"agent_id"`
+	DispatchOrder   int                       `json:"dispatch_order"`
+	CompletionOrder int                       `json:"completion_order"`
+	Candidate       ExperimentCandidate       `json:"candidate"`
+	BackpropPath    []string                  `json:"backprop_path,omitempty"`
+	Status          string                    `json:"status"`
+	Decision        string                    `json:"decision"`
+	Reason          string                    `json:"reason"`
+	Metrics         map[string]float64        `json:"metrics,omitempty"`
+	Score           *float64                  `json:"score,omitempty"`
+	DeltaFromBest   *float64                  `json:"delta_from_best,omitempty"`
+	Reward          *float64                  `json:"reward,omitempty"`
+	PolicyDecision  *ExperimentPolicyDecision `json:"policy_decision,omitempty"`
+	DurationMS      int64                     `json:"duration_ms"`
+	Error           string                    `json:"error,omitempty"`
+	StartedAt       time.Time                 `json:"started_at"`
+	FinishedAt      time.Time                 `json:"finished_at"`
 }
 
 // ExperimentExperienceOutcome is sent to the append-only experience service
@@ -203,36 +232,60 @@ type ExperimentResourceUsage struct {
 	EvaluatorTimeMS int64 `json:"evaluator_time_ms"`
 	WallDurationMS  int64 `json:"wall_duration_ms"`
 	PeakParallelism int   `json:"peak_parallelism"`
+	WorkerSlots     int   `json:"worker_slots"`
+}
+
+type ExperimentRankedCandidate struct {
+	TrialNumber int                 `json:"trial_number"`
+	Candidate   ExperimentCandidate `json:"candidate"`
+	Score       float64             `json:"score"`
+	Reward      float64             `json:"reward"`
+	DurationMS  int64               `json:"duration_ms"`
+}
+
+// ExperimentRouteSummary preserves an independent leaderboard for each model
+// route. Backpropagated UCT statistics never overwrite these measured scores.
+type ExperimentRouteSummary struct {
+	Strategy       string                      `json:"strategy"`
+	DefaultScore   *float64                    `json:"default_score,omitempty"`
+	TrialCount     int                         `json:"trial_count"`
+	BestScore      *float64                    `json:"best_score,omitempty"`
+	TopKMeanReward float64                     `json:"top_k_mean_reward"`
+	TopCandidates  []ExperimentRankedCandidate `json:"top_candidates"`
 }
 
 // ExperimentTrialLedger is the append-only evidence record for a campaign.
 type ExperimentTrialLedger struct {
-	Version             string                  `json:"version"`
-	CampaignID          string                  `json:"campaign_id,omitempty"`
-	SpecSHA256          string                  `json:"spec_sha256"`
-	Status              string                  `json:"status"`
-	Domain              string                  `json:"domain"`
-	Adapter             string                  `json:"adapter"`
-	MetricKey           string                  `json:"metric_key"`
-	Direction           string                  `json:"direction"`
-	TargetScore         *float64                `json:"target_score,omitempty"`
-	BaselineScore       float64                 `json:"baseline_score"`
-	BestScore           float64                 `json:"best_score"`
-	MaxTrials           int                     `json:"max_trials"`
-	MaxParallelTrials   int                     `json:"max_parallel_trials"`
-	EvaluationIsolation string                  `json:"evaluation_isolation"`
-	AblationPlanSHA256  string                  `json:"ablation_plan_sha256,omitempty"`
-	DesignedBranches    int                     `json:"designed_branches,omitempty"`
-	CompletedTrials     int                     `json:"completed_trials"`
-	AcceptedTrials      int                     `json:"accepted_trials"`
-	StrategySpace       []ExperimentStrategy    `json:"strategy_space,omitempty"`
-	Trials              []ExperimentTrial       `json:"trials"`
-	BestCandidate       ExperimentCandidate     `json:"best_candidate"`
-	BestEvaluation      ExperimentEvaluation    `json:"best_evaluation"`
-	StopReason          string                  `json:"stop_reason"`
-	ResourceUsage       ExperimentResourceUsage `json:"resource_usage"`
-	StartedAt           time.Time               `json:"started_at"`
-	FinishedAt          time.Time               `json:"finished_at"`
+	Version             string                   `json:"version"`
+	CampaignID          string                   `json:"campaign_id,omitempty"`
+	SpecSHA256          string                   `json:"spec_sha256"`
+	Status              string                   `json:"status"`
+	Domain              string                   `json:"domain"`
+	Adapter             string                   `json:"adapter"`
+	MetricKey           string                   `json:"metric_key"`
+	Direction           string                   `json:"direction"`
+	TargetScore         *float64                 `json:"target_score,omitempty"`
+	BaselineScore       float64                  `json:"baseline_score"`
+	BestScore           float64                  `json:"best_score"`
+	MaxTrials           int                      `json:"max_trials"`
+	MaxParallelTrials   int                      `json:"max_parallel_trials"`
+	BeamWidth           int                      `json:"beam_width"`
+	ExplorationSlots    int                      `json:"exploration_slots"`
+	EvaluationIsolation string                   `json:"evaluation_isolation"`
+	SchedulingPolicy    string                   `json:"scheduling_policy"`
+	AblationPlanSHA256  string                   `json:"ablation_plan_sha256,omitempty"`
+	DesignedBranches    int                      `json:"designed_branches,omitempty"`
+	CompletedTrials     int                      `json:"completed_trials"`
+	AcceptedTrials      int                      `json:"accepted_trials"`
+	StrategySpace       []ExperimentStrategy     `json:"strategy_space,omitempty"`
+	RouteSummaries      []ExperimentRouteSummary `json:"route_summaries,omitempty"`
+	Trials              []ExperimentTrial        `json:"trials"`
+	BestCandidate       ExperimentCandidate      `json:"best_candidate"`
+	BestEvaluation      ExperimentEvaluation     `json:"best_evaluation"`
+	StopReason          string                   `json:"stop_reason"`
+	ResourceUsage       ExperimentResourceUsage  `json:"resource_usage"`
+	StartedAt           time.Time                `json:"started_at"`
+	FinishedAt          time.Time                `json:"finished_at"`
 }
 
 type ExperimentBestCandidate struct {

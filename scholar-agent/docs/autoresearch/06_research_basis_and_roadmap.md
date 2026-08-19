@@ -16,8 +16,8 @@
 | [MLE-bench](https://arxiv.org/abs/2410.07095) | 在真实机器学习工程任务上评测 Agent，并研究不同资源扩展方式 | 除指标外记录命令执行量和耗时，为后续成本归一化保留可审计基础 |
 | [Microsoft R&D-Agent](https://github.com/microsoft/RD-Agent) | 将研究提议与开发实现分工，公开评测对部分结果报告多次独立 seed 的均值和标准差 | 最佳候选采用可配置重复验证并输出均值、标准差与失败率；当前不冒充已实现 seed 注入 |
 | [Auto-Research-Recipes](https://github.com/cxcscmu/Auto-Research-Recipes) | 以任务无关研究循环配合 Task Adapter、外部 evaluator 和可发布 Artifact | 把每个真实仓库实验沉淀为 spec、公开 evaluator、隐藏 holdout 三文件适配包，核心 harness 不随任务改写 |
-| [Arbor](https://github.com/RUC-NLPIR/Arbor) | Coordinator/Executor、想法树、隔离 worktree、开发/heldout 划分和可恢复执行 | 强化隔离工作区与搜索/隐藏验收边界；候选 lineage、并行 worktree 和 checkpoint 仍是路线图 |
-| [AI Scientist v2](https://github.com/SakanaAI/AI-Scientist-v2) | 用渐进式 Agent tree search 和实验管理扩展自动科研循环 | 当前先实现有界 TrialLedger、候选反馈和回滚，不把线性循环宣传为树搜索 |
+| [Arbor](https://github.com/RUC-NLPIR/Arbor) | Coordinator/Executor、想法树、隔离 worktree、开发/heldout 划分和可恢复执行 | 配置模式已实现中央 Coordinator、异步参数树与搜索/隐藏验收；并行 Git worktree 和 checkpoint 仍是路线图 |
+| [AI Scientist v2](https://github.com/SakanaAI/AI-Scientist-v2) | 用渐进式 Agent tree search 和实验管理扩展自动科研循环 | 配置模式已实现真实 Validation 驱动的 UCT-style 树；无模拟 rollout，代码补丁模式仍为线性 TrialLedger |
 | [Stochasticity in Deep Research Agents](https://arxiv.org/abs/2602.23271) | 实证研究深度研究 Agent 独立执行间的随机性和结果方差 | 搜索 baseline 与每个候选支持重复测量、原始样本、标准差和保守聚合，避免一次尖峰被 Keep |
 
 这些工作提供方向和风险证据。ScholarAgent 当前实现是工程组合与产品化落地，不宣称发明了自动科研、Keep/Reject 或分层 rubric。
@@ -46,12 +46,13 @@
 | P1（已实现） | 重复搜索测量 | baseline 与每个候选按声明次数执行，并用 mean、median 或方向相关 worst 聚合 | 原始样本可审计；部分失败必须 Reject 并回滚 |
 | P1（已实现） | 精确仓库版本 | 从任务包读取完整 commit SHA，精确 checkout 或下载同 SHA archive | requested 与 actual commit 不一致时禁止冻结实验 |
 | P1（已实现） | 目标分数停止 | Keep 候选达到预声明目标后由 harness 停止搜索 | 账本可重算目标，不能依赖模型自报停止 |
+| P1（已实现） | 分层配置搜索 | Model 默认穷举、路线 UCB、Beam + UCT-style 与 4 Agent 异步执行 | 根节点分数不可变；每次选择可由 Ledger 重算；Holdout 不参与搜索 |
 | P1 | 人工检查点 | 在冻结 spec、扩大 GPU 预算、导出最佳补丁前支持审批 | 未批准不得改变预算或导出代码 |
 | P1 | 多 seed 接受规则 | 声明 seed 集合并由 harness 受控注入，搜索阶段按统计量接受候选 | 接受规则基于预声明均值/方差或置信标准，不以单次峰值 Keep |
 | P1 | 逐轮持久化 | Trial 完成后原子保存账本检查点 | 后端重启可从最近完整 Trial 恢复 |
 | P2 | 隐藏评测服务 | 候选只能获得分数，不能读取测试样本或评测源码 | 候选工作区不含隐藏数据，评测服务保留独立审计日志 |
-| P2 | 假设队列策略 | 在预算内按信息增益、成本和历史失败选择候选 | 与顺序候选 baseline 做固定任务集对照 |
-| P2 | 候选 lineage 与恢复 | 保存 parent、假设键、失败分类和逐轮原子 checkpoint | 后端重启可恢复，分支比较不只依赖文本上下文 |
+| P2 | 假设先验增强 | 将论文假设、失败类型和信息增益转成可校准先验 | 与仅依赖真实 Reward 的 UCB/UCT baseline 做固定任务集对照 |
+| P2 | 搜索恢复 | 为参数树和代码候选保存逐轮原子 checkpoint | 后端重启可恢复未完成 frontier 与 virtual visits |
 | P2 | 复现胶囊导出 | 导出 spec、镜像摘要、依赖、账本、补丁和验证报告 | 在干净主机上可一键复验相同 Artifact |
 | P2 | GPU 调度与成本账本 | 显式记录 GPU 型号、显存、用时和费用 | 每个 Trial 都有可比较的资源证据 |
 

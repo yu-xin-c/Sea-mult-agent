@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   CheckCircle2,
+  BarChart3,
   CircleDot,
   Clock3,
   FlaskConical,
@@ -14,6 +15,7 @@ import {
   SlidersHorizontal,
   Target,
   Trophy,
+  Waypoints,
   XCircle,
 } from 'lucide-react';
 import {
@@ -24,6 +26,7 @@ import {
   type ExperimentCandidateView,
   type ExperimentLedgerView,
   type ExperimentParameterView,
+  type ExperimentRouteSummaryView,
   type ExperimentStrategyView,
   type ExperimentTrialView,
   type ExperimentValidationView,
@@ -34,7 +37,7 @@ interface ExperimentResearchViewProps {
   expanded?: boolean;
 }
 
-type ResearchViewMode = 'tree' | 'timeline';
+type ResearchViewMode = 'portfolio' | 'tree' | 'timeline';
 
 const parameterText = (parameters: Record<string, unknown>) =>
   Object.entries(parameters).map(([key, value]) => `${key}=${String(value)}`).join(' · ');
@@ -91,15 +94,16 @@ function SearchProcessRail({ ledger }: { ledger: ExperimentLedgerView }) {
   const parameterStopped = parameterTrials === 0 && (ledger.stopReason === 'target_score_reached' || ledger.stopReason === 'baseline_target_reached');
   const parameterCount = ledger.strategySpace.reduce((total, strategy) => total + strategy.parameters.length, 0);
   const steps = [
-    { label: '冻结空间', detail: `${ledger.strategySpace.length || new Set(ledger.trials.map((trial) => trial.candidate.strategy)).size} 个方法 · ${parameterCount} 个参数`, icon: LockKeyhole, state: 'done' },
-    { label: '建立基线', detail: `${ledger.metricKey} = ${formatExperimentNumber(ledger.baselineScore)}`, icon: CircleDot, state: 'done' },
-    { label: '方法展开', detail: `${methodTrials}/${methodTotal || methodTrials} 个分支已比较`, icon: GitBranch, state: 'done' },
-    { label: '参数细化', detail: parameterStopped ? '达到目标，剩余分支剪枝' : `${parameterTrials} 个单变量候选`, icon: SlidersHorizontal, state: parameterStopped ? 'skipped' : parameterTrials > 0 ? 'done' : 'pending' },
-    { label: 'Holdout', detail: '最佳候选进入独立验收', icon: ShieldCheck, state: 'pending' },
+    { label: '冻结空间', detail: `${ledger.strategySpace.length || new Set(ledger.trials.map((trial) => trial.candidate.strategy)).size} 个 Model · ${parameterCount} 个参数`, icon: LockKeyhole, state: 'done' },
+    { label: '默认穷举', detail: `${methodTrials}/${methodTotal || methodTrials} 个默认配置完成`, icon: GitBranch, state: 'done' },
+    { label: '路线 UCB', detail: 'Top-K 质量 + 探索 + 成本', icon: Waypoints, state: parameterTrials > 0 ? 'done' : parameterStopped ? 'skipped' : 'pending' },
+    { label: 'Beam + UCT', detail: parameterStopped ? '目标已满足，参数搜索跳过' : `${parameterTrials} 个参数候选`, icon: SlidersHorizontal, state: parameterStopped ? 'skipped' : parameterTrials > 0 ? 'done' : 'pending' },
+    { label: '异步执行', detail: `${ledger.resourceUsage.workerSlots} Agent · peak ${ledger.resourceUsage.peakParallelism}`, icon: FlaskConical, state: ledger.completedTrials > 0 ? 'done' : 'pending' },
+    { label: 'Holdout', detail: '冻结全局最佳后独立验收', icon: ShieldCheck, state: 'pending' },
   ] as const;
 
   return (
-    <div className="grid grid-cols-2 border-b border-slate-200 bg-white md:grid-cols-5" aria-label="策略树生成进度">
+    <div className="grid grid-cols-2 border-b border-slate-200 bg-white md:grid-cols-3 xl:grid-cols-6" aria-label="策略树生成进度">
       {steps.map((step, index) => {
         const Icon = step.icon;
         const done = step.state === 'done';
@@ -146,6 +150,7 @@ function StrategyBranch({
   bestCandidate,
   stopReason,
   metricKey,
+  direction,
   selectedCandidateID,
   onSelect,
 }: {
@@ -155,12 +160,18 @@ function StrategyBranch({
   bestCandidate: ExperimentCandidateView;
   stopReason: string;
   metricKey: string;
+  direction: 'maximize' | 'minimize';
   selectedCandidateID: string;
   onSelect: (candidateID: string) => void;
 }) {
   const isBestBranch = bestCandidate.strategy === strategy.name;
   const stoppedAtTarget = stopReason === 'target_score_reached' || stopReason === 'baseline_target_reached';
   const RootIcon = rootTrial?.number === 0 || rootTrial?.status === 'kept' ? CheckCircle2 : rootTrial ? XCircle : CircleDot;
+  const orderedChildren = [...childTrials].sort((left, right) => {
+    if (left.score === null) return 1;
+    if (right.score === null) return -1;
+    return direction === 'minimize' ? left.score - right.score : right.score - left.score;
+  });
   return (
     <section className={`relative flex min-w-0 flex-col rounded-md border ${trialTone(rootTrial, isBestBranch)}`}>
       <span className="absolute -top-5 left-1/2 hidden h-5 w-px -translate-x-1/2 bg-slate-300 md:block" aria-hidden="true" />
@@ -203,9 +214,9 @@ function StrategyBranch({
         <div className="border-t border-slate-200 px-3 py-2">
           <div className="mb-1 text-[10px] font-semibold text-slate-700">实际参数子节点</div>
           <div className="space-y-1">
-            {childTrials.map((trial) => (
+            {orderedChildren.map((trial) => (
               <button key={trial.candidate.id} type="button" onClick={() => onSelect(trial.candidate.id)} className={`flex w-full items-center justify-between gap-2 rounded border px-2 py-1.5 text-left ${selectedCandidateID === trial.candidate.id ? 'border-cyan-300 bg-cyan-50' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
-                <span className="min-w-0 truncate font-mono text-[9px] text-slate-600">{trial.candidate.changedParameter} · depth {trial.candidate.depth}</span>
+                <span className="min-w-0 truncate font-mono text-[9px] text-slate-600">{trial.policyDecision?.frontierKind === 'exploration' ? '探索' : trial.policyDecision?.beamRank ? `Beam #${trial.policyDecision.beamRank}` : '参数'} · {trial.candidate.changedParameter} · d{trial.candidate.depth}</span>
                 <span className="shrink-0 font-mono text-[10px] font-semibold text-slate-900">{trial.score === null ? 'N/A' : formatExperimentNumber(trial.score)}</span>
               </button>
             ))}
@@ -251,14 +262,20 @@ function CandidateDetail({ trial, metricKey }: { trial: ExperimentTrialView; met
         <div className="mt-4 border-y border-cyan-100 bg-cyan-50/50 px-2 py-2.5">
           <div className="flex items-center justify-between gap-2">
             <div className="text-[10px] font-semibold text-cyan-900">策略选择</div>
-            <span className={`rounded border px-1.5 py-0.5 text-[9px] font-semibold ${trial.policyDecision.fallback ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-cyan-200 bg-white text-cyan-800'}`}>
-              {trial.policyDecision.fallback ? '确定性回退' : 'Python Policy'}
-            </span>
+            <div className="flex items-center gap-1"><span className={`rounded border px-1.5 py-0.5 text-[9px] font-semibold ${trial.policyDecision.frontierKind === 'exploration' ? 'border-violet-200 bg-violet-50 text-violet-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>{trial.policyDecision.frontierKind === 'exploration' ? '探索通道' : trial.policyDecision.beamRank ? `Beam #${trial.policyDecision.beamRank}` : '默认穷举'}</span><span className={`rounded border px-1.5 py-0.5 text-[9px] font-semibold ${trial.policyDecision.fallback ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-cyan-200 bg-white text-cyan-800'}`}>{trial.policyDecision.fallback ? 'Go fallback' : 'Python Policy'}</span></div>
           </div>
-          <div className="mt-2 break-all font-mono text-[9px] text-slate-700">{trial.policyDecision.policyVersion}</div>
+          <div className="mt-2 flex items-center justify-between gap-2 text-[9px]"><span className="break-all font-mono text-slate-700">{trial.policyDecision.policyVersion}</span><span className="shrink-0 font-mono text-cyan-800">{trial.policyDecision.phase || 'legacy'}</span></div>
+          <div className="mt-2 grid grid-cols-3 gap-2 border-y border-cyan-100 py-2 text-[9px]">
+            <div><div className="font-mono font-semibold text-slate-800">{formatExperimentNumber(trial.policyDecision.routeTopKMeanReward)}</div><div className="mt-0.5 text-slate-500">UCB · Top-K Q</div></div>
+            <div><div className="font-mono font-semibold text-slate-800">+{formatExperimentNumber(trial.policyDecision.routeExplorationBonus)}</div><div className="mt-0.5 text-slate-500">路线探索项</div></div>
+            <div><div className="font-mono font-semibold text-slate-800">{trial.policyDecision.routeVisitCount}</div><div className="mt-0.5 text-slate-500">路线访问</div></div>
+            <div><div className="font-mono font-semibold text-slate-800">{formatExperimentNumber(trial.policyDecision.nodeMeanReward)}</div><div className="mt-0.5 text-slate-500">UCT · Node Q</div></div>
+            <div><div className="font-mono font-semibold text-slate-800">+{formatExperimentNumber(trial.policyDecision.nodeExplorationBonus)}</div><div className="mt-0.5 text-slate-500">节点探索项</div></div>
+            <div><div className="font-mono font-semibold text-slate-800">{trial.policyDecision.nodeVisitCount}</div><div className="mt-0.5 text-slate-500">节点访问</div></div>
+          </div>
           <div className="mt-2 grid grid-cols-3 gap-2 text-[9px]">
-            <div><div className="font-mono font-semibold text-slate-800">{(trial.policyDecision.propensity * 100).toFixed(1)}%</div><div className="mt-0.5 text-slate-500">选择概率</div></div>
-            <div><div className="font-mono font-semibold text-slate-800">{trial.policyDecision.predictedReward === null ? '-' : formatExperimentNumber(trial.policyDecision.predictedReward)}</div><div className="mt-0.5 text-slate-500">预测 Reward</div></div>
+            <div><div className="font-mono font-semibold text-slate-800">{formatExperimentNumber(trial.policyDecision.selectionScore)}</div><div className="mt-0.5 text-slate-500">选择分</div></div>
+            <div><div className="font-mono font-semibold text-slate-800">{trial.policyDecision.virtualVisits}</div><div className="mt-0.5 text-slate-500">虚拟访问</div></div>
             <div><div className="font-mono font-semibold text-slate-800">{trial.reward === null ? '-' : formatExperimentNumber(trial.reward)}</div><div className="mt-0.5 text-slate-500">实际 Reward</div></div>
           </div>
           {trial.policyDecision.reasonCodes.length > 0 && <div className="mt-2 break-words text-[9px] leading-4 text-cyan-800">{trial.policyDecision.reasonCodes.join(' · ')}</div>}
@@ -285,6 +302,83 @@ function CandidateDetail({ trial, metricKey }: { trial: ExperimentTrialView; met
       </div>
       {trial.candidate.parentId && <div className="mt-4 break-all border-t border-slate-200 pt-3 text-[9px] text-slate-500">父节点：<span className="font-mono">{trial.candidate.parentId}</span></div>}
     </aside>
+  );
+}
+
+const fallbackRouteSummaries = (ledger: ExperimentLedgerView): ExperimentRouteSummaryView[] => {
+  const routes = new Map<string, ExperimentTrialView[]>();
+  ledger.trials.forEach((trial) => {
+    if (trial.score === null) return;
+    routes.set(trial.candidate.strategy, [...(routes.get(trial.candidate.strategy) ?? []), trial]);
+  });
+  return [...routes.entries()].map(([strategy, trials]) => {
+    const ranked = [...trials].sort((left, right) => {
+      const scoreDelta = ledger.direction === 'minimize' ? (left.score ?? 0) - (right.score ?? 0) : (right.score ?? 0) - (left.score ?? 0);
+      return scoreDelta || left.durationMs - right.durationMs;
+    });
+    const top = ranked.slice(0, 3);
+    return {
+      strategy,
+      defaultScore: trials.find((trial) => trial.candidate.depth === 0)?.score ?? null,
+      trialCount: trials.length,
+      bestScore: top[0]?.score ?? null,
+      topKMeanReward: top.reduce((sum, trial) => sum + (trial.reward ?? 0), 0) / Math.max(1, top.length),
+      topCandidates: top.map((trial) => ({
+        trialNumber: trial.number,
+        candidate: trial.candidate,
+        score: trial.score ?? 0,
+        reward: trial.reward ?? 0,
+        durationMs: trial.durationMs,
+      })),
+    };
+  });
+};
+
+function RoutePortfolioPanel({ ledger }: { ledger: ExperimentLedgerView }) {
+  const summaries = ledger.routeSummaries.length > 0 ? ledger.routeSummaries : fallbackRouteSummaries(ledger);
+  const ordered = [...summaries].sort((left, right) => {
+    if (left.bestScore === null) return 1;
+    if (right.bestScore === null) return -1;
+    return ledger.direction === 'minimize' ? left.bestScore - right.bestScore : right.bestScore - left.bestScore;
+  });
+  return (
+    <div className="min-h-full bg-white">
+      <div className="grid grid-cols-1 border-b border-slate-200 md:grid-cols-2 xl:grid-cols-4">
+        {ordered.map((summary) => {
+          const winningRoute = summary.topCandidates.some((candidate) => candidate.candidate.id === ledger.bestCandidate.id);
+          return (
+            <section key={summary.strategy} className={`min-w-0 border-b border-r border-slate-200 px-4 py-4 md:[&:nth-last-child(-n+2)]:border-b-0 xl:border-b-0 ${winningRoute ? 'bg-emerald-50/40' : 'bg-white'}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1.5"><span className="truncate font-mono text-xs font-semibold text-slate-900">{summary.strategy}</span>{winningRoute && <Trophy className="h-3.5 w-3.5 shrink-0 text-emerald-700" />}</div>
+                  <div className="mt-1 text-[9px] text-slate-500">{summary.trialCount} trials · Top-{summary.topCandidates.length}</div>
+                </div>
+                <div className="shrink-0 text-right"><div className="font-mono text-sm font-semibold text-slate-900">{summary.bestScore === null ? '-' : formatExperimentNumber(summary.bestScore)}</div><div className="text-[9px] text-slate-400">best {ledger.metricKey}</div></div>
+              </div>
+              <div className="mt-3 grid grid-cols-2 border-y border-slate-200 py-2 text-[9px]">
+                <div><div className="font-mono font-semibold text-slate-800">{summary.defaultScore === null ? '-' : formatExperimentNumber(summary.defaultScore)}</div><div className="mt-0.5 text-slate-500">默认配置</div></div>
+                <div className="border-l border-slate-200 pl-3"><div className="font-mono font-semibold text-slate-800">{formatExperimentNumber(summary.topKMeanReward)}</div><div className="mt-0.5 text-slate-500">Top-K Reward</div></div>
+              </div>
+              <ol className="mt-2 divide-y divide-slate-100">
+                {summary.topCandidates.map((candidate, index) => {
+                  const trial = ledger.trials.find((item) => item.number === candidate.trialNumber);
+                  return (
+                    <li key={candidate.candidate.id} className="py-2">
+                      <div className="flex items-center justify-between gap-2"><span className="inline-flex min-w-0 items-center gap-1.5"><span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-[9px] font-semibold ${index === 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}`}>{index + 1}</span><span className="truncate font-mono text-[9px] text-slate-600">{candidate.candidate.changedParameter || 'default'}</span></span><strong className="shrink-0 font-mono text-[10px] text-slate-900">{formatExperimentNumber(candidate.score)}</strong></div>
+                      <div className="mt-1 flex items-center justify-between gap-2 text-[8px] text-slate-400"><span className="truncate font-mono">{trial?.policyDecision?.frontierKind === 'exploration' ? '探索通道' : trial?.policyDecision?.beamRank ? `Beam #${trial.policyDecision.beamRank}` : 'Model default'}</span><span className="font-mono">R {formatExperimentNumber(candidate.reward)}</span></div>
+                    </li>
+                  );
+                })}
+              </ol>
+            </section>
+          );
+        })}
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 text-[10px] text-slate-600">
+        <span>{ordered.length} routes · {ordered.reduce((total, route) => total + route.topCandidates.length, 0)} ranked candidates · Validation</span>
+        <span className="font-mono font-semibold text-slate-800">global best · {ledger.bestCandidate.strategy} · {formatExperimentNumber(ledger.bestScore)}</span>
+      </div>
+    </div>
   );
 }
 
@@ -329,6 +423,7 @@ function StrategyTreePanel({ ledger }: { ledger: ExperimentLedgerView }) {
                   bestCandidate={ledger.bestCandidate}
                   stopReason={ledger.stopReason}
                   metricKey={ledger.metricKey}
+                  direction={ledger.direction}
                   selectedCandidateID={selectedCandidateID}
                   onSelect={setSelectedCandidateID}
                 />
@@ -362,7 +457,7 @@ function TrialRow({ trial, metricKey }: { trial: ExperimentTrialView; metricKey:
           </div>
           <div className="shrink-0 text-right"><div className="font-mono text-sm font-semibold text-slate-900">{trial.score === null ? 'N/A' : formatExperimentNumber(trial.score)}</div><div className="text-[9px] text-slate-500">{metricKey}</div></div>
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-x-3 border-t border-slate-200/70 pt-2 text-[9px] text-slate-500"><span className="font-semibold text-slate-700">{statusLabel(trial)}</span><span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatExperimentDuration(trial.durationMs)}</span>{trial.number > 0 && <span className="font-mono text-cyan-700">batch {trial.batch} · worker {trial.worker}</span>}{trial.policyDecision && <span className="font-mono">{trial.policyDecision.policyVersion}</span>}{trial.reward !== null && <span className="font-mono">reward {formatExperimentNumber(trial.reward)}</span>}{trial.candidate.parentId && <span className="font-mono">depth {trial.candidate.depth}</span>}</div>
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 border-t border-slate-200/70 pt-2 text-[9px] text-slate-500"><span className="font-semibold text-slate-700">{statusLabel(trial)}</span><span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />{formatExperimentDuration(trial.durationMs)}</span>{trial.number > 0 && <span className="font-mono text-cyan-700">{trial.agentId} · D{trial.dispatchOrder}/C{trial.completionOrder}</span>}{trial.policyDecision && <span className="font-mono">{trial.policyDecision.frontierKind === 'exploration' ? 'explore' : trial.policyDecision.beamRank ? `beam-${trial.policyDecision.beamRank}` : trial.policyDecision.phase}</span>}{trial.reward !== null && <span className="font-mono">reward {formatExperimentNumber(trial.reward)}</span>}{trial.candidate.parentId && <span className="font-mono">depth {trial.candidate.depth}</span>}</div>
       </div>
     </li>
   );
@@ -391,26 +486,27 @@ function ValidationPanel({ validation, expanded }: { validation: ExperimentValid
 }
 
 function ExperimentRunPanel({ ledger, expanded }: { ledger: ExperimentLedgerView; expanded: boolean }) {
-  const [viewMode, setViewMode] = useState<ResearchViewMode>('tree');
+  const [viewMode, setViewMode] = useState<ResearchViewMode>('portfolio');
   return (
     <div className={`flex min-h-0 flex-col bg-white ${expanded ? 'h-full' : ''}`}>
       <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0"><div className="flex items-center gap-2 text-sm font-semibold text-slate-900"><FlaskConical className="h-4 w-4 text-cyan-700" />{ledger.domain} 自动研究</div><div className="mt-1 text-[10px] text-slate-500">{ledger.adapter} · {stopLabel(ledger.stopReason)}</div></div>
-          <div className="flex flex-wrap items-center justify-end gap-2 text-[10px] font-semibold"><span className="border border-violet-200 bg-violet-50 px-2 py-1 text-violet-700">ToT {ledger.designedBranches || '-'} branches</span><span className="border border-cyan-200 bg-cyan-50 px-2 py-1 text-cyan-800">并发 {ledger.resourceUsage.peakParallelism}/{ledger.maxParallelTrials}</span><span className="flex items-center gap-1 text-slate-600"><Target className="h-4 w-4 text-cyan-700" />{ledger.targetScore === null ? '无目标阈值' : `目标 ${formatExperimentNumber(ledger.targetScore)}`}</span></div>
+          <div className="flex flex-wrap items-center justify-end gap-2 text-[10px] font-semibold"><span className="border border-violet-200 bg-violet-50 px-2 py-1 text-violet-700">Beam {ledger.beamWidth} + Explore {ledger.explorationSlots}</span><span className="border border-cyan-200 bg-cyan-50 px-2 py-1 text-cyan-800">Agent {ledger.resourceUsage.peakParallelism}/{ledger.resourceUsage.workerSlots}</span><span className="flex items-center gap-1 text-slate-600"><Target className="h-4 w-4 text-cyan-700" />{ledger.targetScore === null ? '无目标阈值' : `目标 ${formatExperimentNumber(ledger.targetScore)}`}</span></div>
         </div>
       </div>
       <div className="grid grid-cols-2 border-b border-slate-200 sm:grid-cols-4"><Summary label="Baseline" value={ledger.baselineScore} /><Summary label="Best" value={ledger.bestScore} accent /><Summary label="Keep" text={String(ledger.acceptedTrials)} /><Summary label="Trials" text={`${ledger.completedTrials}/${ledger.maxTrials}`} /></div>
       <SearchProcessRail ledger={ledger} />
       <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-2">
-        <div className="min-w-0"><div className="text-xs font-semibold text-slate-900">生成策略树</div><div className="mt-0.5 truncate text-[9px] text-slate-500">ToT 设计 → 同层候选批次 → 并发 evaluator → 确定性入账 → Keep/Reject</div></div>
+        <div className="min-w-0"><div className="text-xs font-semibold text-slate-900">候选搜索全景</div><div className="mt-0.5 truncate text-[9px] text-slate-500">Model 默认穷举 → UCB 路线预算 → Beam + UCT → 异步 Agent → Holdout</div></div>
         <div className="flex shrink-0 rounded border border-slate-200 bg-slate-50 p-0.5" role="group" aria-label="实验视图模式">
+          <button type="button" onClick={() => setViewMode('portfolio')} className={`flex h-7 items-center gap-1.5 rounded px-2 text-[10px] font-semibold ${viewMode === 'portfolio' ? 'bg-white text-cyan-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}><BarChart3 className="h-3.5 w-3.5" />全局榜单</button>
           <button type="button" onClick={() => setViewMode('tree')} className={`flex h-7 items-center gap-1.5 rounded px-2 text-[10px] font-semibold ${viewMode === 'tree' ? 'bg-white text-cyan-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}><ListTree className="h-3.5 w-3.5" />策略树</button>
           <button type="button" onClick={() => setViewMode('timeline')} className={`flex h-7 items-center gap-1.5 rounded px-2 text-[10px] font-semibold ${viewMode === 'timeline' ? 'bg-white text-cyan-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}><ListOrdered className="h-3.5 w-3.5" />时间线</button>
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {viewMode === 'tree' ? <StrategyTreePanel ledger={ledger} /> : <div className="mx-auto max-w-4xl px-4 py-4"><ol className="space-y-2">{ledger.trials.map((trial) => <TrialRow key={trial.candidate.id} trial={trial} metricKey={ledger.metricKey} />)}</ol><div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 border-t border-slate-200 pt-3 text-[10px] text-slate-500"><span>Evaluator {ledger.resourceUsage.evaluatorRuns} runs</span><span>累计执行 {formatExperimentDuration(ledger.resourceUsage.evaluatorTimeMs)}</span><span>墙钟 {formatExperimentDuration(ledger.resourceUsage.wallDurationMs)}</span><span>峰值并发 {ledger.resourceUsage.peakParallelism}</span><span className="font-mono">{ledger.evaluationIsolation}</span></div></div>}
+        {viewMode === 'portfolio' ? <RoutePortfolioPanel ledger={ledger} /> : viewMode === 'tree' ? <StrategyTreePanel ledger={ledger} /> : <div className="mx-auto max-w-4xl px-4 py-4"><ol className="space-y-2">{ledger.trials.map((trial) => <TrialRow key={trial.candidate.id} trial={trial} metricKey={ledger.metricKey} />)}</ol><div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 border-t border-slate-200 pt-3 text-[10px] text-slate-500"><span>Evaluator {ledger.resourceUsage.evaluatorRuns} runs</span><span>累计执行 {formatExperimentDuration(ledger.resourceUsage.evaluatorTimeMs)}</span><span>墙钟 {formatExperimentDuration(ledger.resourceUsage.wallDurationMs)}</span><span>峰值并发 {ledger.resourceUsage.peakParallelism}</span><span className="font-mono">{ledger.evaluationIsolation}</span></div></div>}
       </div>
     </div>
   );

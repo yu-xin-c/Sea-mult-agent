@@ -1,6 +1,17 @@
 # Research Optimizer
 
-The Research Optimizer is ScholarAgent's Python learning plane. It profiles bounded samples from frozen datasets, chooses the next candidate from a Go-validated queue, and stores decision/outcome pairs in SQLite for cross-task learning.
+The Research Optimizer is ScholarAgent's Python learning plane. It profiles bounded samples from frozen datasets, chooses the next candidate from a Go-validated frontier, and stores decision/outcome pairs in SQLite for cross-task learning.
+
+Configuration search uses `hierarchical-contextual-ucb-uct/v2`:
+
+1. Go runs every legal model combination once with its default configuration.
+2. Route UCB allocates more tuning budget to promising model trees while preserving exploration.
+3. A Top-K Beam plus an explicit exploration lane defines the active parameter frontier.
+4. UCT-style node scores choose a parent path inside the selected model tree.
+5. Virtual visits spread concurrent workers across routes before real results return.
+6. Real validation rewards update scheduling statistics; candidate scores and root defaults remain immutable observations.
+
+The current policy has no simulated rollout or value network, so it is not full MCTS. Continuous Bayesian optimization and Hyperband also require separate domain contracts and are not emulated by this discrete policy.
 
 It does not execute experiments or decide whether a result is scientifically valid. The Go harness retains candidate validation, budgets, evaluator execution, Keep/Reject, rollback, and Holdout acceptance.
 

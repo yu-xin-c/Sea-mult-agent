@@ -78,7 +78,7 @@ func (a *ResearchCodingAgent) executeExperimentSpec(ctx context.Context, task *m
 		return failResearchCodingTask(task, err)
 	}
 	dependencies, _ := json.Marshal(spec.Dependencies)
-	report := fmt.Sprintf("frozen %s experiment contract: %d strategy branches, %d trials, %ds, parallel=%dx%s, metric=%s", spec.Domain, len(spec.Strategies), spec.MaxTrials, spec.MaxWallSeconds, spec.MaxParallelTrials, spec.EvaluationIsolation, spec.MetricKey)
+	report := fmt.Sprintf("frozen %s experiment contract: %d model routes, %d trials, %ds, agents=%d, beam=%d+%d explore, isolation=%s, metric=%s", spec.Domain, len(spec.Strategies), spec.MaxTrials, spec.MaxWallSeconds, spec.MaxParallelTrials, spec.BeamWidth, spec.ExplorationSlots, spec.EvaluationIsolation, spec.MetricKey)
 	task.Result = string(payload)
 	task.StructuredData = string(payload)
 	task.Status = models.StatusCompleted
@@ -142,6 +142,12 @@ func normalizeExperimentSpecDefaults(spec *models.ExperimentResearchSpec) {
 	if spec.MaxParallelTrials == 0 {
 		spec.MaxParallelTrials = 1
 	}
+	if spec.BeamWidth == 0 {
+		spec.BeamWidth = models.ExperimentDefaultBeamWidth
+	}
+	if spec.ExplorationSlots == 0 {
+		spec.ExplorationSlots = models.ExperimentDefaultExplorationSlots
+	}
 	if spec.EvaluationIsolation == "" {
 		spec.EvaluationIsolation = models.ExperimentExecutionSerial
 	}
@@ -160,6 +166,9 @@ func validateExperimentSpec(workspacePath string, spec models.ExperimentResearch
 	}
 	if spec.MaxParallelTrials < 1 || spec.MaxParallelTrials > 4 {
 		return fmt.Errorf("experiment parallelism must be between 1 and 4")
+	}
+	if spec.BeamWidth < 1 || spec.BeamWidth > 8 || spec.ExplorationSlots < 1 || spec.ExplorationSlots > 4 {
+		return fmt.Errorf("experiment beam width or exploration slots are outside supported bounds")
 	}
 	if spec.EvaluationIsolation != models.ExperimentExecutionSerial && spec.EvaluationIsolation != models.ExperimentExecutionReadOnly {
 		return fmt.Errorf("experiment evaluation isolation is unsupported")
@@ -186,6 +195,9 @@ func validateExperimentSpec(workspacePath string, spec models.ExperimentResearch
 	if len(spec.Strategies) == 0 || len(spec.Strategies) > 16 {
 		return fmt.Errorf("experiment spec must declare 1 to 16 strategy branches")
 	}
+	if spec.MaxTrials < len(spec.Strategies)-1 {
+		return fmt.Errorf("experiment trial budget must cover every non-baseline model default")
+	}
 	if err := validateExperimentCommand(spec.SearchCommand); err != nil {
 		return fmt.Errorf("search command: %w", err)
 	}
@@ -204,6 +216,9 @@ func validateExperimentSpec(workspacePath string, spec models.ExperimentResearch
 			return fmt.Errorf("duplicate experiment strategy %q", strategy.Name)
 		}
 		strategyNames[strategy.Name] = struct{}{}
+		if len(strategy.Parameters) > 16 {
+			return fmt.Errorf("strategy %q exceeds 16 searchable parameters", strategy.Name)
+		}
 		parameterNames := map[string]struct{}{}
 		for _, parameter := range strategy.Parameters {
 			if parameter.Name == "" || len(parameter.Values) == 0 || len(parameter.Values) > 32 {
@@ -282,10 +297,12 @@ func (a *ResearchCodingAgent) executeExperimentRun(ctx context.Context, task *mo
 		Version: models.ExperimentLedgerVersion, CampaignID: campaignID, SpecSHA256: specHash, Status: "running",
 		Domain: spec.Domain, Adapter: spec.Adapter, MetricKey: spec.MetricKey, Direction: spec.Direction,
 		TargetScore: spec.TargetScore, MaxTrials: spec.MaxTrials,
-		MaxParallelTrials: spec.MaxParallelTrials, EvaluationIsolation: spec.EvaluationIsolation,
-		AblationPlanSHA256: ablationHash, DesignedBranches: designedBranches,
+		MaxParallelTrials: spec.MaxParallelTrials, BeamWidth: spec.BeamWidth, ExplorationSlots: spec.ExplorationSlots,
+		EvaluationIsolation: spec.EvaluationIsolation,
+		SchedulingPolicy:    models.ExperimentSchedulingAsync,
+		AblationPlanSHA256:  ablationHash, DesignedBranches: designedBranches,
 		StrategySpace: append([]models.ExperimentStrategy(nil), spec.Strategies...),
-		Trials:        []models.ExperimentTrial{}, StartedAt: started,
+		Trials:        []models.ExperimentTrial{}, ResourceUsage: models.ExperimentResourceUsage{WorkerSlots: spec.MaxParallelTrials}, StartedAt: started,
 	}
 	runCtx, cancel := context.WithTimeout(ctx, time.Duration(spec.MaxWallSeconds)*time.Second)
 	defer cancel()
@@ -294,7 +311,8 @@ func (a *ResearchCodingAgent) executeExperimentRun(ctx context.Context, task *mo
 	baselineStart := time.Now().UTC()
 	baselineEvaluation, baselineDuration, err := a.evaluateExperimentCandidate(runCtx, runtimeSession, workspacePath, spec, baseline, false)
 	baselineTrial := models.ExperimentTrial{
-		Number: 0, Batch: 0, Worker: 1, Candidate: baseline, Status: "baseline", Decision: "keep",
+		Number: 0, Batch: 0, Worker: 0, AgentID: "baseline", DispatchOrder: 0, CompletionOrder: 0,
+		Candidate: baseline, BackpropPath: []string{baseline.ID}, Status: "baseline", Decision: "keep",
 		Reason: "frozen default establishes the baseline", DurationMS: baselineDuration,
 		StartedAt: baselineStart, FinishedAt: time.Now().UTC(),
 	}
@@ -310,6 +328,7 @@ func (a *ResearchCodingAgent) executeExperimentRun(ctx context.Context, task *mo
 	baselineScore := baselineEvaluation.Metrics[spec.MetricKey]
 	baselineTrial.Metrics = baselineEvaluation.Metrics
 	baselineTrial.Score = experimentFloatPointer(baselineScore)
+	baselineTrial.Reward = experimentFloatPointer(0)
 	ledger.Trials = append(ledger.Trials, baselineTrial)
 	ledger.BaselineScore, ledger.BestScore = baselineScore, baselineScore
 	ledger.BestCandidate, ledger.BestEvaluation = baseline, baselineEvaluation
@@ -324,119 +343,145 @@ func (a *ResearchCodingAgent) executeExperimentRun(ctx context.Context, task *mo
 	for _, candidate := range refineExperimentCandidate(spec, baseline) {
 		experimentEnqueueCandidate(&queue, seen, candidate)
 	}
-	if experimentTargetReached(spec.Direction, spec.TargetScore, baselineScore) {
+	modelDefaultsTotal := len(spec.Strategies) - 1
+	modelDefaultsCompleted := 0
+	phase := models.ExperimentPhaseModelDefaults
+	if modelDefaultsTotal == 0 {
+		phase = models.ExperimentPhaseParameterSearch
+	}
+	if modelDefaultsTotal == 0 && experimentTargetReached(spec.Direction, spec.TargetScore, baselineScore) {
 		ledger.StopReason = "baseline_target_reached"
 	}
 
-	batchNumber := 0
-	for ledger.CompletedTrials < spec.MaxTrials && ledger.StopReason == "" {
-		if runCtx.Err() != nil {
+	freeWorkers := make([]int, spec.MaxParallelTrials)
+	for index := range freeWorkers {
+		freeWorkers[index] = index + 1
+	}
+	resultChannel := make(chan experimentCandidateResult, spec.MaxParallelTrials)
+	dispatchedTrials, inFlight, dispatchWave, completionOrder := 0, 0, 0, 0
+	runningSelections := map[int]experimentSelectedCandidate{}
+	for {
+		if runCtx.Err() != nil && ledger.StopReason == "" {
 			ledger.StopReason = "wall_time_budget_exhausted"
-			break
-		}
-		if len(queue) == 0 {
-			ledger.StopReason = "candidate_space_exhausted"
-			break
-		}
-		batchNumber++
-		remainingTrials := spec.MaxTrials - ledger.CompletedTrials
-		batchSize := min(spec.MaxParallelTrials, min(remainingTrials, len(experimentSelectionFrontier(queue))))
-		selected := make([]experimentSelectedCandidate, 0, batchSize)
-		selectionQueue := queue
-		selectionLedger := ledger
-		for worker := 1; worker <= batchSize; worker++ {
-			remainingWallSeconds := int(time.Until(started.Add(time.Duration(spec.MaxWallSeconds) * time.Second)).Seconds())
-			trialNumber := ledger.CompletedTrials + worker
-			candidate, remainingQueue, policyDecision := a.selectExperimentCandidate(
-				runCtx, campaignID, trialNumber, spec, selectionLedger, selectionQueue, remainingWallSeconds,
-			)
-			selected = append(selected, experimentSelectedCandidate{
-				Index: worker - 1, TrialNumber: trialNumber, Batch: batchNumber, Worker: worker,
-				Candidate: candidate, PolicyDecision: policyDecision, StartedAt: time.Now().UTC(),
-			})
-			selectionQueue = remainingQueue
-			selectionLedger.CompletedTrials++
-		}
-		queue = selectionQueue
-		ledger.ResourceUsage.PeakParallelism = max(ledger.ResourceUsage.PeakParallelism, len(selected))
-		logToContext(ctx, "[%s] experiment batch %d launched %d candidate(s)", a.Name, batchNumber, len(selected))
-
-		resultChannel := make(chan experimentCandidateResult, len(selected))
-		for _, item := range selected {
-			item := item
-			go func() {
-				evaluation, duration, evalErr := a.evaluateExperimentCandidate(runCtx, runtimeSession, workspacePath, spec, item.Candidate, false)
-				resultChannel <- experimentCandidateResult{Selected: item, Evaluation: evaluation, DurationMS: duration, Err: evalErr, FinishedAt: time.Now().UTC()}
-			}()
-		}
-		results := make([]experimentCandidateResult, len(selected))
-		for range selected {
-			result := <-resultChannel
-			results[result.Selected.Index] = result
 		}
 
-		for _, result := range results {
-			candidate := result.Selected.Candidate
-			policyDecisionCopy := result.Selected.PolicyDecision
-			trial := models.ExperimentTrial{
-				Number: result.Selected.TrialNumber, Batch: result.Selected.Batch, Worker: result.Selected.Worker,
-				Candidate: candidate, Status: "running", Decision: "reject", Reason: candidate.Reason,
-				PolicyDecision: &policyDecisionCopy, DurationMS: result.DurationMS,
-				StartedAt: result.Selected.StartedAt, FinishedAt: result.FinishedAt,
+		frontier, _ := experimentSelectionFrontier(queue, phase, ledger.Trials, spec.Direction, spec.BeamWidth, spec.ExplorationSlots)
+		if ledger.StopReason == "" && dispatchedTrials < spec.MaxTrials && len(frontier) > 0 && len(freeWorkers) > 0 {
+			dispatchWave++
+			frontierSize := len(frontier)
+			launchCount := min(len(freeWorkers), min(spec.MaxTrials-dispatchedTrials, frontierSize))
+			for launch := 0; launch < launchCount; launch++ {
+				worker := freeWorkers[0]
+				freeWorkers = freeWorkers[1:]
+				trialNumber := dispatchedTrials + 1
+				selectionLedger := ledger
+				selectionLedger.CompletedTrials = dispatchedTrials
+				inFlightCandidates := experimentRunningCandidates(runningSelections)
+				remainingWallSeconds := int(time.Until(started.Add(time.Duration(spec.MaxWallSeconds) * time.Second)).Seconds())
+				candidate, remainingQueue, policyDecision := a.selectExperimentCandidate(
+					runCtx, campaignID, trialNumber, phase, spec, selectionLedger, queue, inFlightCandidates, remainingWallSeconds,
+				)
+				queue = remainingQueue
+				selected := experimentSelectedCandidate{
+					TrialNumber: trialNumber, Batch: dispatchWave, Worker: worker,
+					AgentID: experimentSearchAgentID(worker), DispatchOrder: trialNumber,
+					Candidate: candidate, PolicyDecision: policyDecision, StartedAt: time.Now().UTC(),
+				}
+				dispatchedTrials++
+				inFlight++
+				runningSelections[trialNumber] = selected
+				ledger.ResourceUsage.PeakParallelism = max(ledger.ResourceUsage.PeakParallelism, inFlight)
+				logToContext(ctx, "[%s] %s dispatched trial %d strategy=%s", a.Name, selected.AgentID, trialNumber, candidate.Strategy)
+				go func(item experimentSelectedCandidate) {
+					evaluation, duration, evalErr := a.evaluateExperimentCandidate(runCtx, runtimeSession, workspacePath, spec, item.Candidate, false)
+					resultChannel <- experimentCandidateResult{Selected: item, Evaluation: evaluation, DurationMS: duration, Err: evalErr, FinishedAt: time.Now().UTC()}
+				}(selected)
 			}
-			ledger.ResourceUsage.EvaluatorRuns++
-			ledger.ResourceUsage.EvaluatorTimeMS += result.DurationMS
-			if result.Err != nil {
-				trial.Status, trial.Reason, trial.Error = "rejected", "candidate evaluator failed", result.Err.Error()
+		}
+
+		if inFlight == 0 {
+			if ledger.StopReason == "" {
+				switch {
+				case dispatchedTrials >= spec.MaxTrials:
+					ledger.StopReason = "trial_budget_exhausted"
+				case len(queue) == 0:
+					ledger.StopReason = "candidate_space_exhausted"
+				}
+			}
+			break
+		}
+
+		result := <-resultChannel
+		inFlight--
+		delete(runningSelections, result.Selected.TrialNumber)
+		freeWorkers = append(freeWorkers, result.Selected.Worker)
+		sort.Ints(freeWorkers)
+		completionOrder++
+		candidate := result.Selected.Candidate
+		policyDecisionCopy := result.Selected.PolicyDecision
+		trial := models.ExperimentTrial{
+			Number: result.Selected.TrialNumber, Batch: result.Selected.Batch, Worker: result.Selected.Worker,
+			AgentID: result.Selected.AgentID, DispatchOrder: result.Selected.DispatchOrder, CompletionOrder: completionOrder,
+			Candidate: candidate, Status: "running", Decision: "reject", Reason: candidate.Reason,
+			PolicyDecision: &policyDecisionCopy, DurationMS: result.DurationMS,
+			StartedAt: result.Selected.StartedAt, FinishedAt: result.FinishedAt,
+		}
+		trial.BackpropPath = experimentBackpropPath(ledger.Trials, candidate)
+		ledger.ResourceUsage.EvaluatorRuns++
+		ledger.ResourceUsage.EvaluatorTimeMS += result.DurationMS
+		if result.Err != nil {
+			trial.Status, trial.Reason, trial.Error = "rejected", "candidate evaluator failed", result.Err.Error()
+		} else {
+			score := result.Evaluation.Metrics[spec.MetricKey]
+			delta := experimentDelta(spec.Direction, score, ledger.BestScore)
+			trial.Metrics, trial.Score, trial.DeltaFromBest = result.Evaluation.Metrics, experimentFloatPointer(score), experimentFloatPointer(delta)
+			if delta >= spec.MinDelta {
+				trial.Status, trial.Decision = "kept", "keep"
+				trial.Reason = fmt.Sprintf("%s improved by %.6f (required %.6f)", spec.MetricKey, delta, spec.MinDelta)
+				ledger.BestScore, ledger.BestCandidate, ledger.BestEvaluation = score, candidate, result.Evaluation
+				ledger.AcceptedTrials++
 			} else {
-				score := result.Evaluation.Metrics[spec.MetricKey]
-				delta := experimentDelta(spec.Direction, score, ledger.BestScore)
-				trial.Metrics, trial.Score, trial.DeltaFromBest = result.Evaluation.Metrics, experimentFloatPointer(score), experimentFloatPointer(delta)
-				if delta >= spec.MinDelta {
-					trial.Status, trial.Decision = "kept", "keep"
-					trial.Reason = fmt.Sprintf("%s improved by %.6f (required %.6f)", spec.MetricKey, delta, spec.MinDelta)
-					ledger.BestScore, ledger.BestCandidate, ledger.BestEvaluation = score, candidate, result.Evaluation
-					ledger.AcceptedTrials++
-					for _, child := range refineExperimentCandidate(spec, candidate) {
-						experimentEnqueueCandidate(&queue, seen, child)
-					}
-				} else {
-					trial.Status = "rejected"
-					trial.Reason = fmt.Sprintf("%s delta %.6f did not meet %.6f", spec.MetricKey, delta, spec.MinDelta)
-				}
-				if candidate.Depth == 0 {
-					for _, child := range refineExperimentCandidate(spec, candidate) {
-						experimentEnqueueCandidate(&queue, seen, child)
-					}
-				}
+				trial.Status = "rejected"
+				trial.Reason = fmt.Sprintf("%s delta %.6f did not meet %.6f", spec.MetricKey, delta, spec.MinDelta)
 			}
-			reward, deltaFromBaseline := experimentReward(spec, ledger.BaselineScore, trial.Score, result.DurationMS, result.Err != nil)
-			trial.Reward = experimentFloatPointer(reward)
-			ledger.Trials = append(ledger.Trials, trial)
-			ledger.CompletedTrials++
-			contextID := ""
-			if spec.ContextProfile != nil {
-				contextID = spec.ContextProfile.ID
+			for _, child := range refineExperimentCandidate(spec, candidate) {
+				experimentEnqueueCandidate(&queue, seen, child)
 			}
-			a.recordExperimentOutcome(ctx, models.ExperimentExperienceOutcome{
-				Version: models.ExperimentOutcomeVersion, CampaignID: campaignID, TrialNumber: trial.Number,
-				ContextID: contextID, Candidate: candidate, Status: trial.Status,
-				BaselineScore: ledger.BaselineScore, CandidateScore: trial.Score, DeltaFromBaseline: deltaFromBaseline,
-				Reward: reward, DurationMS: result.DurationMS, Error: trial.Error, RecordedAt: trial.FinishedAt,
-			})
-			scoreText := "n/a"
-			if trial.Score != nil {
-				scoreText = fmt.Sprintf("%.6f", *trial.Score)
+		}
+		reward, deltaFromBaseline := experimentReward(spec, ledger.BaselineScore, trial.Score, result.DurationMS, result.Err != nil)
+		trial.Reward = experimentFloatPointer(reward)
+		ledger.Trials = append(ledger.Trials, trial)
+		ledger.CompletedTrials++
+		if candidate.Depth == 0 {
+			modelDefaultsCompleted++
+			if modelDefaultsCompleted == modelDefaultsTotal {
+				phase = models.ExperimentPhaseParameterSearch
+				logToContext(ctx, "[%s] all %d model defaults completed; parameter search is now eligible", a.Name, modelDefaultsTotal+1)
 			}
-			logToContext(ctx, "[%s] experiment batch %d worker %d trial %d %s strategy=%s score=%s", a.Name, trial.Batch, trial.Worker, trial.Number, trial.Status, candidate.Strategy, scoreText)
-			if trial.Status == "kept" && experimentTargetReached(spec.Direction, spec.TargetScore, ledger.BestScore) {
-				ledger.StopReason = "target_score_reached"
-			}
+		}
+		contextID := ""
+		if spec.ContextProfile != nil {
+			contextID = spec.ContextProfile.ID
+		}
+		a.recordExperimentOutcome(ctx, models.ExperimentExperienceOutcome{
+			Version: models.ExperimentOutcomeVersion, CampaignID: campaignID, TrialNumber: trial.Number,
+			ContextID: contextID, Candidate: candidate, Status: trial.Status,
+			BaselineScore: ledger.BaselineScore, CandidateScore: trial.Score, DeltaFromBaseline: deltaFromBaseline,
+			Reward: reward, DurationMS: result.DurationMS, Error: trial.Error, RecordedAt: trial.FinishedAt,
+		})
+		scoreText := "n/a"
+		if trial.Score != nil {
+			scoreText = fmt.Sprintf("%.6f", *trial.Score)
+		}
+		logToContext(ctx, "[%s] %s completed trial %d (%dth finish) %s strategy=%s score=%s", a.Name, trial.AgentID, trial.Number, trial.CompletionOrder, trial.Status, candidate.Strategy, scoreText)
+		if phase == models.ExperimentPhaseParameterSearch && experimentTargetReached(spec.Direction, spec.TargetScore, ledger.BestScore) {
+			ledger.StopReason = "target_score_reached"
 		}
 	}
 	if ledger.StopReason == "" {
 		ledger.StopReason = "trial_budget_exhausted"
 	}
+	ledger.RouteSummaries = experimentRouteSummaries(spec.Direction, ledger.Trials, 3)
 	ledger.Status, ledger.FinishedAt = "completed", time.Now().UTC()
 	ledger.ResourceUsage.WallDurationMS = ledger.FinishedAt.Sub(started).Milliseconds()
 	best := models.ExperimentBestCandidate{
@@ -464,10 +509,11 @@ func failExperimentRun(task *models.Task, ledger models.ExperimentTrialLedger, e
 }
 
 type experimentSelectedCandidate struct {
-	Index          int
 	TrialNumber    int
 	Batch          int
 	Worker         int
+	AgentID        string
+	DispatchOrder  int
 	Candidate      models.ExperimentCandidate
 	PolicyDecision models.ExperimentPolicyDecision
 	StartedAt      time.Time
@@ -479,6 +525,96 @@ type experimentCandidateResult struct {
 	DurationMS int64
 	Err        error
 	FinishedAt time.Time
+}
+
+func experimentSearchAgentID(worker int) string {
+	return fmt.Sprintf("search-agent-%02d", worker)
+}
+
+func experimentRunningCandidates(running map[int]experimentSelectedCandidate) []models.ExperimentCandidate {
+	numbers := make([]int, 0, len(running))
+	for number := range running {
+		numbers = append(numbers, number)
+	}
+	sort.Ints(numbers)
+	candidates := make([]models.ExperimentCandidate, 0, len(numbers))
+	for _, number := range numbers {
+		candidates = append(candidates, running[number].Candidate)
+	}
+	return candidates
+}
+
+func experimentBackpropPath(history []models.ExperimentTrial, candidate models.ExperimentCandidate) []string {
+	parents := make(map[string]string, len(history)+1)
+	for _, trial := range history {
+		parents[trial.Candidate.ID] = trial.Candidate.ParentID
+	}
+	parents[candidate.ID] = candidate.ParentID
+	path := []string{}
+	seen := map[string]struct{}{}
+	for id := candidate.ID; id != ""; id = parents[id] {
+		if _, exists := seen[id]; exists {
+			break
+		}
+		seen[id] = struct{}{}
+		path = append(path, id)
+	}
+	slices.Reverse(path)
+	return path
+}
+
+func experimentRouteSummaries(direction string, trials []models.ExperimentTrial, topK int) []models.ExperimentRouteSummary {
+	byRoute := map[string][]models.ExperimentRankedCandidate{}
+	defaults := map[string]*float64{}
+	for _, trial := range trials {
+		if trial.Score == nil {
+			continue
+		}
+		reward := 0.0
+		if trial.Reward != nil {
+			reward = *trial.Reward
+		}
+		byRoute[trial.Candidate.Strategy] = append(byRoute[trial.Candidate.Strategy], models.ExperimentRankedCandidate{
+			TrialNumber: trial.Number, Candidate: trial.Candidate, Score: *trial.Score,
+			Reward: reward, DurationMS: trial.DurationMS,
+		})
+		if trial.Candidate.Depth == 0 {
+			defaults[trial.Candidate.Strategy] = experimentFloatPointer(*trial.Score)
+		}
+	}
+	routes := make([]string, 0, len(byRoute))
+	for route := range byRoute {
+		routes = append(routes, route)
+	}
+	sort.Strings(routes)
+	summaries := make([]models.ExperimentRouteSummary, 0, len(routes))
+	for _, route := range routes {
+		candidates := byRoute[route]
+		sort.SliceStable(candidates, func(left, right int) bool {
+			if candidates[left].Score == candidates[right].Score {
+				if candidates[left].DurationMS == candidates[right].DurationMS {
+					return candidates[left].TrialNumber < candidates[right].TrialNumber
+				}
+				return candidates[left].DurationMS < candidates[right].DurationMS
+			}
+			if direction == "minimize" {
+				return candidates[left].Score < candidates[right].Score
+			}
+			return candidates[left].Score > candidates[right].Score
+		})
+		limit := min(max(1, topK), len(candidates))
+		top := append([]models.ExperimentRankedCandidate(nil), candidates[:limit]...)
+		rewardSum := 0.0
+		for _, candidate := range top {
+			rewardSum += candidate.Reward
+		}
+		bestScore := experimentFloatPointer(top[0].Score)
+		summaries = append(summaries, models.ExperimentRouteSummary{
+			Strategy: route, DefaultScore: defaults[route], TrialCount: len(candidates), BestScore: bestScore,
+			TopKMeanReward: rewardSum / float64(len(top)), TopCandidates: top,
+		})
+	}
+	return summaries
 }
 
 func experimentAblationEvidence(task *models.Task) (string, int, error) {

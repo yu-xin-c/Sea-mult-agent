@@ -14,13 +14,17 @@ test('parses a strategy and parameter search tree', () => {
       { name: 'bm25', description: 'baseline', parameters: [{ name: 'k1', description: 'saturation', values: [0.8, 1.5], default: 1.5 }] },
       { name: 'hybrid_rrf', description: 'fusion', parameters: [{ name: 'alpha', description: 'weight', values: [0.2, 0.5, 0.8], default: 0.5 }] },
     ],
+    beam_width: 3, exploration_slots: 1, scheduling_policy: 'async-worker-pool/v1',
+    route_summaries: [{ strategy: 'hybrid_rrf', default_score: 0.82, trial_count: 2, best_score: 0.82, top_k_mean_reward: 0.2, top_candidates: [{ trial_number: 1, candidate: candidate('hybrid', 'hybrid_rrf'), score: 0.82, reward: 0.419, duration_ms: 7 }] }],
     trials: [
       { number: 0, batch: 0, worker: 1, candidate: candidate('base', 'bm25'), status: 'baseline', decision: 'keep', reason: 'baseline', metrics: { ndcg_at_k: 0.4 }, score: 0.4, duration_ms: 5 },
       {
         number: 1, candidate: candidate('hybrid', 'hybrid_rrf'), status: 'kept', decision: 'keep', reason: 'gain',
         metrics: { ndcg_at_k: 0.82 }, score: 0.82, delta_from_best: 0.42, reward: 0.419,
         policy_decision: {
-          policy_version: 'contextual-ucb/v1', propensity: 0.45, predicted_reward: 0.12,
+          phase: 'parameter_search', policy_version: 'hierarchical-contextual-ucb-uct/v2', route: 'hybrid_rrf', frontier_kind: 'beam', beam_rank: 1,
+          route_visit_count: 2, route_top_k_mean_reward: 0.2, route_exploration_bonus: 0.1, node_visit_count: 1, node_mean_reward: 0.2, node_exploration_bonus: 0.1,
+          selection_score: 0.6, virtual_visits: 0, propensity: 0.45, predicted_reward: 0.12,
           reason_codes: ['validated_history_available'], fallback: false,
         },
         batch: 1, worker: 1, duration_ms: 7,
@@ -36,12 +40,14 @@ test('parses a strategy and parameter search tree', () => {
   assert.equal(parsed.ledger.trials[2].candidate.parentId, 'hybrid');
   assert.equal(parsed.ledger.bestCandidate.strategy, 'hybrid_rrf');
   assert.equal(parsed.ledger.strategySpace[1].parameters[0].values.length, 3);
-  assert.equal(parsed.ledger.trials[1].policyDecision.policyVersion, 'contextual-ucb/v1');
+  assert.equal(parsed.ledger.trials[1].policyDecision.policyVersion, 'hierarchical-contextual-ucb-uct/v2');
+  assert.equal(parsed.ledger.trials[1].policyDecision.beamRank, 1);
   assert.equal(parsed.ledger.trials[1].policyDecision.propensity, 0.45);
   assert.equal(parsed.ledger.trials[1].reward, 0.419);
   assert.equal(parsed.ledger.maxParallelTrials, 2);
   assert.equal(parsed.ledger.resourceUsage.peakParallelism, 2);
   assert.equal(parsed.ledger.trials[2].worker, 2);
+  assert.equal(parsed.ledger.routeSummaries[0].topCandidates[0].score, 0.82);
 });
 
 test('parses repeated holdout evidence and rejects broken lineage', () => {

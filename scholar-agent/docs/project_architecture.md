@@ -2,7 +2,7 @@
 
 本文描述 `scholar-agent/` 当前已经实现并可运行的架构。它以代码为准，重点说明服务边界、核心数据模型、Agent 调度、论文复现、Benchmark Harness、持久化与安全边界。早期设想和尚未接入主链的模块不会被写成现有能力。
 
-最后核对日期：2026-08-14。
+最后核对日期：2026-08-19。
 
 ## 1. 架构目标
 
@@ -43,7 +43,7 @@ flowchart LR
     DATA --> LLM
     CODER --> LLM
     BENCH --> LLM
-    BENCH --> RO["Python Research Optimizer<br/>Features / Contextual-UCB"]
+    BENCH --> RO["Python Research Optimizer<br/>Contextual UCB / Beam + UCT"]
     RO --> ES["SQLite Experience Store"]
     PL --> LLM
 
@@ -210,8 +210,8 @@ Scheduler 负责：
 | `ResearchTrialLedger` | baseline 和每个候选的补丁哈希、命令、指标、决策、停止原因与资源摘要 |
 | `ResearchValidationReport` | 最佳文件完整性、重复 evaluator 结果、均值、标准差、失败率与资源摘要 |
 | `ExperimentDatasetManifest` | 领域 Adapter 产出的数据映射、能力、资产路径和 SHA-256 |
-| `ExperimentResearchSpec` | 方法分支、参数有限域、搜索/Holdout 命令、指标、目标、预算、并发上限和 evaluator 隔离模式 |
-| `ExperimentTrialLedger` | ToT 计划哈希、配置候选父子关系、batch/worker、峰值并发、指标、Keep/Reject、最佳配置和停止原因 |
+| `ExperimentResearchSpec` | Model 分支、参数有限域、搜索/Holdout 命令、指标、目标、预算、Beam、探索通道、Agent 上限和 evaluator 隔离模式 |
+| `ExperimentTrialLedger` | ToT 计划哈希、配置候选父子关系、Search Agent、派发/完成顺序、UCB/UCT、路线 Top-K、峰值并发、指标和停止原因 |
 | `ExperimentValidationReport` | 最佳配置在独立 Holdout 进程中的 baseline 对照、目标判定和样例证据 |
 
 ```mermaid
@@ -285,7 +285,8 @@ Planner TaskNode
             -> AutoResearch Harness
                 -> ResearchSpec -> baseline -> 候选补丁 -> Keep/Reject -> TrialLedger -> 最终验证
             -> Experiment Harness
-                -> Domain Adapter -> ExperimentSpec -> 方法/参数候选树 -> 目标停止 -> Holdout
+                -> Domain Adapter -> ExperimentSpec -> Model 默认穷举
+                -> UCB + Beam/UCT 参数树 -> 目标停止 -> Holdout
 ```
 
 它在启动时复用 Coder 的 Chat Model 和 Sandbox Client，但不复用 Coder 的任务状态。每次调试的运行次数、文件备份和补丁清单都只存在于当前任务内，跨节点状态通过显式 Artifact 传递。模型只能提出结构化方案或代码内容；路径检查、写入、回滚、源码指纹和结果校验都由 Go harness 完成。
@@ -382,7 +383,7 @@ Benchmark Harness 的信任边界不是“模型说成功”，而是：
 
 `experimentDomainAdapter` 是领域边界。内置 `retrieval.v1` 能从语料、带标注查询和可选关系边自动生成契约；`portable.v1` 能加载任意论文领域上传的 `experiment.json`、evaluator 和数据。通用 Go Harness 不包含检索知识，只读取有限候选空间和 argv 命令，每次写一个候选配置后执行冻结 evaluator。
 
-一级候选是不同方法的默认配置，子候选一次只改变一个参数。Go 从已冻结资产抽取有界规范样本，Python Research Optimizer 不挂载工作区，只根据 `DatasetFeatureProfile` 和已验证历史选择下一候选；Go 会复核数据指纹、确认候选仍在当前队列、概率和预测值为有限数，并在服务不可用或响应非法时退回 FIFO。只读 evaluator 可以声明最多 4 路同层并发；Portable Adapter 默认使用 `serial/v1`，未声明 `shared-readonly/v1` 时拒绝并行。并发结果按 Policy 选择顺序确定性入账，而不是按完成先后抢占最佳值。`ExperimentTrialLedger` 同时保存冻结的 `strategy_space`、ToT 计划哈希和真实 Trial；每个 Trial 记录 `parent_id`、`depth`、`changed_parameter`、`batch`、`worker`、完整参数、Policy 版本、选择概率、预测/实际 Reward、指标和 Keep/Reject 原因。前端据此生成可交互的策略树、候选详情和执行时间线，并把达到目标后未运行的参数分支显示为已剪枝。
+一级候选是不同 Model 组合的默认配置，Go 通过阶段屏障保证这些默认配置全部真实运行。参数阶段每个子候选一次只改变一个离散参数：外层 UCB 根据路线 Top-K Reward、访问次数、成本和可选 Contextual prior 分配预算；每条路线以 Top-K Beam 加低访问探索通道限制前沿；内层 UCT-style 分数选择父路径。Go 从冻结资产抽取有界规范样本，Python Research Optimizer 不挂载工作区；Go 会复核数据指纹、候选、Beam/探索身份和全部数值统计，服务不可用时运行本地分层 UCB/UCT fallback。只读 evaluator 最多使用 4 个异步 Search Agent，Portable Adapter 默认 `serial/v1`。Coordinator 单线程拥有队列和 Ledger，Agent 完成后按真实完成顺序入账，virtual visits 防止并发选择集中在同一路线。`ExperimentTrialLedger` 保存 `strategy_space`、Beam 配置、路线 Top-K、`backprop_path`、Agent ID、派发/完成顺序以及 UCB/UCT 组成。前端提供全局榜单、参数树和时间线，根节点默认分数不会被后代调度统计覆盖。
 
 科学接受与学习奖励严格分离：Keep/Reject 仍只由冻结主指标和 `min_delta` 决定；Reward 使用相对 baseline 的方向归一化增益减去运行成本，仅供后续候选排序。Search 只读取公开调参集；最终节点在独立 Holdout 文件上同时重跑 baseline 与最佳候选，并要求数据和 evaluator 哈希保持不变。只有 Holdout 状态为 `validated` 的 campaign 才会进入跨任务策略历史，Reject 和失败候选仍保留以避免幸存者偏差。完整协议见 [`autoresearch/09_general_scientific_autoresearch.md`](autoresearch/09_general_scientific_autoresearch.md)和 [`autoresearch/10_python_research_optimizer.md`](autoresearch/10_python_research_optimizer.md)。
 

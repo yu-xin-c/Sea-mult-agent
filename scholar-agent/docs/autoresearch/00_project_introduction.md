@@ -72,9 +72,9 @@ AutoResearch 因此不把 LLM 当作拥有最终决定权的研究者。模型�
 | [CORE-Bench 2026 分析](https://arxiv.org/abs/2606.26158) | 将 Agent 评价从准确率扩展到构念有效性、OOD、效率、可靠性、模型与 scaffold、人机协作 | 重复验证和命令资源证据先覆盖可靠性与效率的一小部分；OOD 和人工协作继续进入路线图 | 不能据此声称完成全面 Agent 评估 |
 | [MLE-bench](https://arxiv.org/abs/2410.07095) | 在真实机器学习工程任务上评测 Agent，并研究不同资源扩展方式 | TrialLedger 与验证报告显式汇总命令数量和耗时 | 只是评价维度借鉴；当前摘要不含 GPU、token 或费用 |
 | [Microsoft R&D-Agent](https://github.com/microsoft/RD-Agent) | 将研究提议与开发实现分工，并对部分公开评测报告多次独立 seed 的均值与标准差 | 最佳候选可重复启动验证进程，报告逐次分数、均值、标准差和失败率 | 当前不会自动切换 seed，不能称为等价多 seed 评测 |
-| [Auto-Research-Recipes](https://github.com/cxcscmu/Auto-Research-Recipes) | 以任务无关核心配合 Task Adapter、外部 evaluator 和发布 Artifact | 真实仓库实验统一为 spec、公开 evaluator、隐藏 holdout 三文件包 | AutoResearch 代码候选仍使用线性 TrialLedger，没有 parent lineage；与消融设计树是不同层 |
-| [Arbor](https://github.com/RUC-NLPIR/Arbor) | Coordinator/Executor、想法树、隔离 worktree、开发与 heldout 分离 | 隔离仓库工作区和公开搜索/隐藏验收边界 | 没有实现并行 worktree、树搜索或 checkpoint |
-| [AI Scientist v2](https://github.com/SakanaAI/AI-Scientist-v2) | 渐进式 Agent tree search 与实验管理 | 两层消融方案树已保存父子谱系；候选反馈、TrialLedger 和回滚为后续代码分支管理打基础 | AutoResearch 仍是线性循环，不能称为已实现结果驱动 tree search |
+| [Auto-Research-Recipes](https://github.com/cxcscmu/Auto-Research-Recipes) | 以任务无关核心配合 Task Adapter、外部 evaluator 和发布 Artifact | 真实仓库实验统一为 spec、公开 evaluator、隐藏 holdout 三文件包；配置模式使用通用 Domain Adapter | 代码补丁模式仍使用线性 TrialLedger；配置模式与代码模式不能混为一谈 |
+| [Arbor](https://github.com/RUC-NLPIR/Arbor) | Coordinator/Executor、想法树、隔离 worktree、开发与 heldout 分离 | 配置模式采用中央 Coordinator、4 Agent 异步参数树和公开搜索/隐藏验收边界 | 没有实现并行 Git worktree 或逐轮 checkpoint 恢复 |
+| [AI Scientist v2](https://github.com/SakanaAI/AI-Scientist-v2) | 渐进式 Agent tree search 与实验管理 | 配置模式使用真实 Validation 驱动的 Beam + UCT-style 参数树 | 没有模拟 rollout，代码补丁模式仍为线性循环，不能称为完整 MCTS |
 | [Stochasticity in Deep Research Agents](https://arxiv.org/abs/2602.23271) | 分析同类研究 Agent 独立执行之间的结果方差 | 搜索 baseline 和每个候选重复测量，保存样本、标准差并保守聚合 | 重放 evaluator 不等价于完整 Agent 多次独立运行 |
 
 更细的来源事实、本地代码落点和风险标记见[项目介绍证据表](refs/evidence-map.md)。

@@ -6,8 +6,9 @@ ScholarAgent 保留 Go 作为控制面：Planner、Scheduler、预算、候选�
 
 ```text
 Go Experiment Harness
-    -> 冻结候选队列和预算
-    -> Python 选择队列中的一个候选
+    -> 冻结 Model、参数、Beam 和预算
+    -> Go 生成 Top-K Beam + 探索前沿
+    -> Python 先用 UCB 选 Model 路线，再用 UCT 选参数路径
     -> Go 校验选择并真实执行
     -> Go 计算指标、Keep/Reject 与 Reward
     -> Python 记录 outcome
@@ -15,7 +16,7 @@ Go Experiment Harness
     -> Python 标记 campaign 是否可进入学习历史
 ```
 
-Python 服务不可用、超时、返回未知候选或非法概率时，Go 使用 `deterministic_fifo/v1`，实验不会因为学习面故障而失去基本能力。
+Python 服务不可用、超时、返回未知候选或非法统计时，Go 使用 `hierarchical-contextual-ucb-uct/v2` 的确定性本地实现。Model 默认配置仍完整运行，实验不会因为学习面故障而失去基本搜索能力。
 
 ## 2. 数据特征
 
@@ -32,16 +33,17 @@ Python 服务不可用、超时、返回未知候选或非法概率时，Go 使�
 
 ## 3. 候选选择
 
-`POST /v1/select` 只能从 Go 提供的候选数组中返回一个 candidate ID。当前策略是 `contextual-ucb/v1`：
+`POST /v1/select` 只能从 Go 提供的候选数组中返回一个 candidate ID。当前策略是 `hierarchical-contextual-ucb-uct/v2`：
 
-1. 读取同领域、同 Adapter 且 Holdout 已验证的历史。
-2. 根据数值与布尔数据特征计算上下文相似度。
-3. 优先使用相同 candidate 的 Reward，相同 strategy 的历史作为较弱先验。
-4. 用平均 Reward 加 UCB 探索奖励排序。
-5. 保留 `epsilon=0.10` 的探索，并记录真实 propensity。
-6. 没有历史时做基于 campaign ID 的可复现均匀冷启动探索。
+1. `model_defaults` 阶段不学习排序，Go 保证每个 Model 组合的默认配置运行一次。
+2. 参数阶段读取同领域、同 Adapter 且 Holdout 已验证的历史，根据数据特征计算上下文相似度。
+3. 外层使用路线 Top-K Reward、Contextual prior、UCB 探索项和 virtual visit 惩罚选择 Model 参数树。
+4. Go 只向 Policy 提供每条路线 Top-K Beam 父路径和一条低访问探索通道产生的候选。
+5. 内层使用父路径的平均 Reward、访问数和 UCT 探索项选择具体参数候选。
+6. 四个 Search Agent 依次原子预留候选；尚未完成的候选作为 virtual visit，减少重复路线和重复父路径。
+7. 返回路线与节点统计、Beam/探索身份、选择分和 `propensity=1.0`，Go 再校验这些证据与冻结前沿一致。
 
-这是真实可运行的 Contextual-UCB 第一版，不是 Q-learning、神经网络 Policy 或已经证明跨领域泛化的 RL。
+这是真实可运行的分层 Contextual-UCB 与 UCT-style 搜索，不是 Q-learning、神经网络 Policy 或完整 MCTS。它没有模拟 rollout，所有 `Q` 都来自真实 Validation Reward。
 
 ## 4. Reward 与科学指标
 
@@ -87,7 +89,7 @@ make run-optimizer
 make test-optimizer
 ```
 
-Backend 使用 `RESEARCH_OPTIMIZER_URL` 和 `RESEARCH_OPTIMIZER_API_TOKEN`。URL 留空时不会调用 Python，TrialLedger 会明确记录 FIFO fallback。
+Backend 使用 `RESEARCH_OPTIMIZER_URL` 和 `RESEARCH_OPTIMIZER_API_TOKEN`。URL 留空时不会调用 Python，TrialLedger 会明确记录 Go hierarchical fallback。
 
 ## 7. 后续演进
 
@@ -95,6 +97,6 @@ Backend 使用 `RESEARCH_OPTIMIZER_URL` 和 `RESEARCH_OPTIMIZER_API_TOKEN`。URL
 
 1. 积累多个数据集和多个领域的已验证 campaign。
 2. 按数据集而不是 Trial 切分离线训练与测试。
-3. 比较 FIFO、随机、Contextual-UCB 和学习排序器的预算效率。
+3. 比较穷举、随机、平铺 UCB、分层 UCB/UCT 和学习排序器的预算效率。
 4. 在未见数据集上验证“更少 Trial 找到同等或更好结果”。
 5. 只有多阶段轨迹和样本量足够后，再研究离线 RL。
